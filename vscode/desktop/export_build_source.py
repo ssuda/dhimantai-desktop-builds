@@ -8,7 +8,9 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 INPUTS = ['.github/workflows/desktop-preview.yml', 'vscode/desktop',
-          'vscode/dhimantai-learning', 'website/upskill/assets/dhimantai-logo.png']
+          'vscode/dhimantai-learning', 'website/upskill/assets/dhimantai-logo.png',
+          'assets/epub_reader', 'agent/course_projects/data/book_companions.json',
+          'content/courses/build-an-llm-from-scratch/*.md']
 
 
 def git(*args):
@@ -40,7 +42,8 @@ def main():
     (args.out / '.gitignore').write_text('node_modules/\n**/out/\n**/__pycache__/\n*.vsix\n.env*\ndesktop-flutter.json\n')
     (args.out / 'README.md').write_text('# dhimantAI desktop builds\n\nPrivate build inputs exported from commit `' + commit + '`.\n\n'
         'The source of truth is the Bitbucket repository. Only desktop inputs are mirrored here; '
-        'backend, Flutter and repository history are excluded. Run the Custom desktop preview workflow '
+        'shared reader assets and packaged course data are included, but backend and Flutter app '
+        'code and repository history are excluded. Run the Custom desktop preview workflow '
         'with the staging environment. Configure FLUTTER_STAGING_ENV_JSON as an Actions secret '
         'containing only LIVEKIT_TOKEN_URL and LIVEKIT_TOKEN_SECRET.\n\n'
         'Installers and their SHA-256 build receipts are retained as private workflow artifacts. '
