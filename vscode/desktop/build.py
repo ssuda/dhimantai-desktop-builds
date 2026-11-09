@@ -24,7 +24,8 @@ def run(args, cwd, env=None, timeout=1800):
     if os.name == 'nt' and args[0] == 'bash':
         # System32/bash.exe is the WSL launcher, not the Git Bash used by VSCodium.
         git = Path(shutil.which('git') or '')
-        candidates = [git.parent / 'bash.exe', git.parent.parent / 'bin/bash.exe']
+        # Git may be exposed through cmd/, bin/, or mingw64/bin/ on hosted runners.
+        candidates = [git.parent / 'bash.exe', *[parent / 'bin/bash.exe' for parent in list(git.parents)[:3]]]
         bash = next((path for path in candidates if path.is_file()), None)
         if bash is None:
             raise RuntimeError('Git for Windows Bash is required; WSL is not a native Windows builder')

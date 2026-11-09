@@ -33,6 +33,36 @@ Use `--arch x64` on an x64 host. `--stage prepare`, `build`, and `package` allow
 
 The desktop bundle receives only the same token-service URL, app name and client HMAC credential used by Flutter. Its generated `desktop-client.json` stays out of source control and ordinary VSIX packages. Supply production and staging separately with repeated `--flutter-env` flags when both are needed. Never substitute a LiveKit API secret or Supabase service-role key. The workflow expects the existing Flutter configuration in `FLUTTER_STAGING_ENV_JSON` or `FLUTTER_PRODUCTION_ENV_JSON` repository secrets.
 
+## GitHub staging builds
+
+The private build repository is [ssuda/dhimantai-desktop-builds](https://github.com/ssuda/dhimantai-desktop-builds).
+Bitbucket remains the source of truth. After committing build changes, export
+only their required inputs into a new directory:
+
+```sh
+python3 vscode/desktop/export_build_source.py --out /absolute/path/to/new-export
+```
+
+Copy that export into the private build repository checkout, commit, and push.
+It includes shared reader assets and packaged lesson data, but no backend or
+Flutter app code, credentials, or monorepo history. `build-source.json` records
+the originating commit and file hashes; builds verify those bytes before use.
+Receipts distinguish that source commit from the GitHub build commit.
+
+Run the manual **Custom desktop preview** workflow with `environment=staging`
+and `targets=windows-linux`, `all`, or one platform/processor pair. The staging
+Actions secret contains only the Flutter client's token URL and client HMAC
+key. The workflow refuses a public repository and never deploys a service.
+Linux runners use temporary swap; native compilation may take substantially
+longer than extension compilation. Installers and receipts are retained for
+14 days, build logs for 7 days. Download the artifacts before retention expires.
+
+Publish only verified receipt/artifact pairs through
+`website/upskill/scripts/desktop_releases.py`, then deploy the dhimantAI website
+target as described in `website/upskill/README.md`. Never replace an already
+published immutable download with different bytes under the same filename;
+increment the desktop release when changing its payload.
+
 ## Existing client contract
 
 The extension first uses its existing authenticated session endpoint for learner eligibility and profile fields. In the custom desktop, Instructor then connects through Flutter's existing `/getToken` contract, joins idle, and selects the lesson using `switch_mode`. Microphone control uses `toggle_audio`; camera capture publishes a LiveKit video track. No new RPC or agent behavior is introduced. Stock VS Code keeps its existing connection path.
