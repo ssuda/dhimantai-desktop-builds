@@ -1,8 +1,9 @@
 {
-  "sourceCommit": "d68b7c5191d50ee35882d5a28fd48233d0878c78",
+  "sourceCommit": "4c633bb00b4c6d647b05aaa701dd08654c92e8c3",
   "sourceRepository": "bitbucket.org/optficial/dhimantai",
   "files": {
     ".github/workflows/desktop-preview.yml": "161dec13e0235780d2f13dcf95550443b91528b6c114335b77dc268ffa7582c8",
+    ".github/workflows/desktop-windows-acceptance.yml": "45d373aa2ac0f04afabbeb57f26c823c298f8cf4a23cabc6004f917c157f376f",
     "agent/course_projects/data/book_companions.json": "2cc1f099fed1cd41dc24bde911dd25904d6638b85bcf57258d15e05768bafc16",
     "assets/epub_reader/epub.LICENSE": "19912616bd6231e46e1b0841325f73731de077fed161959cb3bf15ab45326b85",
     "assets/epub_reader/epub.min.js": "06eae15745107b4aa508c95538275251f69bfb9f1175621fc458d9f42ed082d4",
@@ -22,7 +23,7 @@
     "vscode/desktop/README.md": "57ec7a8e7fede691a2543038e2144de2ff2ffcdc96388daa3cfa3a182508def9",
     "vscode/desktop/build.py": "dd606b484c263c5eea759db62445b344a11c736c5f4a3a3c5a523564b991e204",
     "vscode/desktop/customize.py": "03780eb81648e26ab778309f630e7583bdb668634117499829519c14fd3807e2",
-    "vscode/desktop/export_build_source.py": "15e47d3f69f94a0db86bec202cfb1954c2dab8cdd68716f3c5e9729c006499a9",
+    "vscode/desktop/export_build_source.py": "86f72b56f483a1b3e2f1501aa5118d927d61f6ef68b44264f2e53c1a71af943e",
     "vscode/desktop/lock.json": "24f7cf36de9a64d20bfc2e0d277d2200ccb853cd336dbe080274106cb3f2944c",
     "vscode/desktop/overlays/src/vs/platform/webview/common/dhimantaiMediaPolicy.ts": "65ea225957d71b421592e33f5d5bf0aa751f32e7fb7f450cc42594a296e6b500",
     "vscode/desktop/overlays/src/vs/platform/webview/electron-main/dhimantaiMediaPermissions.ts": "ffaa8c1a640573e0796b1f64e308ac274d5eefbd162df7b721f6be858bf47d07",
@@ -31,6 +32,7 @@
     "vscode/desktop/tests/devices.test.mjs": "5848caeb5845bd04574a53a4f8dc29a4dc9128fb8b09e8b5f55d28ded29df171",
     "vscode/desktop/tests/mediaPolicy.test.mjs": "336a8a2f493ae0cf42ecfc915666c4dc91c85de919b47f5e86b43a7c30d685be",
     "vscode/desktop/tests/test_customize.py": "3326f1e880b9ee9550bb005e7422a95dadcfc3c65b00b1d5376cd4b348a7552b",
+    "vscode/desktop/verify_windows_install.py": "78690b687cbd6cb93b29563cc5e5fc485753fd26e1f176f88e1c3a0c8d83a328",
     "vscode/dhimantai-learning/.gitignore": "918005586ddc8c20a13e576513ed5fdd57f484fd9976787b7747202740300075",
     "vscode/dhimantai-learning/.vscode/launch.json": "cd87cb2a5fff1cf29329c1e96e92953e1a44814d2b0cd0fcdab569a201d3d6e8",
     "vscode/dhimantai-learning/.vscodeignore": "0b59a9372ecd74b475ab144077d2eab4f168138dc6f5800e99ab42875a4228ed",

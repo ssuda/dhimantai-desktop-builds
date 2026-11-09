@@ -1,0 +1,50 @@
+name: Windows desktop installer acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        description: Run containing the staging desktop artifact
+        type: string
+        required: true
+      arch:
+        type: choice
+        options: [x64, arm64]
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  install:
+    runs-on: ${{ inputs.arch == 'x64' && 'windows-2022' || 'windows-11-arm' }}
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - name: Require private repository
+        shell: bash
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: test "$REPOSITORY_PRIVATE" = true
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.arch == 'x64' && 'desktop-windows-2022-x64' || 'desktop-windows-11-arm-arm64' }}
+          run-id: ${{ inputs.build_run }}
+          github-token: ${{ github.token }}
+          path: artifacts
+      - name: Check native install, CLI and uninstall
+        shell: pwsh
+        run: |
+          $receipts = @(Get-ChildItem artifacts/dhimantAI-*.json)
+          if ($receipts.Count -ne 1) { throw 'Expected one build receipt' }
+          python vscode/desktop/verify_windows_install.py $receipts[0].FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-install-acceptance-${{ inputs.arch }}
+          path: ${{ runner.temp }}/windows-install-acceptance.json
+          if-no-files-found: error
+          retention-days: 14
