@@ -40,6 +40,7 @@ def main():
     (args.out / 'build-source.json').write_text(json.dumps(dict(sourceCommit=commit,
         sourceRepository='bitbucket.org/optficial/dhimantai', files=hashes), indent=2) + '\n')
     (args.out / '.gitignore').write_text('node_modules/\n**/out/\n**/__pycache__/\n*.vsix\n.env*\ndesktop-flutter.json\n')
+    (args.out / '.gitattributes').write_text('# Preserve exported bytes for source provenance on every OS.\n* -text\n')
     (args.out / 'README.md').write_text('# dhimantAI desktop builds\n\nPrivate build inputs exported from commit `' + commit + '`.\n\n'
         'The source of truth is the Bitbucket repository. Only desktop inputs are mirrored here; '
         'shared reader assets and packaged course data are included, but backend and Flutter app '

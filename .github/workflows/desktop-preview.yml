@@ -60,6 +60,8 @@ jobs:
         env:
           REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
         run: test "$REPOSITORY_PRIVATE" = true
+      - name: Preserve source line endings
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
