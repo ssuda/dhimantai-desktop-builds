@@ -21,6 +21,14 @@ LOCK = json.loads((HERE / 'lock.json').read_text())
 
 
 def run(args, cwd, env=None, timeout=1800):
+    if os.name == 'nt' and args[0] == 'bash':
+        # System32/bash.exe is the WSL launcher, not the Git Bash used by VSCodium.
+        git = Path(shutil.which('git') or '')
+        candidates = [git.parent / 'bash.exe', git.parent.parent / 'bin/bash.exe']
+        bash = next((path for path in candidates if path.is_file()), None)
+        if bash is None:
+            raise RuntimeError('Git for Windows Bash is required; WSL is not a native Windows builder')
+        args = [bash, *args[1:]]
     subprocess.run([str(a) for a in args], cwd=cwd, env=env, check=True, timeout=timeout)
 
 
@@ -172,7 +180,7 @@ def main():
             raise RuntimeError('Dependency retry policy changed upstream')
         text = text.replace('for i in {1..5}; do', 'for i in {1..2}; do').replace('if [[ $i == 5 ]]', 'if [[ $i == 2 ]]')
         text = text.replace('sleep $(( 15 * (i + 1)))', 'sleep 5')
-        preparation.write_text(text)
+        preparation.write_text(text, newline='\n')
         run(['bash', 'prepare_vscode.sh'], codium, env, timeout=7200)
         customize(source)
     if not source.is_dir():
