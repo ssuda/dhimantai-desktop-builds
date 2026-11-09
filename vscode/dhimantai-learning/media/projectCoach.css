@@ -1,0 +1,16 @@
+#coach { gap: 8px; padding: 10px 0; height: 100vh; min-height: 0; overflow: hidden; }
+#projectContent { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 10px; }
+#projectContent > * { flex-shrink: 0; }
+h2 { margin: 0; font-size: 1.15em; }
+select, textarea { width: 100%; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); padding: 6px; font: inherit; }
+textarea { resize: vertical; }
+#goal { font-weight: 600; }
+#files { gap: 8px; }
+#files button { text-align: left; overflow-wrap: anywhere; }
+details { border-top: 1px solid var(--vscode-panel-border); padding-top: 8px; }
+details[open] > * { margin-top: 8px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 250px; overflow: auto; }
+#composer { flex-shrink: 0; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); padding: 8px 0 0; border-top: 1px solid var(--vscode-panel-border); }
+#composer label { display: block; margin-bottom: 4px; }
+.log { flex: 0 0 auto; }
+.bubble { white-space: pre-wrap; }

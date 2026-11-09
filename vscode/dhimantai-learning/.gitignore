@@ -1,0 +1,17 @@
+node_modules/
+out/
+*.vsix
+staging-acceptance.json
+.vscode-test/
+.parity/
+
+media/livekit-client.umd.js
+media/livekit-client.LICENSE
+media/learning-room/
+media/study/
+media/coachMarkdown.js
+media/coachMarkdown.css
+media/fonts/
+
+media/course/labs/
+media/course/runner.cjs

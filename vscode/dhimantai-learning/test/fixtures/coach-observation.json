@@ -1,0 +1,42 @@
+{
+  "payload": {
+    "language": "python",
+    "notebook": {
+      "cells": [
+        {
+          "cell_type": "code",
+          "source": "print(\"λ 🥭\")\nabs -7\n"
+        }
+      ]
+    },
+    "argv": [
+      "sample.txt"
+    ],
+    "stdin": "λ\n",
+    "files": [
+      {
+        "name": "z.txt",
+        "content": "last\n"
+      },
+      {
+        "name": "sample.txt",
+        "content": "mango 🥭\n"
+      }
+    ]
+  },
+  "body": {
+    "expected_version": 3,
+    "runtime_observation": {
+      "state": "current",
+      "draft_version": 3,
+      "fingerprint": "c96ae6b0f28ca8acab9cab8d230c5905bc65dbaab56813e4174f920b2b0cf85b",
+      "execution": {
+        "status": "exited",
+        "exit_code": 1,
+        "stdout": "λ 🥭\n",
+        "stderr": "TypeError: unsupported operand type(s)",
+        "truncated": false
+      }
+    }
+  }
+}

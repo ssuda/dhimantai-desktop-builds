@@ -1,0 +1,41 @@
+# deepseek-harness overlay for the dhimantAI coach (verified against 0.2.1rc2, profile sdk-minimal).
+# Launch with DSH_TELEMETRY_DISABLED=1 (telemetry cannot be disabled by a patch).
+# No shell, terminals, jobs or file tools; no session-log upload or plugin inventory; read-only sandbox.
+# The coach's only tools come from the extension's local MCP server. The gateway enforces the same
+# allowlist server-side, so editing this file cannot give the model more tools.
+- id: terminal-bash
+  disabled: true
+- id: terminal-pwsh
+  disabled: true
+- id: persistent-bash
+  disabled: true
+- id: persistent-pwsh
+  disabled: true
+- id: pty
+  disabled: true
+- id: jobs
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-working-directory
+  disabled: true
+- id: mcp-resources
+  disabled: true
+- id: session-log-deepseek
+  disabled: true
+- id: plugin-package-inventory-deepseek
+  disabled: true
+- id: sandbox-policy
+  config:
+    mode: read-only
+    workspaceRoot: !!js process.cwd()
+- insert:
+    - id: coach-tools
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: dhimantai
+        transport: streamable-http
+        url: !!js process.env.DHIMANTAI_TOOLS_URL
+        headers:
+          authorization: !!js "'Bearer ' + process.env.DHIMANTAI_TOOLS_SECRET"
+        failOnStartupError: true

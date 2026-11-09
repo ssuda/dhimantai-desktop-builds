@@ -1,0 +1,10 @@
+.composer-box { display: block; padding: 6px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 18px; background: var(--vscode-input-background); }
+.composer-box:focus-within { border-color: var(--vscode-focusBorder); }
+.composer-box textarea { display: block; width: 100%; min-height: 66px; max-height: min(240px,30vh); padding: 10px 12px; margin: 0; border: 0; border-radius: 12px; background: transparent; color: var(--vscode-input-foreground); font: inherit; line-height: 1.55; resize: vertical; box-shadow: none; }
+.composer-box textarea:focus { outline: none; }
+.composer-toolbar, .composer-controls { display: flex; align-items: center; gap: 6px; }
+.composer-toolbar { flex-wrap: wrap; }
+.composer-controls { margin-left: auto; flex: none; }
+#composer-shortcut { font-size: 10px; color: var(--vscode-descriptionForeground); }
+.composer-box #send { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: auto; min-width: 88px; height: 36px; padding: 6px 12px; border-radius: 18px; }
+.composer-box #send svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

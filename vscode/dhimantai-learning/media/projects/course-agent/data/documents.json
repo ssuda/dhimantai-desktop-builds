@@ -1,0 +1,5 @@
+[
+  {"id":"submission","title":"Project submission","text":"Submit your project repository and README through the course project workspace. Include the commands needed to run your application and tests."},
+  {"id":"extensions","title":"Project deadline extensions","text":"Ask your assigned teacher for a deadline extension before the project deadline. Include your current progress and a proposed completion date."},
+  {"id":"feedback","title":"Project feedback","text":"Teacher feedback applies to the submitted project version. Improve your work and submit another version to request a new review."}
+]

@@ -1,0 +1,16 @@
+# Your course terminal configuration. This file survives container rebuilds.
+export ZSH=/opt/oh-my-zsh
+export ZSH_CUSTOM="$HOME/.oh-my-zsh-custom"
+export ZSH_CACHE_DIR="$HOME/.cache/oh-my-zsh"
+ZSH_THEME="robbyrussell"
+plugins=(git)
+# The extension updates the shared, versioned framework with the course runtime.
+zstyle ':omz:update' mode disabled
+source "$ZSH/oh-my-zsh.sh"
+# Keep the ready-to-type prompt explicit and familiar across all course languages.
+PROMPT='%F{cyan}%~%f $ '
+RPROMPT=''
+HISTFILE="$HOME/.zsh_history"
+HISTSIZE=10000
+SAVEHIST=10000
+setopt APPEND_HISTORY SHARE_HISTORY

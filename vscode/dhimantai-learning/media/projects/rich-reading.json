@@ -1,0 +1,237 @@
+{
+  "id": "rich-reading",
+  "version": 1,
+  "mode": "reading",
+  "title": "Read a codebase · Rich",
+  "files": [
+    "READING.md",
+    "READING_NOTES.md",
+    "README.md",
+    "pyproject.toml",
+    "reading/examples.py",
+    "reading/run.py",
+    "rich/__init__.py",
+    "rich/console.py",
+    "rich/text.py",
+    "rich/markup.py",
+    "rich/protocol.py",
+    "rich/segment.py",
+    "rich/table.py",
+    "rich/measure.py",
+    "rich/padding.py",
+    "rich/style.py",
+    "tests/test_console.py",
+    "tests/test_text.py",
+    "tests/test_markup.py",
+    "tests/test_table.py",
+    "tests/test_protocol.py"
+  ],
+  "steps": [
+    {
+      "id": "map",
+      "title": "1. Orient and prepare the container",
+      "goal": "Map a substantial repository and distinguish upstream code from the course examples.",
+      "opening": "Rich formats terminal output. You do not need to understand every module to follow one useful behaviour.",
+      "task": "Read READING.md and scan Explorer for rich/, tests/, examples/, docs/ and reading/. Use Quick Open for pyproject.toml to identify dependencies. Run setup once in the course container; it downloads pinned dependencies. Write a short directory map.",
+      "files": [
+        "READING.md",
+        "pyproject.toml",
+        "README.md",
+        "READING_NOTES.md"
+      ],
+      "check": "rich:setup",
+      "expected": "Setup reports Rich loading from this project source tree. reading/ contains separate course helpers; rich/ and tests/ are upstream.",
+      "hint": "Look for a library package, examples that call it, and tests that assert its behaviour. Defer benchmarks, release tools and unrelated features.",
+      "reflection": "Which directory would you open to answer a question about a public API, and why?"
+    },
+    {
+      "id": "caller",
+      "title": "2. Start from a tiny caller",
+      "goal": "Choose one concrete input and predict its output before entering library internals.",
+      "opening": "A small caller gives a large repository a focused reading route. Begin with plain_text in the course examples.",
+      "task": "Open reading/examples.py at plain_text. Identify the Console options, StringIO output and print call. Predict repr(output.getvalue()), including the newline. Run the example. Record the observed value and one question about how it was produced.",
+      "files": [
+        "reading/examples.py",
+        "READING_NOTES.md"
+      ],
+      "anchors": {
+        "reading/examples.py": "def plain_text("
+      },
+      "check": "rich:text",
+      "expected": "The example prints the representation of Hello, reader! followed by a newline. This is an observed output, not a test of understanding.",
+      "hint": "StringIO captures output in memory. The outer built-in print displays repr; the inner console.print is the library call you will trace.",
+      "reflection": "Why capture output instead of relying on terminal colors for this first investigation?"
+    },
+    {
+      "id": "entry",
+      "title": "3. Navigate into Console.print",
+      "goal": "Find a method in a long file and identify its major calls without reading the entire file.",
+      "opening": "Large files are navigable through symbols and questions. Focus on where arguments become renderable objects.",
+      "task": "From the caller, use Go to Definition if available. Otherwise Quick Open rich/console.py and search def print(. Coach's file link jumps there. Skim the signature and find _collect_renderables, render and buffer extension. Trace those calls for the plain string input.",
+      "files": [
+        "rich/console.py",
+        "reading/examples.py",
+        "rich/text.py"
+      ],
+      "anchors": {
+        "rich/console.py": "    def print(",
+        "rich/text.py": "    def __rich_console__("
+      },
+      "check": "rich:text",
+      "expected": "The same output is reproduced. Your notes identify the public method and the next internal boundary, without treating every branch as executed.",
+      "hint": "Use Go to Symbol in Editor or exact text search in console.py. Find the path for your actual arguments; leave JSON, logging and SVG export for another question.",
+      "reflection": "Which branch is irrelevant to this input, and how can you tell?"
+    },
+    {
+      "id": "collect",
+      "title": "4. Trace string to Text",
+      "goal": "Follow a change in representation across methods and modules.",
+      "opening": "The printed string is not the final representation. Console prepares renderable objects before converting them to terminal segments.",
+      "task": "Find _collect_renderables and its call to render_str. Follow the no-markup route into Text construction. Record input type, output type and who owns the conversion. Use workspace search for callers when symbol navigation is unavailable.",
+      "files": [
+        "rich/console.py",
+        "rich/text.py",
+        "reading/examples.py"
+      ],
+      "anchors": {
+        "rich/console.py": "    def _collect_renderables(",
+        "rich/text.py": "class Text("
+      },
+      "check": "rich:text",
+      "expected": "Your trace links the caller's string to Text and distinguishes preparation from final output.",
+      "hint": "Place the cursor near render_str before asking Coach about it; the shared context will show that region. Trace only the markup=False route first.",
+      "reflection": "What would change in the route if markup were enabled?"
+    },
+    {
+      "id": "markup",
+      "title": "5. Read a transformation",
+      "goal": "Separate plain content from style metadata and connect a parser to its tests.",
+      "opening": "Markup makes the representation visible: tags become style spans while the plain text loses the tags.",
+      "task": "Read the markup example, then Text.from_markup and markup.render. Predict text.plain, span boundaries and uncolored captured output. Run it. Read test_from_markup to locate its exact assertion; identify parsing separately from rendering.",
+      "files": [
+        "reading/examples.py",
+        "rich/text.py",
+        "rich/markup.py",
+        "tests/test_text.py"
+      ],
+      "anchors": {
+        "reading/examples.py": "def markup(",
+        "rich/text.py": "    def from_markup(",
+        "rich/markup.py": "def render(",
+        "tests/test_text.py": "def test_from_markup("
+      },
+      "check": "rich:markup",
+      "expected": "Plain text has no tags; the bold span covers Hello; captured output has no terminal color escapes.",
+      "hint": "Track two values: text characters and spans. A style can exist in the Text object even when the output device does not emit colors.",
+      "reflection": "Which observation supports the claim that parsing and terminal color output are separate?"
+    },
+    {
+      "id": "protocol",
+      "title": "6. Follow the rendering protocol",
+      "goal": "Explain how different objects participate in rendering without a separate print method for each type.",
+      "opening": "Python protocols can be ordinary methods rather than a shared base class. Trace one custom renderable to understand the contract.",
+      "task": "Read Greeting.__rich_console__ in the example. Follow Console.render, rich.protocol.rich_cast, Text.__rich_console__ and Segment. Predict the yielded object and final output, then run protocol. Distinguish yielding a Text object from writing bytes to the terminal.",
+      "files": [
+        "reading/examples.py",
+        "rich/console.py",
+        "rich/protocol.py",
+        "rich/text.py",
+        "rich/segment.py"
+      ],
+      "anchors": {
+        "reading/examples.py": "class Greeting:",
+        "rich/console.py": "    def render(",
+        "rich/text.py": "    def __rich_console__(",
+        "rich/segment.py": "class Segment("
+      },
+      "check": "rich:protocol",
+      "expected": "The custom greeting renders successfully. Your explanation names the protocol method and the recursive conversion to segments.",
+      "hint": "In Console.render, find how __rich_console__ is obtained, then what happens to each item it yields. Compare a Segment with another renderable.",
+      "reflection": "Why can Greeting work without inheriting from Console or Text?"
+    },
+    {
+      "id": "tests",
+      "title": "7. Read upstream tests as evidence",
+      "goal": "Use tests to recover a contract and recognize the limits of a selected test run.",
+      "opening": "Tests expose concrete input/output claims. Read their setup and assertions before running them.",
+      "task": "Use Quick Open for tests/test_console.py and find test_print, test_print_multiple and test_print_empty. Predict each captured value, then run the focused tests. Explain which Console behaviour each assertion covers and what remains outside these three tests.",
+      "files": [
+        "tests/test_console.py",
+        "rich/console.py",
+        "READING_NOTES.md"
+      ],
+      "anchors": {
+        "tests/test_console.py": "def test_print(",
+        "rich/console.py": "    def print("
+      },
+      "check": "rich:test-console",
+      "expected": "Three selected upstream tests pass. This does not mean the entire upstream suite has run or prove your understanding.",
+      "hint": "StringIO and fixed Console options make assertions repeatable. Read the expected string literally, including spaces and newlines.",
+      "reflection": "Which boundary case would you investigate next, and which existing test might cover it?"
+    },
+    {
+      "id": "table",
+      "title": "8. Trace a feature across modules",
+      "goal": "Build a focused call/data map for a table using the same navigation method.",
+      "opening": "Transfer the method to a richer object. A table stores rows, measures columns and yields renderable output.",
+      "task": "Read the table example. Follow Table.add_row, Table.__rich_console__ and _render. Look into measure.py only when the trace needs column widths. Predict the rows and column alignment, then run table. Draw a path from caller to row storage to measurement to rendering.",
+      "files": [
+        "reading/examples.py",
+        "rich/table.py",
+        "rich/measure.py",
+        "rich/console.py"
+      ],
+      "anchors": {
+        "reading/examples.py": "def table(",
+        "rich/table.py": "    def __rich_console__(",
+        "rich/measure.py": "class Measurement(",
+        "rich/console.py": "    def render("
+      },
+      "check": "rich:table",
+      "expected": "A two-column book table appears. Your trace separates stored cell content, width calculation and generated output.",
+      "hint": "Search for add_row to find the mutation, then __rich_console__ to find the rendering entry. Follow one width calculation before expanding the whole call graph.",
+      "reflection": "Where would you investigate a wrong column width versus a missing row?"
+    },
+    {
+      "id": "contrast",
+      "title": "9. Compare a boundary and its tests",
+      "goal": "Distinguish a behaviour claim from a hypothesis and support it with upstream assertions.",
+      "opening": "Use a contrast to sharpen your model: ordinary rows versus no columns, valid renderables versus invalid values.",
+      "task": "Read test_no_columns and test_not_renderable in tests/test_table.py. Find the branches they exercise in table.py, predict the outcomes, then run the table tests. Record the supporting assertion and one path you have not verified.",
+      "files": [
+        "tests/test_table.py",
+        "rich/table.py",
+        "READING_NOTES.md"
+      ],
+      "anchors": {
+        "tests/test_table.py": "def test_not_renderable(",
+        "rich/table.py": "    def add_row("
+      },
+      "check": "rich:test-table",
+      "expected": "The focused table test file runs. Notes explain specific tested boundaries rather than declaring the whole library correct.",
+      "hint": "Follow the pytest.raises block as a statement about one error condition. Compare it with the single newline asserted for a table with no columns.",
+      "reflection": "What source evidence links each test to the branch you identified?"
+    },
+    {
+      "id": "independent",
+      "title": "10. Make your own reading route",
+      "goal": "Apply the navigation method to a nearby behaviour and explain the evidence and assistance behind your conclusions.",
+      "opening": "Choose a question that fits the files you now know, such as escaped markup or printing multiple Text objects.",
+      "task": "Select one new case in tests/test_markup.py. Record the question, prediction, path/symbol trace and assertion before running the markup tests. Finish READING_NOTES.md with remaining uncertainties and assistance. Save a local checkpoint if useful; explore other Rich features in the full repository when ready.",
+      "files": [
+        "tests/test_markup.py",
+        "rich/markup.py",
+        "rich/text.py",
+        "READING_NOTES.md"
+      ],
+      "anchors": {
+        "tests/test_markup.py": "def test_render_escape(",
+        "rich/markup.py": "def render("
+      },
+      "check": "rich:test-markup",
+      "expected": "Markup tests run and your notes make the investigation reproducible. Coach help and a local checkpoint are not independent mastery or an official submission.",
+      "hint": "Search a literal input from a test, follow only the parser branch it triggers, and explain why its assertion follows. Ask Coach for one smaller step if the trace becomes too broad.",
+      "reflection": "How would you begin the next unfamiliar repository using what worked here?"
+    }
+  ]
+}

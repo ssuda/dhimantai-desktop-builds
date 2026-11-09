@@ -1,0 +1,22 @@
+.audio-split { position: relative; display: inline-flex; flex: none; align-items: center; height: 44px; border-radius: 22px; background: linear-gradient(135deg, #0d9488, #10b981); box-shadow: 0 3px 8px #0d948859; color: white; }
+.audio-split[data-muted=true] { background: linear-gradient(135deg, #e11d48, #f43f5e); box-shadow: 0 3px 8px #e11d4859; }
+.audio-split > button { height: 44px; margin: 0; padding: 8px 14px; border: 0; border-radius: 22px 0 0 22px; background: transparent; color: inherit; cursor: pointer; }
+.audio-split > .audio-chevron { position: relative; padding: 8px 10px; border-radius: 0 22px 22px 0; }
+.audio-chevron::before { position: absolute; content: ''; left: 0; top: 12px; height: 20px; width: 1px; background: #ffffff60; }
+.audio-split > button:hover { background: #0002; }
+.audio-split > button:disabled { opacity: .55; cursor: default; }
+.audio-split > button:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 3px; }
+.audio-split svg { display: block; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.audio-picker { position: absolute; top: calc(100% + 8px); left: 0; z-index: 20; width: min(280px, calc(100vw - 40px)); padding: 14px; border: 1px solid var(--vscode-widget-border, #888); border-radius: 12px; background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-foreground, #eee); box-shadow: 0 4px 16px #0004; }
+.audio-picker[hidden] { display: none; }
+.audio-picker strong { display: block; margin-bottom: 8px; }
+.audio-picker button { display: block; width: 100%; text-align: left; padding: 8px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: inherit; font: inherit; overflow-wrap: anywhere; cursor: pointer; }
+.audio-picker button[aria-pressed=true] { background: var(--vscode-list-activeSelectionBackground, #094771); color: var(--vscode-list-activeSelectionForeground, #fff); }
+.audio-picker button:hover { outline: 1px solid var(--vscode-focusBorder); }
+.audio-picker p { margin: 8px 0 0; font-size: .9em; color: var(--vscode-descriptionForeground); }
+.audio-picker p:empty { display: none; }
+.audio-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#audio-microphone { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 8px; border: 0; background: transparent; color: var(--vscode-disabledForeground, #888); cursor: not-allowed; }
+#audio-microphone svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.audio-actions { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-widget-border, #888); }
+@media (forced-colors: active) { .audio-split { border: 1px solid ButtonText; } .audio-split[data-muted=true] { border: 2px solid Highlight; } }

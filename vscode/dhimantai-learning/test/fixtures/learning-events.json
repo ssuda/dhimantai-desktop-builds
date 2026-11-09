@@ -1,0 +1,15 @@
+{
+  "comment": "Learning events exactly as the extension sends them. test/learningLoop.test.ts checks these match the extension's own types and generator; agent/tests/test_learning_events.py checks the real backend validator accepts every one.",
+  "events": [
+    {"id": "11111111-1111-4111-8111-111111111111", "type": "run", "at": "2026-10-23T09:00:00.000Z", "draftVersion": 3, "status": "exited", "clean": false, "expected": "match",
+     "predicted": {"matched": 1, "total": 2, "exact": false, "firstSurprise": {"line": 2, "predicted": "apples 1", "actual": "apples 2"}}},
+    {"id": "22222222-2222-4222-8222-222222222222", "type": "run", "at": "2026-10-23T09:01:00.000Z", "status": "exited", "clean": true, "expected": "match"},
+    {"id": "33333333-3333-4333-8333-333333333333", "type": "trace", "at": "2026-10-23T09:02:00.000Z", "steps": 2000},
+    {"id": "44444444-4444-4444-8444-444444444444", "type": "help", "at": "2026-10-23T09:03:00.000Z", "mode": "statement", "explanation": "I think the file object is never read", "duringVariation": false},
+    {"id": "55555555-5555-4555-8555-555555555555", "type": "applied", "at": "2026-10-23T09:04:00.000Z", "mode": "statement"},
+    {"id": "66666666-6666-4666-8666-666666666666", "type": "variation", "at": "2026-10-23T09:05:00.000Z", "seed": 999999999,
+     "outcome": {"prediction": {"matched": 3, "total": 3, "exact": true}, "correctness": {"result": "match"}, "independent": true, "clean": true, "passed": true}},
+    {"id": "77777777-7777-4777-8777-777777777777", "type": "variation", "at": "2026-10-23T09:06:00.000Z", "seed": 0,
+     "outcome": {"prediction": {"matched": 1, "total": 3, "exact": false, "firstSurprise": {"line": 2, "predicted": "b 1", "actual": "b 2"}}, "independent": false, "clean": false, "passed": false}}
+  ]
+}

@@ -1,0 +1,6 @@
+node_modules/
+**/out/
+**/__pycache__/
+*.vsix
+.env*
+desktop-flutter.json
