@@ -219,6 +219,12 @@ def main():
         run(['hdiutil', 'create', '-ov', '-format', 'UDZO', '-volname', 'dhimantAI Preview', '-srcfolder', built, disk], REPO)
         outputs.append(disk)
     elif system == 'win32':
+        # Inno Setup requires the upstream maintenance helper in tools/, even
+        # when automatic updates are disabled. It also cleans up manual upgrades.
+        run([npm, 'run', 'gulp', f'vscode-win32-{args.arch}-inno-updater'], source, env)
+        for name in ['inno_updater.exe', 'vcruntime140.dll']:
+            if not (built / 'tools' / name).is_file():
+                raise RuntimeError(f'Missing Windows installer helper: {name}')
         run([npm, 'run', 'gulp', f'vscode-win32-{args.arch}-user-setup'], source, env)
         installer = source / f'.build/win32-{args.arch}/user-setup/VSCodeSetup.exe'
         target = output / (stem + '-setup.exe'); shutil.copyfile(installer, target); outputs.append(target)

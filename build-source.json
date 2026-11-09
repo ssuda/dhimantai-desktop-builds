@@ -1,5 +1,5 @@
 {
-  "sourceCommit": "d2055de8a80126b0a2adc4428dcbafa7adb18d0b",
+  "sourceCommit": "d68b7c5191d50ee35882d5a28fd48233d0878c78",
   "sourceRepository": "bitbucket.org/optficial/dhimantai",
   "files": {
     ".github/workflows/desktop-preview.yml": "161dec13e0235780d2f13dcf95550443b91528b6c114335b77dc268ffa7582c8",
@@ -20,7 +20,7 @@
     "content/courses/build-an-llm-from-scratch/07-instruction-tuning.md": "1153882eba71a3f07fe73c4930093f0021872b947556866a20fe555a4629e3ca",
     "vscode/desktop/.gitignore": "31a350e73feaac3cb382bb353ba9db7a993c085f986e6fd6fa74287b9d71c4d0",
     "vscode/desktop/README.md": "57ec7a8e7fede691a2543038e2144de2ff2ffcdc96388daa3cfa3a182508def9",
-    "vscode/desktop/build.py": "7afcb167f4005b20483a73f5e868c1beb830c25d706bf30f3daa0a76bbf9a423",
+    "vscode/desktop/build.py": "dd606b484c263c5eea759db62445b344a11c736c5f4a3a3c5a523564b991e204",
     "vscode/desktop/customize.py": "03780eb81648e26ab778309f630e7583bdb668634117499829519c14fd3807e2",
     "vscode/desktop/export_build_source.py": "15e47d3f69f94a0db86bec202cfb1954c2dab8cdd68716f3c5e9729c006499a9",
     "vscode/desktop/lock.json": "24f7cf36de9a64d20bfc2e0d277d2200ccb853cd336dbe080274106cb3f2944c",
