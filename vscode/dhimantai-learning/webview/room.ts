@@ -917,20 +917,20 @@ window.addEventListener('message', e => {
     replyContexts.clear(); updateHelpReplies();
     pendingNotebook?.finish({error:'Runtime changed. Ask ' + names[mode] + ' again with a current run.'});
     if (d.runtime) {
-      selectedRuntime = d.runtime;
+      selectedRuntime = 'course';
       if (runtimePicker) runtimePicker.value = selectedRuntime;
-      editors.runtime = selectedRuntime === 'course' ? 'Course container · Podman' : 'Local language tools';
+      editors.runtime = 'Course container · Podman';
     }
     editors.restartRuntime(); status.textContent = 'Runtime restarted. Run the required cells again.'; return;
   }
   if (d?.type === 'runtimeSelected') {
     replyContexts.clear(); updateHelpReplies();
     pendingNotebook?.finish({error:'Runtime changed. Ask ' + names[mode] + ' again with a current run.'});
-    selectedRuntime = d.runtime;
+    selectedRuntime = 'course';
     if (runtimePicker) runtimePicker.value = selectedRuntime;
-    editors.runtime = selectedRuntime === 'course' ? 'Course container · Podman' : 'Local language tools';
+    editors.runtime = 'Course container · Podman';
     editors.restartRuntime();
-    status.textContent = selectedRuntime === 'course' ? 'Course container ready.' : 'Using local language tools.';
+    status.textContent = 'Course container ready.';
     return;
   }
   if (d?.type === 'workstationState' && runtimePicker) {
@@ -1068,9 +1068,6 @@ for (const [id, handler] of Object.entries({
   'save-notebook': () => host.postMessage({type:'exportNotebook', documentKey, notebook:snapshotNotebook()}),
   'open-notebook': () => host.postMessage({type:'importNotebook', documentKey}),
   'restart-runtime': () => host.postMessage({type:'restartRuntime', documentKey}),
-  // Actions, not runtimes: they stay out of the Runtime dropdown.
-  'runtime-terminal': () => host.postMessage({type:'runtime', runtime:'terminal'}),
-  'runtime-setup': () => host.postMessage({type:'runtime', runtime:'setup'}),
 })) { if (button(id)) button(id).onclick = handler; }
 const runtimePicker = document.getElementById('course-runtime') as HTMLSelectElement | null;
 let selectedRuntime = runtimePicker?.value ?? 'course';

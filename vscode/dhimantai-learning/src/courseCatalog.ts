@@ -7,6 +7,8 @@ import { accessPeriod, CatalogCourse, LearningOffer, learnerRpc, PublicCatalog }
 import { Api, LearningPurchases } from './api';
 import { checkoutUri, priceLabel } from './learningBilling';
 import type { CompanionCourse } from './studyContent';
+import { CATALOG_PROJECTS } from './catalogProjects';
+import { ProjectResults, ProjectSummary } from './projectResults';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
@@ -27,18 +29,21 @@ function categorySections(courses: CatalogCourse[], card: (course: CatalogCourse
   }).join('');
 }
 
-function essentialsSection(courses: CatalogCourse[], card: (course: CatalogCourse) => string,
-    button: (label: string, type: string, id?: string, disabled?: boolean, secondary?: boolean) => string): string {
+function essentialsSection(courses: CatalogCourse[], card: (course: CatalogCourse) => string): string {
+  const access = courses.every(c => c.is_free)
+    ? 'Every course in this track is free in full, with all chapters included.'
+    : courses.every(c => !c.is_free)
+      ? 'Each course includes a free first chapter. Unlock the paid course to access the remaining chapters.'
+      : 'Courses labelled Free include all chapters. Paid courses include a free first chapter; unlock the course for the remaining chapters.';
   const present = new Set(courses.map(c => c.id));
   const paths = ESSENTIAL_PATHS.map(path => ({...path, ids: path.courses.map(id => 'engineering-' + id).filter(id => present.has(id))}))
     .filter(path => path.ids.length);
   const pathButton = (label: string, ids: string, pressed: boolean) =>
     `<button type="button" class="secondary" data-path="${escape(ids)}" aria-pressed="${pressed}">${escape(label)}</button>`;
   return `<section class="essentials" aria-labelledby="essentials-title"><h3 id="essentials-title">Engineering Essentials</h3>
-    <p class="muted">Short courses on the habits strong engineers rely on, 30 to 50 minutes each. ${courses.some(c => c.is_free) ? 'Start free with ' + courses.filter(c => c.is_free).map(c => escape(c.title)).join(', ') + '. The others include a free first chapter. ' : ''}None is required before another course; pick the path for what you are about to do.</p>
+    <p class="muted">Short courses on the habits strong engineers rely on, 30 to 50 minutes each. ${access} None is required before another course; pick the path for what you are about to do.</p>
     <div class="paths" role="group" aria-label="Suggested paths">${pathButton('All', '', true)}${paths.map(p => pathButton(p.label, p.ids.join(' '), false)).join('')}</div>
-    <div class="courses">${courses.map(card).join('')}</div>
-    <p class="muted">Read a Python codebase with Coach: start with shelf or explore the larger Rich repository. You can also build a Course Research Agent or fix the shelf capstone bug. ${button('Start a course project', 'capstone', '', false, true)}</p></section>`;
+    <div class="courses">${courses.map(card).join('')}</div></section>`;
 }
 
 export class CourseCatalog implements vscode.Disposable {
@@ -50,14 +55,16 @@ export class CourseCatalog implements vscode.Disposable {
   private awaitingPayment = false;
   private welcomePending?: Promise<void>;
   private subscriptions: vscode.Disposable[];
+  private projects: ProjectSummary[] = [];
 
   constructor(private readonly auth: Auth, private readonly environment: () => EnvironmentName,
       private readonly service: () => Environment, private readonly joined: () => void,
       private readonly learningOpen: () => boolean = () => false,
-      private readonly companions: CompanionCourse[] = []) {
+      private readonly companions: CompanionCourse[] = [], private readonly results?: ProjectResults,
+      private readonly media = '') {
     this.subscriptions = [auth.onDidChange(() => { void this.refresh(); }),
       vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('dhimantai.environment')) void this.refresh(); }),
-      vscode.window.onDidChangeWindowState(state => { if (state.focused && this.awaitingPayment) void this.refresh(true); })];
+      vscode.window.onDidChangeWindowState(state => { if (state.focused) void this.refresh(this.awaitingPayment); })];
   }
   dispose() { this.sequence++; this.panel?.dispose(); this.subscriptions.forEach(d => d.dispose()); }
   /** One welcome per VS Code profile, including profiles upgrading from the old notebook-first experience. */
@@ -99,9 +106,13 @@ export class CourseCatalog implements vscode.Disposable {
     if (!this.panel) return;
     const sequence = ++this.sequence, environment = this.environment(), env = this.service();
     this.selection = undefined;
+    this.projects = [];
     this.render(undefined, 'Loading courses…', true);
     try {
       const account = (await this.auth.session())?.user.id;
+      const projects = await this.results?.summaries(this.media, environment, account ?? 'local') ?? [];
+      if (sequence !== this.sequence || environment !== this.environment()) return;
+      this.projects = projects;
       const token = account ? await this.auth.accessToken() : undefined;
       if (sequence !== this.sequence || environment !== this.environment()) return;
       let billing: LearningPurchases | undefined;
@@ -122,6 +133,7 @@ export class CourseCatalog implements vscode.Disposable {
   }
   private async handle(message: any) {
     // Navigation and sign-in must also work while loading or when the catalog is offline.
+    if (message?.type === 'commands') return vscode.commands.executeCommand('dhimantai.searchCommands');
     if (message?.type === 'tutor') return vscode.commands.executeCommand('dhimantai.openLearningRoom');
     if (message?.type === 'doubtSolver') return vscode.commands.executeCommand('dhimantai.openDoubtSolver');
     if (message?.type === 'practice') return vscode.commands.executeCommand('dhimantai.browsePractice');
@@ -131,6 +143,17 @@ export class CourseCatalog implements vscode.Disposable {
       return vscode.commands.executeCommand('dhimantai.openStudy', companion?.id ?? course?.title);
     }
     if (message?.type === 'capstone') return vscode.commands.executeCommand('dhimantai.startCapstone', message.id);
+    if (message?.type === 'project') {
+      const project = CATALOG_PROJECTS.find(p => p.id === message.id);
+      if (project) {
+        const records = this.projects.filter(p => p.projectId === project.id);
+        const record = records.length < 2 ? records[0] : await vscode.window.showQuickPick(
+          records.map(r => ({...r, label: r.title, description: r.root, detail: r.status})), {title: 'Open project'});
+        if (record) return vscode.commands.executeCommand('dhimantai.openSavedProject', record.root);
+        if (!records.length) return vscode.commands.executeCommand('dhimantai.startCapstone', project.id);
+      }
+      return;
+    }
     if (message?.type === 'signUp' || message?.type === 'signIn') {
       await vscode.commands.executeCommand(`dhimantai.${message.type}`, this.environment());
       return this.refresh();
@@ -218,6 +241,14 @@ export class CourseCatalog implements vscode.Disposable {
         <div class="actions">${offer.owned ? '<span>Purchased</span>' : buy(offer, 'Buy bundle', false)}</div></article>`;
     };
     const statusText = ({paid: 'Paid · unlocked', refunded: 'Refunded', created: 'Awaiting payment', creating: 'Confirming checkout'}) as Record<string, string>;
+    const projects = `<section class="category projects" aria-labelledby="projects-title"><h3 id="projects-title">Projects</h3>
+      <p class="muted">Put your skills into practice with a complete Python project. Projects use your course container; estimated times exclude initial setup.</p>
+      <div class="courses">${CATALOG_PROJECTS.map(project => `<article class="course project" data-project="${escape(project.id)}" aria-labelledby="project-${escape(project.id)}">
+        <span class="muted small">${escape(project.difficulty)} · Estimated ${escape(project.estimatedTime)}</span>
+        <h2 id="project-${escape(project.id)}">${escape(project.title)}</h2><p>${escape(project.description)}</p>
+        <p class="small"><strong>Learning outcomes</strong></p><ul class="small">${project.outcomes.map(outcome => `<li>${escape(outcome)}</li>`).join('')}</ul>
+        <p class="small" role="status">${escape(this.projects.find(p => p.projectId === project.id)?.status ?? 'Not started')}</p>
+        <div class="actions">${button(this.projects.some(p => p.projectId === project.id) ? 'Open Project' : 'Start Project', 'project', project.id)}</div></article>`).join('')}</div></section>`;
     this.panel.webview.html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>dhimantAI Course Catalog</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
@@ -227,6 +258,7 @@ export class CourseCatalog implements vscode.Disposable {
       header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}nav,.actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.actions{margin-top:14px}
       input{box-sizing:border-box;width:100%;padding:9px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);margin:6px 0 18px}
       .courses{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:16px;margin-top:16px}.course{display:flex;flex-direction:column;border:1px solid var(--vscode-panel-border);border-radius:10px;padding:20px}
+      .projects .courses{grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr))}.project ul{margin-top:0}
       .course .actions{margin-top:auto;padding-top:12px}.essentials .courses{grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px}.course.compact{padding:14px 16px}.course.compact h2{font-size:16px}.paths{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.paths button[aria-pressed="true"]{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}.access{font-weight:600}.price{font-size:18px}.save{margin-left:6px;padding:1px 7px;border-radius:9px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);font-size:.85em}
       button{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:1px solid transparent;padding:7px 14px;border-radius:4px;cursor:pointer;font:inherit}
       button:hover{background:var(--vscode-button-hoverBackground)}button.secondary{background:var(--vscode-button-secondaryBackground,transparent);color:var(--vscode-button-secondaryForeground,var(--vscode-foreground));border-color:var(--vscode-button-border,var(--vscode-panel-border))}
@@ -237,18 +269,19 @@ export class CourseCatalog implements vscode.Disposable {
       </style></head><body>
       <header><div><p class="muted small">Welcome to dhimantAI</p><h1>Course Catalog</h1>${environment === 'production' ? '' : `<p class="muted small">${escape(environment)} service</p>`}</div>
       <nav aria-label="Learning">${button('Instructor', 'tutor', '', false, true)}${button('Study', 'study', '', false, true)}${button('Doubt Solver', 'doubtSolver', '', false, true)}${account ? button('My courses', 'practice', '', false, true) : button('Sign in', 'signIn', '', false, true)}</nav></header>
-      <p>Choose a course below, learn step by step with <strong>Instructor</strong>, or bring a specific question to <strong>Doubt Solver</strong>.</p>
-      <p class="muted">Write, debug, and test code here in VS Code. Run it with a course container, this computer, or a Colab runtime for Python notebooks.</p>
-      <details><summary>About code help and runtime setup</summary><p>To protect independent assessment work, dhimantAI disables VS Code's built-in Copilot chat and AI suggestions while the extension is enabled, including in other workspaces through your user settings. Instructor and Doubt Solver remain available. To use Copilot again, disable or uninstall dhimantAI, then turn off <strong>Chat: Disable AI Features</strong> in Settings.</p><p>First course container setup takes several minutes and needs internet access. To prepare it before your first run, choose <strong>Set up / rebuild course</strong> in the notebook's runtime dropdown. Later runs reuse the prepared runtime.</p></details>
+      <p>Choose a course or project below, learn step by step with <strong>Instructor</strong>, or bring a specific question to <strong>Doubt Solver</strong>.</p>
+      <p class="muted">Write, debug, and test code here in VS Code. Run projects and tests in your course container. Open its terminal from the Runtime dropdown.</p>
+      <details><summary>About code help and runtime setup</summary><p>${button('Search commands', 'commands', '', false, true)} Find an action by name in the Command Palette. New commands appear here automatically.</p><p>To protect independent assessment work, dhimantAI disables VS Code's built-in Copilot chat and AI suggestions while the extension is enabled, including in other workspaces through your user settings. Instructor and Doubt Solver remain available. To use Copilot again, disable or uninstall dhimantAI, then turn off <strong>Chat: Disable AI Features</strong> in Settings.</p><p>First course container setup takes several minutes and needs internet access. To prepare it before your first run, choose <strong>Set up / rebuild course</strong> in the notebook's runtime dropdown. Later runs reuse the prepared runtime.</p></details>
       <p class="muted">Free courses include every chapter. Other courses include a free first chapter, with a one-time payment to unlock the rest.
         Each course gives access for a set number of days from when you join or buy it; after that every chapter locks, the first one too.</p>
       ${catalog && account && !individual ? '<p>You are signed in with an institute account. Public courses use a separate individual learner account. Choose <strong>Use individual account</strong> to sign in with email or create an individual account. Join a course there to see it in Practice. <strong>My courses</strong> opens your institute learning.</p>' : ''}
       ${account && billing && !billing.payments_ready ? '<p class="muted">Payments are not available yet. Free courses and free first chapters remain available.</p>' : ''}
       <p id="status" role="status">${escape(message)}${pending || this.awaitingPayment ? ' ' + button('Check payment', 'refresh', '', false, true) : ''}</p>
-      ${courses.length + this.companions.length > 6 ? '<label for="search" class="muted small">Search courses</label><input id="search" type="search" placeholder="Course name or topic">' : ''}
-      <main>${categorySections(others, courseCard, essentials.length ? essentialsSection(essentials, courseCard, button) : '')}
+      ${courses.length + this.companions.length + CATALOG_PROJECTS.length > 6 ? '<label for="search" class="muted small">Search courses and projects</label><input id="search" type="search" placeholder="Course, project, or topic">' : ''}
+      <main>${categorySections(others, courseCard, essentials.length ? essentialsSection(essentials, courseCard) : '')}
+      ${projects}
       ${this.companions.length ? `<section aria-labelledby="book-companions"><h3 id="book-companions">Programming book companions</h3><p class="muted">Original lessons, worked examples and practice activities with links to seven influential books. Included with the extension; reading works offline. Sign in for Study help.</p><div class="courses">${this.companions.map(c => `<article class="course" data-course="${escape(c.id)}"><span class="muted small">${c.chapters.length} chapters · Free companion</span><h2>${escape(c.title)}</h2><p class="muted small">Book by ${escape(c.author)}</p><p>${escape(c.summary)}</p><details><summary>Outline and preparation</summary><ol>${c.chapters.map(ch => `<li>${escape(ch.title)}</li>`).join('')}</ol><p>${escape(c.preparation)}</p></details><div class="actions">${button('Study', 'study', c.id)}</div></article>`).join('')}</div></section>` : ''}</main>
-      <p id="empty" ${courses.length || this.companions.length ? 'hidden' : ''}>${catalog ? 'No published courses are available yet. Please check again later.' : ''}</p>
+      <p id="empty" hidden>No matching courses or projects. Try another search.</p>
       ${bundles.length ? `<section aria-labelledby="pricing"><h3 id="pricing">Bundles</h3><div class="courses">${bundles.map(bundleCard).join('')}</div></section>` : ''}
       ${billing?.purchases.length ? `<h3>Your purchases</h3><ul>${billing.purchases.map(p => `<li>${escape(p.title)} · ${escape(priceLabel(p.amount, p.currency))} · ${escape(statusText[p.status] ?? p.status)}</li>`).join('')}</ul>` : ''}
       <div class="actions">${button('Refresh courses & purchases', 'refresh', '', loading, true)}</div>
@@ -258,9 +291,10 @@ export class CourseCatalog implements vscode.Disposable {
         if(['join','buy','refresh'].includes(b.dataset.action)){b.disabled=true;document.getElementById('status').textContent=b.dataset.action==='buy'?'Opening secure checkout…':b.dataset.action==='refresh'?'Refreshing courses and purchases…':'Joining…';}
         vscode.postMessage({type:b.dataset.action,id:b.dataset.id});});
       document.getElementById('search')?.addEventListener('input',e=>{const q=e.target.value.trim().toLowerCase();let count=0;
-        document.querySelectorAll('.course[data-course]').forEach(c=>{c.hidden=!c.textContent.toLowerCase().includes(q);if(!c.hidden)count++;});
+        document.querySelectorAll('.course[data-course],.course[data-project]').forEach(c=>{c.hidden=!c.textContent.toLowerCase().includes(q);if(!c.hidden)count++;});
         document.querySelectorAll('.paths button').forEach(p=>p.setAttribute('aria-pressed',String(p.dataset.path==='')));
-        const empty=document.getElementById('empty');empty.hidden=count>0;empty.textContent='No matching courses. Try another search.';});
+        document.querySelectorAll('main section').forEach(s=>{s.hidden=![...s.querySelectorAll('.course')].some(c=>!c.hidden);});
+        document.getElementById('empty').hidden=count>0;});
       document.querySelectorAll('.paths button').forEach(b=>b.addEventListener('click',()=>{const ids=b.dataset.path?b.dataset.path.split(' '):null;
         document.querySelectorAll('.paths button').forEach(p=>p.setAttribute('aria-pressed',String(p===b)));
         document.querySelectorAll('.essentials .course').forEach(c=>{c.hidden=!!ids&&!ids.includes(c.dataset.course);});

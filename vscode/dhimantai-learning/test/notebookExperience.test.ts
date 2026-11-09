@@ -13,12 +13,12 @@ import { learningComposer } from '../src/learningComposer';
 import { chapterId, lessonPicker, selectLesson } from './lessonPicker';
 
 function surface(livekit: unknown = {RoomEvent:{}}, composer = learningComposer('Instructor', true, '<button type="button" id="sound"></button>')) {
-  const ids = ['tutor','doubt_solver','end','wide','latest','add-note','add-code','save-notebook','open-notebook','restart-runtime','runtime-terminal','runtime-setup','clear-conversation'];
+  const ids = ['tutor','doubt_solver','end','wide','latest','add-note','add-code','save-notebook','open-notebook','restart-runtime','clear-conversation'];
   const dom = new JSDOM('<!doctype html><header class="workspace-header"><div class="workspace-title"><h1>Implement `subtract_time` &lt; safely</h1></div><div class="workspace-actions"></div></header><main id="feed"></main>' + composer
     + ids.map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('')
     + '<input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox"><span id="status"></span><span id="code-observer-status"></span><span id="notebook-save-status"></span>'
     + '<select id="cell-language">' + Object.keys(cellLanguages).map(language => `<option>${language}</option>`).join('') + '</select>'
-    + '<select id="course-runtime"><option value="course">Course container</option><option value="local">This computer</option></select>',
+    + '<select id="course-runtime"><option value="course">Course container</option><option value="terminal">Open course terminal</option><option value="setup">Set up / rebuild course</option></select>',
     {runScripts:'outside-only',url:'https://webview.example',pretendToBeVisual:true});
   const w = dom.window, sent: any[] = [];
   w.document.body.insertAdjacentHTML('afterbegin', lessonPicker);
@@ -299,22 +299,20 @@ test('Python tokens are distinct and skill search keeps its selected skill witho
   } finally { await ui.close(); }
 });
 
-test('the runtime dropdown holds runtimes; the menu opens the terminal and rebuilds; changes wait for the host', async () => {
+test('the runtime dropdown opens container terminals and setup without a host runtime option', async () => {
   const ui = surface();
   try {
     const picker = ui.w.document.getElementById('course-runtime') as HTMLSelectElement;
+    assert.equal(picker.querySelector('[value="local"]'), null);
     assert.equal(picker.value, 'course');
     for (const runtime of ['terminal', 'setup']) {
-      ui.click('runtime-' + runtime);
-      assert.equal(ui.sent.at(-1).type, 'runtime'); assert.equal(ui.sent.at(-1).runtime, runtime, 'terminal and rebuild are menu actions');
+      picker.value = runtime; picker.dispatchEvent(new ui.w.Event('change'));
+      assert.equal(ui.sent.at(-1).type, 'runtime'); assert.equal(ui.sent.at(-1).runtime, runtime);
+      assert.equal(picker.value, 'course');
     }
-    picker.value = 'local';
-    picker.dispatchEvent(new ui.w.Event('change'));
-    assert.equal(ui.sent.at(-1).runtime, 'local');
+    ui.post({type:'runtimeSelected', runtime:'course'});
     assert.equal(picker.value, 'course');
-    ui.post({type:'runtimeSelected', runtime:'local'});
-    assert.equal(picker.value, 'local');
-    assert.match(ui.w.document.getElementById('status')!.textContent!, /local language tools/);
+    assert.match(ui.w.document.getElementById('status')!.textContent!, /Course container ready/);
   } finally { await ui.close(); }
 });
 

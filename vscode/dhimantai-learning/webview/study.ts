@@ -35,12 +35,12 @@ let courseId = '';
 let source: StudySource | undefined, documentKey = '', selected = '', ai = false, busy = false, generation = 0;
 let signedIn = false, visible = true;
 let cropImage:CropImage|undefined, cropSelector:StudyCropSelector;
-let resume: string | undefined;
-let positionTimer: ReturnType<typeof setTimeout> | undefined;
+let atStart = true, atEnd = true;
 const post = (data: object) => host.postMessage({...data, documentKey});
 
 let roomReady=false, requestId='', deliveredQuiz='', responding=false;
 let submittedDraft='';
+let exchange:HTMLElement|undefined;
 const writtenCards = new Set<string>();
 let action:StudyAction|undefined;
 let screen:StudyAction = 'ask';
@@ -56,7 +56,7 @@ function finishHelp(error='') {
 }
 const agentRoom=new AgentRoom({
   packet(packet) {
-    if(!source||!requestId)return false;
+    if(!source||!requestId||!exchange?.isConnected)return false;
     if(packet.study_request_id!==requestId)return false;
     if(packet.method==='on_viva_questions') {
       if(action!=='quiz'||deliveredQuiz===requestId||!Array.isArray(packet.questions)||packet.questions.length!==3)return false;
@@ -70,17 +70,15 @@ const agentRoom=new AgentRoom({
       // Reliable data and RPC can deliver the same card; render it only once.
       if(!writtenCards.has(packet.content)) {
         writtenCards.add(packet.content);
-        if(action==='ask') {
-          const card=document.createElement('section');card.className='study-answer-card';
-          showStudyResponse(card,packet.content,false);el('response').append(card);
-          const practice=Array.from(card.querySelectorAll<HTMLElement>('h2,h3')).find(h=>/^(Your turn|Practice)\b/i.test(h.textContent?.trim()??''));
-          if(studyDialog.open)practice?.scrollIntoView({block:'start'});
-        } else showStudyResponse(el('response'),packet.content,action==='summary');
+        const card=document.createElement('section');card.className='study-answer-card';
+        showStudyResponse(card,packet.content,action==='summary',packet.is_question_prompt===true);
+        exchange.append(card);
+        if(studyDialog.open)card.querySelector('.study-your-turn')?.scrollIntoView({block:'start'});
       }
       if(action==='ask'&&questionField.value===submittedDraft){questionField.value='';resizeComposer(questionField);attachments.clear();}
       if(action!=='quiz')finishHelp();
     }else if(packet.method==='draw_svg'&&typeof packet.svg==='string'){
-      el('response').insertAdjacentHTML('beforeend',diagram(packet.svg));
+      exchange.insertAdjacentHTML('beforeend',diagram(packet.svg));
     }else return false;
     return true;
   },
@@ -165,16 +163,19 @@ function controls() {
   btn('explain-crop').disabled = !source || !ai || busy || !cropImage;
   btn('explain').disabled = !source || !ai || busy || !selected;
   el('selection-toolbar').hidden = !selected;
-  btn('previous').disabled = btn('next').disabled = !source || !!cropSelector?.selecting || !!cropSelector?.pending;
+  const navigationDisabled = !source || !!cropSelector?.selecting || !!cropSelector?.pending;
+  btn('previous').disabled = navigationDisabled || atStart;
+  btn('next').disabled = navigationDisabled || atEnd;
   el<HTMLSelectElement>('font').disabled = !source || !!cropSelector?.selecting || !!cropSelector?.pending;
   btn('sign-in').hidden = signedIn;
 }
 function clear() {
+  exchange=undefined;
   screens.clear();screen='ask';screenScroll=0;action=undefined;
   attachments.clear();
   el('study-content').replaceChildren(...freshContent());
   cropSelector.reset();el('crop-reference').hidden=true;el<HTMLImageElement>('crop-reference-image').removeAttribute('src');
-  disconnectAgent(); generation++; epubControls.destroy(); clearTimeout(positionTimer); source = undefined; documentKey = ''; selected = ''; busy = false;
+  disconnectAgent(); generation++; epubControls.destroy(); source = undefined; documentKey = ''; selected = ''; busy = false; atStart = atEnd = true;
   if(studyDialog.open)studyDialog.close();syncSound();
   el('selection').hidden = true; el('response').replaceChildren(); el('questions').replaceChildren();
   el('help-status').textContent = ''; questionField.value = '';resizeComposer(questionField);
@@ -197,7 +198,10 @@ courses.onclick = () => host.postMessage({type:'chooseCourse'});
 chapters.onchange = () => { clear(); host.postMessage({type:'choose', id:chapters.value}); };
 btn('previous').onclick = () => epubControls.prevPage();
 btn('next').onclick = () => epubControls.nextPage();
-el<HTMLSelectElement>('font').onchange = event => {cropSelector.reset();epubControls.setFontSize((event.target as HTMLSelectElement).value);};
+el<HTMLSelectElement>('font').onchange = event => {
+  const fontSize = (event.target as HTMLSelectElement).value;
+  post({type:'fontSize',fontSize});cropSelector.reset();epubControls.setFontSize(fontSize);
+};
 btn('sign-in').onclick = () => host.postMessage({type:'signIn'});
 
 /** Build a small EPUB from the same Markdown source; the existing epub.js reader handles navigation and selection. */
@@ -238,16 +242,15 @@ export async function chapterEpub(chapter: StudySource, stylesheet: string): Pro
     el('selection').textContent = selected; el('selection').hidden = !selected; controls();
   } else if (event.event === 'reader_ready') {
     el('loading').style.display = 'none';
-    if (resume) { const cursor = resume; resume = undefined; epubControls.goToCfi(cursor); }
   } else if (event.event === 'page_changed') {
+    atStart = !!event.atStart; atEnd = !!event.atEnd;
     cropSelector.reset();
     selected = ''; el('selection').hidden = true; controls();
     el('page').textContent = event.totalPages ? `Page ${event.pageIndex} of ${event.totalPages}` : 'Reading';
-    clearTimeout(positionTimer);
-    if (!resume) positionTimer = setTimeout(() => post({type:'position', cursor:event.cfi}), 250);
+    post({type:'position', cursor:event.cfi});
   } else if (event.event === 'link_clicked') post({type:'link',url:event.url});
   else if (event.event === 'error') {
-    resume = undefined; el('loading-text').textContent = 'The chapter could not be displayed. Select the chapter again to retry.';
+    el('loading-text').textContent = 'The chapter could not be displayed. Select the chapter again to retry.';
     el('loading').style.display = 'flex';
   }
 };
@@ -261,13 +264,22 @@ async function help(requestedAction: StudyAction,image?:CropImage) {
   busy=true;requestId=crypto.randomUUID();writtenCards.clear();controls();
   submittedDraft=draft;
   const currentRequest=requestId;
-  el('study-content').scrollTop=0;
   if(image){el('help-title').textContent='Explain selected area';el('crop-reference').hidden=false;el<HTMLImageElement>('crop-reference-image').src=image.dataUrl;}
   else if(action!=='ask'){el('crop-reference').hidden=true;el<HTMLImageElement>('crop-reference-image').removeAttribute('src');}
   if(action!=='ask') {el('text-reference').hidden = action!=='explain'||!!image;el('text-reference-content').textContent = action==='explain'&&!image ? selected : '';}
-  el('help-status').textContent=roomReady?'Study is thinking…':'Connecting to Study…';
-  el('response').replaceChildren();if(action!=='ask')el('questions').replaceChildren();
-  el('submitted-question').hidden=action!=='ask';el('submitted-question').textContent=action==='ask'?[question,...attachments.names].join('\n'):'';
+  el('help-status').textContent=roomReady?'Agent is thinking…':'Connecting to Study…';
+  if(action!=='ask') {el('response').replaceChildren();el('questions').replaceChildren();}
+  // Keep each learner message and its authored answer together. Follow-ups
+  // retain the question they answer; a new crop/summary starts a fresh context.
+  exchange=document.createElement('section');exchange.className='study-exchange';
+  exchange.dataset.requestId=currentRequest;
+  if(action==='ask') {
+    const message=document.createElement('p');message.className='study-question';
+    message.textContent=[question,...attachments.names].join('\n');exchange.append(message);
+  }
+  el('response').append(exchange);
+  if(action==='ask')exchange.scrollIntoView({block:'start'});
+  else el('study-content').scrollTop=0;
   responseTimer=setTimeout(()=>{if(key===documentKey){disconnectAgent();finishHelp('Study did not reply in time. Ask again to reconnect.');}},120000);
   try{
     await connectAgent(currentRequest);if(key!==documentKey||currentRequest!==requestId||!source)return;
@@ -292,12 +304,12 @@ async function help(requestedAction: StudyAction,image?:CropImage) {
     if(reply!=='ok'){let reason='Study could not accept this request.';try{reason=JSON.parse(reply).message||reason;}catch{}throw new Error(reason);}
     // Keep the draft until an actual written response arrives, including when
     // the server accepts a request but generation or delivery later fails.
-    if(busy)el('help-status').textContent='Study is thinking…';
+    if(busy)el('help-status').textContent='Agent is thinking…';
   }catch(error){if(key===documentKey&&currentRequest===requestId){disconnectAgent();finishHelp(error instanceof Error?error.message:'Study is unavailable.');}}
 }
 for (const action of ['explain','summary','quiz'] as const) btn(action).onclick = () => {
   openStudy(action);
-  if(action==='explain'||(action==='quiz'?!el('questions').hasChildNodes():!el('response').hasChildNodes()))void help(action);
+  if(action==='explain'||(action==='quiz'?!el('questions').hasChildNodes():!el('response').querySelector('.study-answer-card')))void help(action);
 };
 bindComposer(el<HTMLFormElement>('ask'),questionField,()=>{
   if(busy||responding){disconnectAgent();finishHelp('Response stopped.');return;}
@@ -332,7 +344,8 @@ window.addEventListener('message', async event => {
   else if (message.type === 'loading') clear();
   else if (message.type === 'chapter') {
     clear(); const current = generation;
-    source = message.source; documentKey = message.documentKey; ai = message.aiEnabled; signedIn = message.signedIn; resume = message.cursor;
+    source = message.source; documentKey = message.documentKey; ai = message.aiEnabled; signedIn = message.signedIn;
+    el<HTMLSelectElement>('font').value = message.fontSize ?? '100%';
     courseId = message.courseId ?? choices.find(c=>c.chapters.some(ch=>ch.id===source!.id))?.id ?? courseId;
     courseChanged(source!.id);
     el('study-context').textContent=[source!.course,source!.title].filter(Boolean).join(' · ');
@@ -344,7 +357,7 @@ window.addEventListener('message', async event => {
       button.onclick = () => post({type:'link', url:link.url}); el('reading-links').append(button);
     }
     controls();
-    try { const epub = await chapterEpub(source!,message.stylesheet); if (current === generation) initReader(epub,{fontSize:el<HTMLSelectElement>('font').value}); }
+    try { const epub = await chapterEpub(source!,message.stylesheet); if (current === generation) initReader(epub,{fontSize:el<HTMLSelectElement>('font').value,initialCfi:message.cursor}); }
     catch { if (current === generation) el('loading-text').textContent = 'Could not open this chapter. Select it again to retry.'; }
   } else if (message.type === 'error') { el('loading-text').textContent = message.message; el('notice').textContent = message.message; }
 

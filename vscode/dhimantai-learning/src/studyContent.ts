@@ -20,3 +20,6 @@ export function readingUrl(value: string): boolean {
 export function readingCursor(value: unknown): string | undefined {
   return typeof value === 'string' && value.length <= 1200 && /^epubcfi\([\d\w\[\](),;=!@~.*^:+\/-]+\)$/.test(value) ? value : undefined;
 }
+export function readingFontSize(value: unknown): string {
+  return typeof value === 'string' && ['100%', '125%', '150%'].includes(value) ? value : '100%';
+}

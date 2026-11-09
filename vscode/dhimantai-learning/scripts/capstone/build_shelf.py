@@ -449,6 +449,32 @@ def build(bundle):
             run('commit', '-q', '-m', message, GIT_AUTHOR_NAME=author, GIT_AUTHOR_EMAIL=email, GIT_AUTHOR_DATE=date,
                 GIT_COMMITTER_NAME=author, GIT_COMMITTER_EMAIL=email, GIT_COMMITTER_DATE=date)
         run('tag', START_TAG)
+        # Preserve the original training history/start tag used by existing learner repositories.
+        (repo / '.gitignore').write_text(GITIGNORE + '/.vscode/\n/.idea/\n', encoding='utf-8')
+        (repo / 'CAPSTONE.md').write_text(CAPSTONE + '\nLocal editor settings in .vscode/ and .idea/ are ignored; commit your project changes.\n', encoding='utf-8')
+        run('add', '.gitignore', 'CAPSTONE.md')
+        run('commit', '-q', '-m', 'Ignore local editor settings', GIT_AUTHOR_NAME='Asha Rao', GIT_AUTHOR_EMAIL='asha@shelf.dev',
+            GIT_COMMITTER_NAME='Asha Rao', GIT_COMMITTER_EMAIL='asha@shelf.dev',
+            GIT_AUTHOR_DATE='2026-10-01T10:00:00+05:30', GIT_COMMITTER_DATE='2026-10-01T10:00:00+05:30')
+        # Update the current guides without rewriting the training history or start tag.
+        terminal = ('Open **dhimantAI: Open Course Terminal**, then run `cd /course/shelf-capstone` '
+                    '(or `cd /course/shelf-reading` for the reading project).\n'
+                    'Run all project, Git and test commands there. The course container supplies Python\n'
+                    'and Git, with identical commands on Windows, macOS and Linux.\n')
+        for name in ('README.md', 'CAPSTONE.md', 'ISSUE.md', 'check.py', 'shelf/cli.py'):
+            content = (repo / name).read_text(encoding='utf-8').replace('python3', 'python')
+            if name == 'README.md':
+                content = content.replace('Python 3.10+, no dependencies.',
+                                          'The course container supplies Python 3.10+ and Git.')
+                content = content.replace('\n\n```sh', '\n\n' + terminal + '\n```sh', 1)
+            if name == 'CAPSTONE.md':
+                content = content.replace('\n## Steps\n', '\n## Course terminal\n\n' + terminal + '\n## Steps\n')
+            (repo / name).write_text(content, encoding='utf-8')
+        run('add', 'README.md', 'CAPSTONE.md', 'ISSUE.md', 'check.py', 'shelf/cli.py')
+        run('commit', '-q', '-m', 'Use the course container terminal for project commands',
+            GIT_AUTHOR_NAME='Asha Rao', GIT_AUTHOR_EMAIL='asha@shelf.dev',
+            GIT_COMMITTER_NAME='Asha Rao', GIT_COMMITTER_EMAIL='asha@shelf.dev',
+            GIT_AUTHOR_DATE='2026-10-02T10:00:00+05:30', GIT_COMMITTER_DATE='2026-10-02T10:00:00+05:30')
         bundle = Path(bundle).resolve()
         bundle.parent.mkdir(parents=True, exist_ok=True)
         run('bundle', 'create', str(bundle), '--all')

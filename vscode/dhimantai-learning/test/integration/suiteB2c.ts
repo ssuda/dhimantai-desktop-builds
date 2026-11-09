@@ -6,6 +6,7 @@ import type { PracticeBrowser } from '../../src/practiceBrowser';
 import { learnerRpc, PublicCatalog } from '../../src/learnerCatalog';
 import { CourseCatalog } from '../../src/courseCatalog';
 import { JSDOM } from 'jsdom';
+import { AuthPageDriver } from './authPageDriver';
 
 export async function run() {
   const results: { step: string; ok: boolean; error?: string }[] = [];
@@ -18,6 +19,7 @@ export async function run() {
   const call = async (path: string, body = {}) => (await fetch(server + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as Promise<any>;
   const ext = vscode.extensions.getExtension<{ auth: Auth; practice: PracticeBrowser }>('optficial.dhimantai-learning')!;
   const { auth, practice } = await ext.activate();
+  const accountPage = new AuthPageDriver();
   const original = { info: vscode.window.showInformationMessage, pick: vscode.window.showQuickPick, input: vscode.window.showInputBox };
   const messages: string[] = [];
   const password = 'a local test password';
@@ -33,7 +35,10 @@ export async function run() {
       assert.equal(await auth.session(), undefined);
     });
     await check('individual signup creates a profile and offers the course catalog', async () => {
-      await vscode.commands.executeCommand('dhimantai.signUp');
+      const signup = vscode.commands.executeCommand('dhimantai.signUp');
+      await accountPage.waitForPage();
+      await accountPage.submit({name:'Test Learner', email:'new@example.test', password, confirmation:password});
+      await signup;
       assert.equal((await auth.session())?.user.email, 'new@example.test');
       assert.ok((await call('/__state')).users[0].profile);
       assert.ok(vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tab.label === 'DhimantAI Course Catalog')));
@@ -49,7 +54,7 @@ export async function run() {
         for (const script of dom.window.document.querySelectorAll('script')) dom.window.eval(script.textContent!);
         assert.equal(sent.length, 0);
         assert.equal(dom.window.document.querySelector('input'), null, 'a short catalog needs no search box');
-        assert.equal(dom.window.document.querySelectorAll('main button:not(.secondary)').length, 1, 'one primary action per course');
+        assert.equal(dom.window.document.querySelectorAll('main [data-course] button:not(.secondary)').length, 1, 'one primary action per course');
         const join = dom.window.document.querySelector('button[data-action="join"]') as HTMLButtonElement;
         join.click(); join.click();
         assert.equal(sent.length, 1, 'joining disables repeated clicks');
@@ -119,7 +124,10 @@ export async function run() {
         assert.equal(sent[0].type, 'signIn');
         dom.window.close();
         const account = (await auth.session())!.user.id;
-        await (catalog as any).handle(sent[0]); // Cancelling sign-in keeps the institute session.
+        const signin = (catalog as any).handle(sent[0]);
+        await accountPage.waitForPage();
+        accountPage.close();
+        await signin; // Cancelling sign-in keeps the existing session.
         assert.equal((await auth.session())!.user.id, account);
         assert.ok(!(await practice.getChildren()).some(node => node.kind === 'course'));
         await (catalog as any).handle({type: 'join', id: 'python'});
@@ -129,7 +137,7 @@ export async function run() {
         await call('/__settings', { institute: false });
       }
     });
-    await check('Engineering Essentials courses form one track with paths, free and paid access, and the capstone', async () => {
+    await check('Engineering Essentials paths stay separate from searchable project cards', async () => {
       const catalog = new CourseCatalog(auth, () => 'production', () => env, () => practice.refresh());
       try {
         await catalog.open();
@@ -154,7 +162,9 @@ export async function run() {
           paths[2].click();
           const visible = [...doc.querySelectorAll<HTMLElement>('.essentials .course')].filter(c => !c.hidden).map(c => c.dataset.course);
           assert.deepEqual(visible, ['engineering-sql-data']);
-          assert.ok(doc.querySelector('.essentials button[data-action="capstone"]'));
+          assert.equal(doc.querySelector('.essentials button[data-action="capstone"]'), null);
+          assert.equal(doc.querySelectorAll('main > .projects [data-project]').length, 4);
+          assert.ok([...doc.querySelectorAll<HTMLElement>('[data-project]')].every(p => !p.hidden), 'course paths do not filter projects');
           // Categories group the catalog in a fixed order.
           const headings = [...doc.querySelectorAll('.category > h3')].map(h => h.textContent);
           assert.equal(headings[0], 'Software Engineering');
@@ -164,8 +174,35 @@ export async function run() {
           }
           const cards = [...doc.querySelectorAll('.essentials .course')].map(c => c.textContent!);
           assert.match(cards[0], /· Free/);assert.match(cards[1], /First chapter free/);
-          assert.match(doc.querySelector('.essentials > p')!.textContent!, /Start free with Git for Everyday Engineering\. The others include a free first chapter\./);
+          assert.match(doc.querySelector('.essentials > p')!.textContent!, /Courses labelled Free include all chapters\. Paid courses include a free first chapter;/);
+          const search = doc.querySelector<HTMLInputElement>('#search')!;
+          assert.ok(search, 'search includes both courses and projects');
+          const find = (query: string) => { search.value = query; search.dispatchEvent(new dom.window.Event('input')); };
+          const visibleProjects = () => [...doc.querySelectorAll<HTMLElement>('[data-project]')].filter(p => !p.hidden).map(p => p.dataset.project);
+          find('research agent');
+          assert.deepEqual(visibleProjects(), ['course-agent']);
+          assert.equal(doc.querySelector<HTMLElement>('.essentials')!.hidden, true);
+          assert.equal(doc.querySelector<HTMLElement>('#empty')!.hidden, true);
+          find('regression test');
+          assert.deepEqual(visibleProjects(), ['shelf'], 'learning outcomes are searchable');
+          find('no-such-course-or-project');
+          assert.equal(doc.querySelector<HTMLElement>('.projects')!.hidden, true);
+          assert.equal(doc.querySelector<HTMLElement>('#empty')!.hidden, false);
+          assert.match(doc.querySelector('#empty')!.textContent!, /courses or projects/);
+          find('');
+          assert.equal(visibleProjects().length, 4);
+          assert.equal(doc.querySelector<HTMLElement>('.essentials')!.hidden, false);
+          assert.equal(doc.querySelector<HTMLElement>('.projects')!.hidden, false);
         } finally { dom.window.close(); }
+        for (const free of [true, false]) {
+          selected.courses = selected.courses.map(c => ({...c, is_free:free}));
+          (catalog as any).render(selected);
+          const rendered = new JSDOM((catalog as any).panel.webview.html);
+          const intro = rendered.window.document.querySelector('.essentials > p')!.textContent!;
+          assert.match(intro, free ? /free in full, with all chapters included/ : /free first chapter.*remaining chapters/);
+          assert.doesNotMatch(intro, /Start free with|The others/);
+          rendered.window.close();
+        }
       } finally { catalog.dispose(); }
     });
     await check('email confirmation creates no local session until verification and sign-in', async () => {
@@ -194,13 +231,16 @@ export async function run() {
       await auth.signOut();
       const count = (await call('/__state')).signups;
       (vscode.window as any).showInputBox = async () => undefined;
-      assert.equal(await auth.signUp(), undefined);
+      const signup = auth.signUp();
+      accountPage.close();
+      assert.equal(await signup, undefined);
       await assert.rejects(auth.signUpWithPassword('A', 'invalid', 'short'));
       await call('/__settings', { unavailable: true });
       await assert.rejects(auth.signUpWithPassword('New Learner', 'unavailable@example.test', password), /not available on this service/);
       assert.equal((await call('/__state')).signups, count);
     });
   } finally {
+    accountPage.dispose();
     (vscode.window as any).showInformationMessage = original.info;
     (vscode.window as any).showQuickPick = original.pick;
     (vscode.window as any).showInputBox = original.input;

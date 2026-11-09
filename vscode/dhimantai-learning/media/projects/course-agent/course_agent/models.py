@@ -34,7 +34,7 @@ class LiveModel:
     def __init__(self):
         self.key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not self.key:
-            raise ValueError("Set DEEPSEEK_API_KEY in your runtime environment for a live run.")
+            raise ValueError("Use Run live model in Project Coach for platform access without a personal API key. Direct terminal runs require optional DEEPSEEK_API_KEY configuration.")
         self.model = os.environ.get("DEEPSEEK_MODEL", "deepseek-flash")
 
     def next(self, messages):

@@ -5,6 +5,7 @@ const {join, resolve} = require('node:path');
 const {randomUUID} = require('node:crypto');
 const {CourseEngine} = require('../../out/src/courseEngine');
 const {createReadingProject, loadProjectCurriculum, projectSnapshot, runProjectCheck} = require('../../out/src/projectCore');
+const {runManagedProject} = require('../../out/src/projectLive');
 
 async function main() {
   const image = process.env.DHIMANTAI_PROJECT_IMAGE;
@@ -59,6 +60,23 @@ async function main() {
       if (!demo.includes('Mode: scripted simulation')) throw new Error('Missing simulation mode label.');
       if (!demo.includes('Status: '+(scenario === 'submission' ? 'answered' : 'insufficient_evidence'))) throw new Error('Wrong scenario outcome.');
     }
+    const actions = JSON.parse(readFileSync(join(project,'scenarios/submission.json'),'utf8')).actions;
+    let modelCalls = 0;
+    const managedRunner = readFileSync(join(extension,'media/projects/managed_live.py'),'utf8');
+    const live = await runManagedProject(project, managedRunner, 'How do I submit my project?', new AbortController().signal, engine,
+      async messages => {
+        if (!Array.isArray(messages) || !messages.length) throw new Error('Missing agent history');
+        return {action: actions[modelCalls++]};
+      });
+    if (!live.passed || modelCalls !== actions.length || !live.output.includes('Status: answered') || !live.output.includes('managed live model'))
+      throw new Error('Managed model bridge failed: '+live.output);
+    const failedLive = await runManagedProject(project, managedRunner, 'Question', new AbortController().signal, engine,
+      async () => { throw new Error('Managed quota reached'); });
+    if (failedLive.passed || !failedLive.output.includes('Managed quota reached')) throw new Error('Managed failure was not visible');
+    const cancellation = new AbortController();
+    const cancelledLive = await runManagedProject(project, managedRunner, 'Question', cancellation.signal, engine,
+      async () => { cancellation.abort(); return {action: {}}; });
+    if (cancelledLive.passed || !cancelledLive.output.includes('cancelled')) throw new Error('Managed cancellation was not visible');
     // A hanging learner check must die inside the container, even if its client exits.
     writeFileSync(join(project,'checks/test_timeout.py'),'import time\ntime.sleep(90)\n');
     const timed = await runProjectCheck(project,{...curriculum.steps[0],check:'checks.test_timeout'},snapshot.digest,new AbortController().signal,engine);

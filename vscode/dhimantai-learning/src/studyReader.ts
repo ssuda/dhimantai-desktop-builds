@@ -6,7 +6,7 @@ import { Auth } from './auth';
 import { Api } from './api';
 import { trustedRoomUrl } from './coachAudio';
 import { Environment, EnvironmentName } from './environments';
-import { CompanionCourse, readingCursor, readingUrl, StudySource } from './studyContent';
+import { CompanionCourse, readingCursor, readingFontSize, readingUrl, StudySource } from './studyContent';
 import { studyHtml } from './studyHtml';
 
 interface Choice { id: string; title: string; chapters: {id: string; title: string}[] }
@@ -21,6 +21,8 @@ export async function registerStudyReader(context: vscode.ExtensionContext, auth
   let loading = new AbortController();
   let active: {source: StudySource; key: string; progressKey: string} | undefined;
   let initialized = false;
+  let sessionKey = '', fontSize = '100%';
+  const saveSession = () => context.globalState.update(sessionKey, {chapterId:selection, fontSize});
   let selectCopilotCourse: ((course?: string) => Promise<void>) | undefined;
   const cancel = () => { loading.abort(); loading = new AbortController(); generation++; };
   const send = (message: object) => panel?.webview.postMessage(message);
@@ -48,9 +50,11 @@ export async function registerStudyReader(context: vscode.ExtensionContext, auth
       active = {source, key, progressKey:'studyPosition:' + key};
       await selectCopilotCourse?.(choices.find(c => c.chapters.some(ch => ch.id === id))?.title);
       if (owner !== epoch || current !== generation || signal.aborted) return;
+      await saveSession();
+      if (owner !== epoch || current !== generation || signal.aborted) return;
       await send({type:'chapter', source, documentKey:key,
         courseId:choices.find(course => course.chapters.some(chapter => chapter.id === id))?.id,
-        stylesheet:readerStylesheet,
+        stylesheet:readerStylesheet, fontSize,
         cursor:readingCursor(context.globalState.get(active.progressKey)),
         signedIn:!!account, aiEnabled:!!account && vscode.workspace.getConfiguration('dhimantai').get<boolean>('aiAssistance', true)});
     } catch (error) {
@@ -58,12 +62,17 @@ export async function registerStudyReader(context: vscode.ExtensionContext, auth
     }
   }
   async function initialize() {
-    cancel(); const owner = ++epoch, requested = selection;
+    cancel(); const owner = ++epoch;
     active = undefined; initialized = false;
     await selectCopilotCourse?.();
     const user = await auth.session();
     if (owner !== epoch || !panel) return;
     account = user?.user.id; env = environment(); backend = service();
+    sessionKey = 'studySession:' + createHash('sha256').update([env, backend.apiUrl, account ?? 'guest'].join('\0')).digest('hex');
+    const saved = context.globalState.get<{chapterId?:unknown;fontSize?:unknown}>(sessionKey);
+    fontSize = readingFontSize(saved?.fontSize);
+    const requested = selection || (typeof saved?.chapterId === 'string' ? saved.chapterId : '');
+    selection = requested;
     choices = companions.map(c => ({id:c.id, title:c.title, chapters:c.chapters.map(ch => ({id:ch.id,title:ch.title}))}));
     initialized = true;
     const bundled = choices.find(c => c.id === requested || c.title === requested || c.chapters.some(ch => ch.id === requested));
@@ -108,6 +117,11 @@ export async function registerStudyReader(context: vscode.ExtensionContext, auth
       if (cursor) await context.globalState.update(target.progressKey, cursor);
       return;
     }
+    if (message.type === 'fontSize') {
+      fontSize = readingFontSize(message.fontSize);
+      await saveSession();
+      return;
+    }
     if (message.type === 'link' && typeof message.url === 'string' && readingUrl(message.url)) {
       const links = [...target.source.reading.map(link => link.url),
         ...Array.from(target.source.markdown.matchAll(/\]\((https:\/\/[^\s)]+)\)/g), m => m[1])];
@@ -134,6 +148,7 @@ export async function registerStudyReader(context: vscode.ExtensionContext, auth
   }
 
   function open(target?: unknown) {
+    if (panel && typeof target !== 'string') { panel.reveal(); return; }
     selection = typeof target === 'string' ? target : '';
     if (!panel) {
       panel = vscode.window.createWebviewPanel('dhimantai.study', 'dhimantAI Study', vscode.ViewColumn.One,
@@ -145,7 +160,7 @@ export async function registerStudyReader(context: vscode.ExtensionContext, auth
       html(panel.webview);
     } else { panel.reveal(); void initialize(); }
   }
-  const reset = () => { void selectCopilotCourse?.(); cancel(); epoch++; active = undefined; initialized = false; if (panel) html(panel.webview); };
+  const reset = () => { void selectCopilotCourse?.(); cancel(); epoch++; selection = ''; active = undefined; initialized = false; if (panel) html(panel.webview); };
   const subscriptions = [vscode.commands.registerCommand('dhimantai.openStudy', open), auth.onDidChange(reset),
     vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('dhimantai.environment') || e.affectsConfiguration('dhimantai.aiAssistance')) reset(); })];
   return {companions, dispose() { cancel(); epoch++; panel?.dispose(); subscriptions.forEach(s => s.dispose()); }};

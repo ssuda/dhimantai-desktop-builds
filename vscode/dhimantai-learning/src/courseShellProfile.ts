@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 export const COURSE_SHELL_PROFILE = 'dhimantai.courseShell';
-export const COURSE_SHELL_TITLE = 'dhimantAI Course (zsh)';
+export const COURSE_SHELL_TITLE = 'dhimantAI Course Container';
 
 const platformKey = () => process.platform === 'darwin' ? 'osx' : process.platform === 'win32' ? 'windows' : 'linux';
 
@@ -21,14 +21,18 @@ export function registerCourseShellProfile(options: () => Promise<vscode.Termina
       if (isCourseFolder(folder.uri)) void preferCourseShell(folder).catch(() => {});
   };
   apply();
-  return vscode.Disposable.from(provider, vscode.workspace.onDidChangeWorkspaceFolders(apply));
+  return vscode.Disposable.from(provider, vscode.workspace.onDidChangeWorkspaceFolders(apply),
+    vscode.workspace.onDidChangeConfiguration(event => {
+      if (event.affectsConfiguration('terminal.integrated.defaultProfile.' + platformKey())) apply();
+    }));
 }
 
-/** Make the course shell the folder's default terminal unless the learner already chose one there. */
+/** Course folders always use the managed container, including folders with an older host-shell choice. */
 export async function preferCourseShell(folder: vscode.WorkspaceFolder) {
   const config = vscode.workspace.getConfiguration('terminal.integrated', folder.uri);
   const key = 'defaultProfile.' + platformKey();
-  if (config.inspect(key)?.workspaceFolderValue !== undefined) return false;
-  await config.update(key, COURSE_SHELL_TITLE, vscode.ConfigurationTarget.WorkspaceFolder);
+  if (config.get(key) === COURSE_SHELL_TITLE) return false;
+  // VS Code defines terminal defaults at window scope, not resource/folder scope.
+  await config.update(key, COURSE_SHELL_TITLE, vscode.ConfigurationTarget.Workspace);
   return true;
 }

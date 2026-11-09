@@ -114,7 +114,7 @@ export async function run() {
     const shot=await cdp.send('Page.captureScreenshot',{format:'png'});
     writeFileSync(join(out,'study-reader.png'),Buffer.from(shot.data,'base64'));
     await auth.signOut();
-    await until(snapshot,s=>s?.text?.includes('Preserve the Machine Contract') && s.notice.includes('Sign in'),'guest reading after sign out');
+    await until(snapshot,s=>s?.text?.includes('Count Work Before Measuring Time') && s.notice.includes('Sign in'),'guest reading uses its own saved session after sign out');
     assert.equal(await ui(`d=>d.querySelector('#summary').disabled`),true,'signed-out reader cannot request help');
     assert.equal(await ui(`d=>d.querySelector('#sign-in').hidden`),false);
     assert.equal((await snapshot()).help,'','account change removes prior response');

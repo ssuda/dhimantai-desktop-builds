@@ -57,6 +57,12 @@ Linux runners use temporary swap; native compilation may take substantially
 longer than extension compilation. Installers and receipts are retained for
 14 days, build logs for 7 days. Download the artifacts before retention expires.
 
+After a Windows build finishes, run **Windows desktop installer acceptance**
+with its build run ID and matching processor. On a fresh native Windows runner,
+it verifies the installer checksum, installs into a temporary directory,
+checks the packaged architecture and staging defaults, runs the installed CLI,
+and uninstalls. Its receipt does not certify GUI, YouTube or physical devices.
+
 Publish only verified receipt/artifact pairs through
 `website/upskill/scripts/desktop_releases.py`, then deploy the dhimantAI website
 target as described in `website/upskill/README.md`. Never replace an already

@@ -11,6 +11,7 @@ export function registerLearningNavigation(context: vscode.ExtensionContext) {
     ['Study', 'file-text', 'dhimantai.openStudy'],
     ['Doubt Solver', 'question', 'dhimantai.openDoubtSolver'],
     ['Practice', 'code', 'dhimantai.browsePractice'],
+    ['Git & GitHub', 'source-control', 'dhimantai.gitHub'],
   ];
   const items = entries.map(([label, icon, command]) => {
     const item = new vscode.TreeItem(label);

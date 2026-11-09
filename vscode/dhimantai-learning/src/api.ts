@@ -5,6 +5,14 @@ import type { StudySource } from './studyContent';
 import type { NotebookApi, NotebookLink } from './notebookSubmission';
 import type { SessionNotebookLink, TransferBody, TransferReceipt } from './sessionNotebookTransfer';
 import type { CourseLab } from './colabNotebooks';
+import type { ProjectHandoff } from './projectCore';
+
+export interface HandoffAvailability {
+  mode: 'teacher' | 'handoff'; teachers: {id: string; name: string}[];
+  history: {thread_id: string; source_hash: string; created_at: string}[];
+}
+export interface HandoffReceipt {thread: {id: string; status: string; created_at: string; version: number}; source_hash: string}
+export interface HandoffDetail {thread: HandoffReceipt['thread']; messages: {author_role: string; author_name: string; body: string}[]; has_more: boolean}
 
 // Shapes mirror agent/course_projects (practice.py definition, domain.py draft/public_submission, code_help.py public_help).
 
@@ -216,7 +224,7 @@ export class Api {
   private async request<T>(method: 'GET' | 'POST', path: string, body?: unknown, retried = false, signal?: AbortSignal): Promise<T> {
     if (path.startsWith('/tutor-code/') || /\/(save|submit|editor|learning-events|transfer|submissions)(\/|$)/.test(path)
         || /\/assist\//.test(path)) {
-      throw new ApiError(410, 'Write and save in VS Code; choose a local, course, or Colab runtime. Server storage and notebook transfer are retired.', 'external_programming_required');
+      throw new ApiError(410, 'Write and save in VS Code; run code in the course container. Server storage and notebook transfer are retired.', 'external_programming_required');
     }
     const token = await this.auth.accessToken(retried);
     if (this.expectedAccount) {
@@ -254,6 +262,19 @@ export class Api {
 
   practiceCatalog() {
     return this.request<{ courses: Course[]; languages: Language[] }>('GET', '/notebook-coach/exercises');
+  }
+
+  projectHandoffAvailability() {
+    return this.request<HandoffAvailability>('GET', '/course-project-handoffs');
+  }
+  sendProjectHandoff(request_id: string, snapshot: ProjectHandoff) {
+    return this.request<HandoffReceipt>('POST', '/course-project-handoffs', {request_id, snapshot});
+  }
+  projectHandoffDetail(id: string, page = 0) {
+    return this.request<HandoffDetail>('GET', '/course-project-handoffs/' + encodeURIComponent(id) + '?page=' + page);
+  }
+  projectModel(run_id: string, messages: unknown[], signal: AbortSignal) {
+    return this.request<{action: object; mode: 'managed_live'}>('POST', '/course-project-handoffs/model', {run_id, messages}, false, signal);
   }
 
   studyChapter(id: string, signal: AbortSignal) {

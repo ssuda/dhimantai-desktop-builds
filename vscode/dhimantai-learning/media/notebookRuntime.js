@@ -8,14 +8,13 @@ window.installNotebookRuntime = api => {
     uri = data.uri;
     select.disabled = data.busy || (!uri && !data.podman);
     create.disabled = data.busy;
-    select.querySelector('[value="local"]').disabled = !uri;
     for (const value of ['terminal', 'setup']) {
       const option = select.querySelector(`[value="${value}"]`);
       if (option) option.disabled = !data.podman;
     }
     select.querySelector('[value="colab"]').disabled = !data.colab;
     select.querySelector('[value="podman"]').disabled = !data.podman;
-    select.querySelector('[value="podman"]').textContent = data.podman ? 'Course container · default' : 'Course container · disabled in settings';
+    select.querySelector('[value="podman"]').textContent = data.podman ? 'Course container' : 'Course container · setup needed';
     select.querySelector('[value="colab"]').textContent = data.colab ? 'Google Colab · remote Python' : 'Google Colab · Python notebooks only';
     document.getElementById('runtime-target').textContent = data.name
       ? `${data.name} · The selected kernel is shown in the notebook toolbar.` : 'Choose a course to prepare its workstation or open its terminal. Source files use Run code.';

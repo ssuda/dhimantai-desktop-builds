@@ -1,9 +1,8 @@
 // Practice cells share a notebook workspace. Grading continues to use fresh test environments.
 import * as vscode from 'vscode';
-import {dirname, basename, join} from 'node:path';
+import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {NotebookCells, CellEvent} from './notebookCells';
-import {Toolchains} from './localRunner';
 import {jupyterMetadata, learnerCell} from './notebookCommands';
 import {parseRunInput, practiceLink, sampleFiles} from './practiceIpynb';
 import {ENVIRONMENTS} from './environments';
@@ -15,7 +14,7 @@ const live=new Map<string,NotebookCells>();
 const liveChanged=new vscode.EventEmitter<void>();
 export function registerPracticeKernel(courseRunner:CourseRunner,options:{id?:string;label?:string;lab?:(doc:vscode.NotebookDocument)=>boolean;wants?:(doc:vscode.NotebookDocument)=>boolean;resetEvents?:(reset:()=>void)=>vscode.Disposable[]}={}):vscode.Disposable {
   const kernel=vscode.notebooks.createNotebookController(options.id??PRACTICE_KERNEL,'jupyter-notebook',options.label??'dhimantAI Practice');
-  kernel.description='Course container by default; setup and repair complete before the cell starts';
+  kernel.description='Runs in the course container; setup and repair complete before the cell starts';
   kernel.supportedLanguages=['python','javascript','typescript','rust','java','c','go','sql','shellscript'];
   kernel.supportsExecutionOrder=true;
   const sessions=new Map<string,NotebookCells>(), running=new Map<string,vscode.NotebookCell>();
@@ -26,14 +25,13 @@ export function registerPracticeKernel(courseRunner:CourseRunner,options:{id?:st
   const session=(doc:vscode.NotebookDocument)=>{
     const key=doc.uri.toString();let cells=sessions.get(key);
     if(!cells){
-      cells=new NotebookCells(()=>vscode.workspace.getConfiguration('dhimantai').get<Toolchains>('toolchains',{}),
+      cells=new NotebookCells(()=>({}),
         async language=>{
           const engine=await courseRunner(doc,language);
           if(engine==='setup-pending')throw new Error('The course runtime is being prepared. Run the cell again when setup finishes.');
-          if(['sql','pglab'].includes(language) && !engine)throw new Error('Open this database notebook in its course runtime.');
+          if(!engine)throw new Error('Set up the course container before running notebook cells.');
           return engine;
-        },async engine=>engine ? join(engine.root,'.dhimantai','notebooks',createHash('sha256').update(doc.uri.toString()).digest('hex').slice(0,24))
-          : join(dirname(doc.uri.fsPath),'.dhimantai',basename(doc.uri.fsPath)+'.files'));
+        },async engine=>join(engine!.root,'.dhimantai','notebooks',createHash('sha256').update(doc.uri.toString()).digest('hex').slice(0,24)));
       sessions.set(key,cells);
     }
     return cells;

@@ -21,6 +21,35 @@ function activateReader(nextBook, nextRendition) {
   rendition = nextRendition;
 }
 
+function horizontalPagePosition(reader) {
+  const manager = reader?.manager;
+  if (!manager?.isPaginated || manager.settings.axis !== 'horizontal' || manager.settings.direction !== 'ltr') return null;
+  const container = manager.container;
+  const step = manager.layout.delta;
+  if (!container || !(step > 0)) return null;
+  return {manager, step, offset: container.scrollLeft, maximum: Math.max(0, container.scrollWidth - container.clientWidth)};
+}
+
+function turnReaderPage(direction) {
+  const reader = rendition;
+  if (!reader) return;
+  // epub.js advances by a whole viewport from the current offset. If scrolling
+  // or a selection leaves a partial page at the end of a chapter, that step
+  // exceeds scrollWidth and epub.js tries a nonexistent next spine item.
+  // Stay on its navigation queue, but align within this chapter first.
+  return reader.q.enqueue(() => {
+    if (reader !== rendition) return;
+    const position = horizontalPagePosition(reader);
+    if (position) {
+      const {manager, step, offset, maximum} = position;
+      const index = direction > 0 ? Math.floor((offset + 0.5) / step) + 1 : Math.ceil((offset - 0.5) / step) - 1;
+      const target = Math.max(0, Math.min(maximum, index * step));
+      if (Math.abs(target - offset) > 0.5) { manager.scrollTo(target, 0, true); return; }
+    }
+    return direction > 0 ? reader.manager.next() : reader.manager.prev();
+  }).then(() => { if (reader === rendition) return reader.reportLocation(); });
+}
+
 function postFlutterMessage(event, data = {}) {
   try {
     const payload = JSON.stringify({ event, ...data });
@@ -316,10 +345,13 @@ function initReader(bookSource, options = {}) {
         console.warn('Could not inspect current contents:', e);
       }
 
+      const position = horizontalPagePosition(rendition);
       emit('page_changed', {
         cfi: startCfi,
         pageIndex,
         totalPages,
+        atStart: !!location.atStart && (!position || position.offset <= 0.5),
+        atEnd: !!location.atEnd && (!position || position.offset >= position.maximum - 0.5),
         heading,
         text: visibleText,
         figures
@@ -358,10 +390,10 @@ function initReader(bookSource, options = {}) {
 window.epubControls = {
   destroy: destroyReader,
   nextPage: function() {
-    if (rendition) rendition.next();
+    return turnReaderPage(1);
   },
   prevPage: function() {
-    if (rendition) rendition.prev();
+    return turnReaderPage(-1);
   },
   goToCfi: function(cfi) {
     if (rendition && cfi) rendition.display(cfi);

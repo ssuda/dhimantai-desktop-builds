@@ -53,17 +53,18 @@ test('Study isolates drafts, clears accepted messages, retains failures and canc
     s.input('What is an operator?');const sent=s.sent.length;
     field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,isComposing:true}));field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter'}));assert.equal(s.sent.length,sent);
     field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',metaKey:true}));await s.grant();
-    assert.equal(field.value,'What is an operator?');assert.equal(field.disabled,true);assert.equal(el('submitted-question').textContent,'What is an operator?');
+    assert.equal(field.value,'What is an operator?');assert.equal(field.disabled,true);assert.equal(el('response').querySelector('.study-question')!.textContent,'What is an operator?');
     publish({method:'display_on_screen',content:'',study_request_id:request()});assert.equal(field.value,'What is an operator?');
     publish({method:'display_on_screen',content:'An operator works on values.',study_request_id:request()});assert.equal(field.value,'');assert.equal(field.disabled,false);assert.equal(button('send').disabled,true);
     s.input('Keep me if this fails');s.fail();button('send').click();await tick();assert.equal(field.value,'Keep me if this fails');assert.match(el('help-status').textContent!,/Try again/);
     button('close-study').click();button('summary').click();assert.equal(field.value,'summary follow-up draft');assert.equal(el('study-content').scrollTop,123);assert.equal(s.readerDestroys(),destroys);
     button('send').click();await s.grant();publish({method:'display_on_screen',content:'Follow-up',study_request_id:request()});
     s.input('Cancel this');s.defer();button('send').click();await tick();const cancelled=request(),oldRoom=s.rooms.at(-1)!;
-    button('close-study').click();assert.equal(oldRoom.closed,true);button('summary').click();await s.grant();
-    // A reopened cancelled summary has an empty response and starts again automatically.
+    button('close-study').click();assert.equal(oldRoom.closed,true);button('summary').click();
+    assert.match(el('response').textContent!,/First section[\s\S]*Follow-up/,'cancel preserves earlier exchanges');
+    button('send').click();await s.grant();
     const successor=s.rooms.at(-1)!;s.post({type:'helpError',documentKey:'first',requestId:'retired-grant',message:'Old grant failure'});assert.doesNotMatch(el('help-status').textContent!,/Old grant failure/);s.finish('{"message":"Old failed request"}');await tick();assert.equal(successor.closed,false);
-    publish({method:'display_on_screen',content:'Late cancelled response',study_request_id:cancelled},oldRoom);assert.equal(el('response').textContent,'');
+    publish({method:'display_on_screen',content:'Late cancelled response',study_request_id:cancelled},oldRoom);assert.doesNotMatch(el('response').textContent!,/Late cancelled response/);
     s.chapter('second');await tick();assert.equal(successor.closed,true);assert.equal(s.dialog.open,false);assert.equal(field.value,'');
     publish({method:'display_on_screen',content:'Previous chapter',study_request_id:request()},successor);assert.equal(el('response').textContent,'');
   }finally{s.dom.window.close();}
@@ -141,6 +142,11 @@ test('Ask Study keeps an authored practice question beside its explanation witho
     s.input('Three comparisons.');button('send').click();await tick();
     publish({method:'display_on_screen',content:'Stale question',study_request_id:request});
     assert.doesNotMatch(el('response').textContent!,/Stale question/);
+    publish({method:'display_on_screen',content:'Correct: stop at the third comparison.',study_request_id:s.request()});
+    const exchanges=el('response').querySelectorAll('.study-exchange');
+    assert.equal(exchanges.length,2);
+    assert.match(exchanges[0].textContent!,/How many comparisons/,'the question stays visible after an answer');
+    assert.match(exchanges[1].textContent!,/Three comparisons\.[\s\S]*Correct/,'answer and feedback form one exchange');
   } finally {s.dom.window.close();}
 });
 
@@ -175,6 +181,42 @@ test('the compact composer uses speaker and send icons, and Stop cancels the cur
     assert.equal(field.disabled,false);
     assert.equal(s.el('send').getAttribute('aria-label'),'Send message');
     s.publish({method:'display_on_screen',content:'Late answer',study_request_id:request},room);
-    assert.equal(s.el('response').textContent,'');
+    assert.equal(s.el('response').querySelectorAll('.study-answer-card').length,0);
+    assert.doesNotMatch(s.el('response').textContent!,/Late answer/);
+  } finally {s.dom.window.close();}
+});
+
+test('crop follow-ups retain complete exchanges and show authored Your turn before speaking',async()=>{
+  const s=surface(),{w,el,button,publish}=s;
+  const scrolled:HTMLElement[]=[];
+  w.HTMLElement.prototype.scrollIntoView=function(){scrolled.push(this as unknown as HTMLElement);};
+  try {
+    // Text and image selections share Explain's response path.
+    w.DhimantStudyBridge({event:'text_selected',text:'Python compares values with ==.'});
+    button('explain').click();await s.grant();
+    publish({method:'display_on_screen',content:'### Step-by-step: Equality\n\n1. Compare two values.\n2. The result is a boolean.',study_request_id:s.request()});
+    s.input('Ask me a question about that.');button('send').click();await tick();
+    const request=s.request();
+    const question={method:'display_on_screen',content:'### Practice: Predict the result\n\n```python\nprint(3 == 4)\n```\n\nExplain why.',study_request_id:request};
+    publish(question);publish(question);
+    const prompt=el('response').querySelector('.study-your-turn')!;
+    assert.match(prompt.textContent!,/Your turn: Predict the result/);
+    assert.equal(prompt.querySelector('code')!.textContent,'print(3 == 4)\n');
+    assert.match(prompt.textContent!,/Explain why/);
+    assert.equal(scrolled.at(-1),prompt);
+    s.rooms.at(-1)!.listeners.get('ParticipantAttributesChanged')!({'lk.agent.state':'speaking'},{identity:'worker',isAgent:true});
+    assert.equal(el('response').querySelectorAll('.study-your-turn').length,1,'duplicate delivery does not repeat the question');
+    s.rooms.at(-1)!.listeners.get('ParticipantAttributesChanged')!({'lk.agent.state':'listening'},{identity:'worker',isAgent:true});
+    s.input('False, because the values differ.');button('send').click();await tick();
+    publish({method:'write_on_whiteboard',content:'Correct. The values differ, so equality returns `False`.',study_request_id:s.request()});
+    assert.equal(el('response').querySelectorAll('.study-exchange').length,3);
+    assert.match(el('response').textContent!,/Step-by-step[\s\S]*Your turn[\s\S]*False, because[\s\S]*Correct/);
+    assert.equal(el('text-reference').hidden,false);
+    button('close-study').click();button('open-study').click();button('close-study').click();
+    button('explain').click();await s.grant();
+    assert.equal(el('response').querySelectorAll('.study-exchange').length,1,'a new selection starts a fresh context');
+    publish({method:'display_on_screen',content:'## Predict\n\nWhat does `3 != 4` return?',is_question_prompt:true,study_request_id:s.request()});
+    assert.equal(el('response').querySelector('.study-turn-marker')!.textContent,'Your turn');
+    assert.match(el('response').querySelector('.study-your-turn')!.textContent!,/Predict[\s\S]*What does/);
   } finally {s.dom.window.close();}
 });

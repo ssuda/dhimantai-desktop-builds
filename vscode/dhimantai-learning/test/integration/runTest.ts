@@ -8,13 +8,14 @@ import { ContractServer } from './contractServer';
 import { B2cServer } from './b2cServer';
 import { ENVIRONMENTS } from '../../src/environments';
 import { createProject, createReadingProject } from '../../src/projectCore';
+import { cloneCapstone } from '../../src/capstoneRepo';
 
 const VSCODE_VERSION = process.env.VSCODE_TEST_VERSION ?? '1.106.3';
 
 async function main() {
   const testCourses = ['suiteCourseRuntimes', 'suiteCourseRecovery'].includes(process.argv[2]);
   const testPractice = process.argv[2] === 'suiteExternalProgramming';
-  const server = ['suiteB2c', 'suiteCatalogWelcome'].includes(process.argv[2]) ? new B2cServer() : new ContractServer(testCourses || process.argv[2] === 'suiteColab' ? ['Python','Build an LLM from Scratch'] : undefined);
+  const server = ['suiteB2c', 'suiteCatalogWelcome', 'suiteSignup'].includes(process.argv[2]) ? new B2cServer() : new ContractServer(testCourses || process.argv[2] === 'suiteColab' ? ['Python','Build an LLM from Scratch'] : undefined);
   const url = await server.start();
   const root = resolve(__dirname, '../../..');
   const results = join(mkdtempSync(join(tmpdir(), 'dhimantai-vscode-')), 'results.json');
@@ -23,12 +24,13 @@ async function main() {
   let projectContainer = '', projectDirectory = '';
   const projectPodman = process.env.DHIMANTAI_PODMAN || 'podman';
   try {
-  if (process.argv[2] === 'suiteProjectCoach') {
+  if (['suiteProjectCoach', 'suiteProjectCompletion', 'suiteCourseTerminal'].includes(process.argv[2])) {
     if (!process.env.DHIMANTAI_PROJECT_IMAGE) throw new Error('Set DHIMANTAI_PROJECT_IMAGE to an existing course image for container-only project acceptance.');
     projectDirectory = mkdtempSync(join(root, '.project-coach-'));
     const project = join(projectDirectory, 'course-agent');
     await createProject(join(root, 'media/projects/course-agent'), project);
     for (const id of ['shelf-reading','rich-reading'] as const) await createReadingProject(join(root,'media'),id,join(projectDirectory,id));
+    await cloneCapstone(join(root, 'media/capstone/shelf.bundle'), join(projectDirectory, 'shelf-capstone'));
     workspaceArgs.push(project);
     projectContainer = 'dhimantai-project-ui-' + Date.now();
     const user = process.getuid ? `${process.getuid()}:${process.getgid!()}` : '1000:1000';
@@ -68,7 +70,7 @@ async function main() {
         '--user-data-dir', userData,
         '--use-inmemory-secretstorage', ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : []),
         // The UX audit drives the real window and screenshots it through Chrome's debugging protocol.
-        ...(['suiteLearningVideo', 'suiteStudy', 'suiteStudyExperience', 'suiteStudyCrop', 'suitePracticeUx', 'suiteNotebookCoachHistory', 'suiteNotebookCoachChat', 'suiteProjectCoach'].includes(process.argv[2]) ? ['--remote-debugging-port=' + (process.env.DHIMANTAI_CDP_PORT ?? '9339'), '--window-size=1440,900'] : [])],
+        ...(['suiteLearningVideo', 'suiteStudy', 'suiteStudyRegressions', 'suiteStudyExperience', 'suiteStudyCrop', 'suiteStudyConversation', 'suitePracticeUx', 'suiteNotebookCoachHistory', 'suiteNotebookCoachChat', 'suiteProjectCoach', 'suiteProjectCompletion'].includes(process.argv[2]) ? ['--remote-debugging-port=' + (process.env.DHIMANTAI_CDP_PORT ?? '9339'), '--window-size=1440,900'] : [])],
       extensionTestsEnv: {
         DHIMANTAI_TEST_ENVIRONMENT: JSON.stringify(process.argv[2] === 'suiteLearningVideo' ? ENVIRONMENTS.staging
           : { apiUrl: url, supabaseUrl: url, supabaseAnonKey: 'test-anon-key' }),

@@ -1,34 +1,57 @@
 import * as vscode from 'vscode';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { cloneCapstone } from './capstoneRepo';
+import { cloneCapstone, restoreEmptyCapstone } from './capstoneRepo';
 import { createProject, createReadingProject } from './projectCore';
+import { projectWorkspace } from './projectWorkspace';
+import { projectSetupError, validateProjectWorkspace } from './projectSetup';
+import { CATALOG_PROJECTS } from './catalogProjects';
+
+export async function openProject(context: vscode.ExtensionContext, title: string, destination: string, created: boolean) {
+  const choice = await vscode.window.showInformationMessage(`${title} — ${created ? 'project created' : 'project ready'}`,
+    {modal: true, detail: `${created ? 'Created project folder' : 'Existing project folder'}:\n${destination}\n\nOpen in a new window to keep your current workspace open. Open in the current window to replace this workspace with the project.`},
+    'Open in New Window', 'Open in Current Window');
+  if (!choice) return;
+  try {
+    const workspace = await projectWorkspace(context.globalStorageUri.fsPath, destination, title);
+    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspace),
+      choice === 'Open in New Window' ? {forceNewWindow: true} : {forceReuseWindow: true});
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Could not open ${title}. Your project is saved at "${destination}". ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 export function registerCapstone(context: vscode.ExtensionContext) {
-  return vscode.commands.registerCommand('dhimantai.startCapstone', async (course?: string) => {
-    const project = await vscode.window.showQuickPick([
-      {label: 'Read Rich · larger Python repository', description: 'Code reading · real upstream source · guided navigation', id: 'rich-reading'},
-      {label: 'Read shelf · smaller guided introduction', description: 'Code reading · map files, follow calls, compare tests', id: 'shelf-reading'},
-      {label: 'Build a Course Research Agent', description: 'Python · multi-file project · step-by-step Coach', id: 'course-agent'},
-      {label: 'Fix a real repository bug', description: 'Python · shelf capstone · Git investigation', id: 'shelf'},
-    ].filter(p => course !== 'engineering-code-reading' || p.id.endsWith('-reading')), {title: 'Start a course project'});
+  return vscode.commands.registerCommand('dhimantai.startCapstone', async (target?: string) => {
+    const selected = CATALOG_PROJECTS.find(p => p.id === target);
+    if (target && target !== 'engineering-code-reading' && !selected) return;
+    const project = selected ?? await vscode.window.showQuickPick(CATALOG_PROJECTS
+      .filter(p => target !== 'engineering-code-reading' || p.id.endsWith('-reading'))
+      .map(p => ({...p, label: p.title, description: `${p.difficulty} · Estimated ${p.estimatedTime}`})),
+    {title: 'Start a course project'});
     if (!project) return;
-    const parent = await vscode.commands.executeCommand<vscode.Uri>('dhimantai.setupCourse');
-    if (!parent) return;
-    const destination = join(parent.fsPath, project.id === 'shelf' ? 'shelf-capstone' : project.id === 'course-agent' ? 'course-research-agent' : project.id);
-    if (existsSync(destination)) {
-      const open = await vscode.window.showWarningMessage('That project folder already exists here.', 'Open it');
-      if (open) await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(destination), {forceNewWindow: true});
-      return;
-    }
+    let destination = '';
     try {
+      const parent = await vscode.commands.executeCommand<vscode.Uri>('dhimantai.setupCourse');
+      if (!parent) return;
+      destination = join(parent.fsPath, project.id === 'shelf' ? 'shelf-capstone' : project.id === 'course-agent' ? 'course-research-agent' : project.id);
+      const media = vscode.Uri.joinPath(context.extensionUri, 'media').fsPath;
+      if (existsSync(destination)) {
+        if (project.id === 'rich-reading') await restoreEmptyCapstone(
+          vscode.Uri.joinPath(context.extensionUri, 'media', 'projects', 'rich.bundle').fsPath, destination);
+        await validateProjectWorkspace(media, project.id, destination);
+        await openProject(context, project.title, destination, false);
+        return;
+      }
       if (project.id === 'course-agent') await createProject(vscode.Uri.joinPath(context.extensionUri, 'media', 'projects', 'course-agent').fsPath, destination);
       else if (project.id === 'shelf-reading' || project.id === 'rich-reading') await createReadingProject(vscode.Uri.joinPath(context.extensionUri, 'media').fsPath, project.id, destination);
       else await cloneCapstone(vscode.Uri.joinPath(context.extensionUri, 'media', 'capstone', 'shelf.bundle').fsPath, destination);
+      await validateProjectWorkspace(media, project.id, destination);
+      await openProject(context, project.title, destination, true);
     } catch (error) {
-      void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      void vscode.window.showErrorMessage(destination ? projectSetupError(destination, error)
+        : `Could not set up the course runtime. ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(destination), {forceNewWindow: true});
   });
 }

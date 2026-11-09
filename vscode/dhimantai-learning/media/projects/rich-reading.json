@@ -42,7 +42,11 @@
       "check": "rich:setup",
       "expected": "Setup reports Rich loading from this project source tree. reading/ contains separate course helpers; rich/ and tests/ are upstream.",
       "hint": "Look for a library package, examples that call it, and tests that assert its behaviour. Defer benchmarks, release tools and unrelated features.",
-      "reflection": "Which directory would you open to answer a question about a public API, and why?"
+      "reflection": "Which directory would you open to answer a question about a public API, and why?",
+      "nextAction": {
+        "file": "READING.md",
+        "task": "Locate only rich/ and reading/. Note which contains upstream library code and which contains the course callers."
+      }
     },
     {
       "id": "caller",
@@ -60,7 +64,11 @@
       "check": "rich:text",
       "expected": "The example prints the representation of Hello, reader! followed by a newline. This is an observed output, not a test of understanding.",
       "hint": "StringIO captures output in memory. The outer built-in print displays repr; the inner console.print is the library call you will trace.",
-      "reflection": "Why capture output instead of relying on terminal colors for this first investigation?"
+      "reflection": "Why capture output instead of relying on terminal colors for this first investigation?",
+      "nextAction": {
+        "file": "reading/examples.py",
+        "task": "Read only plain_text. Write the string passed to console.print and predict whether the captured value ends with a newline."
+      }
     },
     {
       "id": "entry",
@@ -80,7 +88,11 @@
       "check": "rich:text",
       "expected": "The same output is reproduced. Your notes identify the public method and the next internal boundary, without treating every branch as executed.",
       "hint": "Use Go to Symbol in Editor or exact text search in console.py. Find the path for your actual arguments; leave JSON, logging and SVG export for another question.",
-      "reflection": "Which branch is irrelevant to this input, and how can you tell?"
+      "reflection": "Which branch is irrelevant to this input, and how can you tell?",
+      "nextAction": {
+        "file": "rich/console.py",
+        "task": "Within Console.print, find the call to _collect_renderables. Name one argument passed in and the variable receiving its result. Stop at that boundary."
+      }
     },
     {
       "id": "collect",
@@ -100,7 +112,11 @@
       "check": "rich:text",
       "expected": "Your trace links the caller's string to Text and distinguishes preparation from final output.",
       "hint": "Place the cursor near render_str before asking Coach about it; the shared context will show that region. Trace only the markup=False route first.",
-      "reflection": "What would change in the route if markup were enabled?"
+      "reflection": "What would change in the route if markup were enabled?",
+      "nextAction": {
+        "file": "rich/console.py",
+        "task": "Inside _collect_renderables, find the string branch and its render_str call. Follow the markup=False route and name the returned type."
+      }
     },
     {
       "id": "markup",
@@ -123,7 +139,11 @@
       "check": "rich:markup",
       "expected": "Plain text has no tags; the bold span covers Hello; captured output has no terminal color escapes.",
       "hint": "Track two values: text characters and spans. A style can exist in the Text object even when the output device does not emit colors.",
-      "reflection": "Which observation supports the claim that parsing and terminal color output are separate?"
+      "reflection": "Which observation supports the claim that parsing and terminal color output are separate?",
+      "nextAction": {
+        "file": "reading/examples.py",
+        "task": "Read the markup example and write two predictions: the plain characters and the range covered by bold. Compare each separately with the output."
+      }
     },
     {
       "id": "protocol",
@@ -147,7 +167,11 @@
       "check": "rich:protocol",
       "expected": "The custom greeting renders successfully. Your explanation names the protocol method and the recursive conversion to segments.",
       "hint": "In Console.render, find how __rich_console__ is obtained, then what happens to each item it yields. Compare a Segment with another renderable.",
-      "reflection": "Why can Greeting work without inheriting from Console or Text?"
+      "reflection": "Why can Greeting work without inheriting from Console or Text?",
+      "nextAction": {
+        "file": "reading/examples.py",
+        "task": "Read only Greeting.__rich_console__. Identify the type of the yielded object, then locate where Console.render handles that type."
+      }
     },
     {
       "id": "tests",
@@ -167,7 +191,11 @@
       "check": "rich:test-console",
       "expected": "Three selected upstream tests pass. This does not mean the entire upstream suite has run or prove your understanding.",
       "hint": "StringIO and fixed Console options make assertions repeatable. Read the expected string literally, including spaces and newlines.",
-      "reflection": "Which boundary case would you investigate next, and which existing test might cover it?"
+      "reflection": "Which boundary case would you investigate next, and which existing test might cover it?",
+      "nextAction": {
+        "file": "tests/test_console.py",
+        "task": "Read only test_print. Write its input and exact expected string, including whitespace, before running the selected tests."
+      }
     },
     {
       "id": "table",
@@ -190,7 +218,11 @@
       "check": "rich:table",
       "expected": "A two-column book table appears. Your trace separates stored cell content, width calculation and generated output.",
       "hint": "Search for add_row to find the mutation, then __rich_console__ to find the rendering entry. Follow one width calculation before expanding the whole call graph.",
-      "reflection": "Where would you investigate a wrong column width versus a missing row?"
+      "reflection": "Where would you investigate a wrong column width versus a missing row?",
+      "nextAction": {
+        "file": "reading/examples.py",
+        "task": "Choose one add_row call. List its cell values, then follow where Table stores those values before looking at width calculation."
+      }
     },
     {
       "id": "contrast",
@@ -210,7 +242,11 @@
       "check": "rich:test-table",
       "expected": "The focused table test file runs. Notes explain specific tested boundaries rather than declaring the whole library correct.",
       "hint": "Follow the pytest.raises block as a statement about one error condition. Compare it with the single newline asserted for a table with no columns.",
-      "reflection": "What source evidence links each test to the branch you identified?"
+      "reflection": "What source evidence links each test to the branch you identified?",
+      "nextAction": {
+        "file": "tests/test_table.py",
+        "task": "Read only test_not_renderable. Identify the rejected input and expected exception, then find the matching check in Table.add_row."
+      }
     },
     {
       "id": "independent",
@@ -231,7 +267,11 @@
       "check": "rich:test-markup",
       "expected": "Markup tests run and your notes make the investigation reproducible. Coach help and a local checkpoint are not independent mastery or an official submission.",
       "hint": "Search a literal input from a test, follow only the parser branch it triggers, and explain why its assertion follows. Ask Coach for one smaller step if the trace becomes too broad.",
-      "reflection": "How would you begin the next unfamiliar repository using what worked here?"
+      "reflection": "How would you begin the next unfamiliar repository using what worked here?",
+      "nextAction": {
+        "file": "tests/test_markup.py",
+        "task": "Choose test_render_escape. Copy one literal input and its expected plain text into your notes, then locate the parser branch that explains it."
+      }
     }
   ]
 }

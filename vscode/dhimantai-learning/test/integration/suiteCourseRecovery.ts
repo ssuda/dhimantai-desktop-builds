@@ -14,7 +14,7 @@ export async function runTest() {
   const {auth,courses} = await vscode.extensions.getExtension<NonNullable<Awaited<ReturnType<typeof activate>>>>('optficial.dhimantai-learning')!.activate();
   const parent = await realpath(await mkdtemp(join(tmpdir(),'dhimantai-recovery-')));
   await vscode.workspace.getConfiguration('dhimantai').update('exercisesFolder',parent,vscode.ConfigurationTarget.Global);
-  assert.equal(vscode.workspace.getConfiguration('dhimantai').get('courseContainers'),true);
+  assert.equal(courses.enabled,true);
   await auth.signInWithPassword(EMAIL,PASSWORD);
   const account=(await auth.session())!.user.id;
   const root=await courses.courseFolder({course:'Python',account,environment:'production'});

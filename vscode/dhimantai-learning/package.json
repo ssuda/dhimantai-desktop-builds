@@ -1,8 +1,8 @@
 {
   "name": "dhimantai-learning",
   "displayName": "dhimantAI Learning",
-  "description": "Learn in VS Code with Course Catalog, Instructor, Study, Doubt Solver, and coding practice. Write, debug, and test here; choose a course, local, or Colab runtime.",
-  "version": "0.39.5",
+  "description": "Learn in VS Code with Course Catalog, Instructor, Study, Doubt Solver, and coding practice. Write, debug, and test here; run projects and tests in the course container.",
+  "version": "0.39.8",
   "publisher": "optficial",
   "license": "UNLICENSED",
   "private": true,
@@ -24,14 +24,19 @@
   "contributes": {
     "terminal": {
       "profiles": [
-        { "id": "dhimantai.courseShell", "title": "dhimantAI Course (zsh)", "icon": "terminal" }
+        { "id": "dhimantai.courseShell", "title": "dhimantAI Course Container", "icon": "terminal" }
       ]
     },
     "configurationDefaults": {
       "chat.disableAIFeatures": true,
-      "editor.tabCompletion": "on"
+      "editor.tabCompletion": "on",
+      "terminal.integrated.defaultProfile.windows": "dhimantAI Course Container",
+      "terminal.integrated.defaultProfile.osx": "dhimantAI Course Container",
+      "terminal.integrated.defaultProfile.linux": "dhimantAI Course Container"
     },
     "commands": [
+      { "command": "dhimantai.searchCommands", "title": "Search Commands", "category": "dhimantAI" },
+      { "command": "dhimantai.gitHub", "title": "Git & GitHub", "category": "dhimantAI", "icon": "$(source-control)" },
       { "command": "dhimantai.desktopWelcome", "title": "Open Desktop Welcome", "category": "dhimantAI" },
       { "command": "dhimantai.openStudy", "title": "Open Study Reader", "category": "dhimantAI", "icon": "$(book)" },
       { "command": "dhimantai.cellInput", "title": "Send input to running cell", "category": "dhimantAI" },
@@ -130,8 +135,8 @@
     ],
     "menus": {
       "view/item/context": [
-        { "command": "dhimantai.openCourse", "when": "view == dhimantai.practice && viewItem =~ /^dhimantaiCourse/ && config.dhimantai.courseContainers", "group": "inline" },
-        { "command": "dhimantai.openCourse", "when": "view == dhimantai.practice && viewItem =~ /^dhimantaiCourse/ && config.dhimantai.courseContainers", "group": "navigation" },
+        { "command": "dhimantai.openCourse", "when": "view == dhimantai.practice && viewItem =~ /^dhimantaiCourse/", "group": "inline" },
+        { "command": "dhimantai.openCourse", "when": "view == dhimantai.practice && viewItem =~ /^dhimantaiCourse/", "group": "navigation" },
         { "command": "dhimantai.openCourseColab", "when": "view == dhimantai.practice && viewItem == dhimantaiCourseColab", "group": "inline" },
         { "command": "dhimantai.openCourseColab", "when": "view == dhimantai.practice && viewItem == dhimantaiCourseColab", "group": "navigation" }
       ],
@@ -177,7 +182,7 @@
       ],
       "notebook/toolbar": [
         { "command": "dhimantai.useColabKernel", "when": "notebookType == jupyter-notebook && !dhimantai.practiceNotebook", "group": "navigation" },
-        { "command": "dhimantai.openCopyInCourse", "when": "notebookType == jupyter-notebook && config.dhimantai.courseContainers && !dhimantai.practiceNotebook", "group": "navigation" },
+        { "command": "dhimantai.openCopyInCourse", "when": "notebookType == jupyter-notebook && !dhimantai.practiceNotebook", "group": "navigation" },
         {
           "command": "dhimantai.askCoach",
           "when": "notebookType == jupyter-notebook && !dhimantai.practiceNotebook",
@@ -215,48 +220,10 @@
           "default": "production",
           "description": "Which dhimantAI service to use. Exercises and progress are shared with the app for the same environment."
         },
-        "dhimantai.toolchains": {
-          "type": "object",
-          "default": {},
-          "markdownDescription": "Paths to language tools when they are not on `PATH`, for example `{\"python\": \"/usr/local/bin/python3\", \"javac\": \"C:\\\\jdk\\\\bin\\\\javac.exe\"}`. Keys: `python`, `node`, `tsc`, `cc`, `rustc`, `go`, `javac`, `java`.",
-          "properties": {
-            "python": {
-              "type": "string"
-            },
-            "node": {
-              "type": "string"
-            },
-            "tsc": {
-              "type": "string"
-            },
-            "cc": {
-              "type": "string"
-            },
-            "rustc": {
-              "type": "string"
-            },
-            "go": {
-              "type": "string"
-            },
-            "javac": {
-              "type": "string"
-            },
-            "java": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false
-        },
         "dhimantai.exercisesFolder": {
           "type": "string",
           "default": "",
           "markdownDescription": "Parent folder for local course files and exercises. Defaults to `~/dhimantAI`."
-        },
-        "dhimantai.courseContainers": {
-          "type": "boolean",
-          "default": true,
-          "scope": "application",
-          "description": "Use the course container as the default runtime. DhimantAI prepares Podman and course dependencies on setup or the first course run. Turn off to explicitly use local tools."
         },
         "dhimantai.practiceEditor": {
           "type": "string",

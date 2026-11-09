@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { cloneCapstone } from '../src/capstoneRepo';
@@ -9,7 +9,7 @@ import { cloneCapstone } from '../src/capstoneRepo';
 const root = resolve(__dirname, '../..');
 const bundle = join(root, 'media/capstone/shelf.bundle');
 const tools = spawnSync('git', ['--version']).status === 0 && spawnSync('python3', ['--version']).status === 0;
-const refs = (path: string) => execFileSync('git', ['ls-remote', path], {encoding: 'utf8'}).trim();
+const refs = (path: string) => execFileSync('git', ['ls-remote', path], {cwd: tmpdir(), encoding: 'utf8'}).trim();
 
 test('the shipped capstone matches its build script and its judge fails a fresh clone', {skip: !tools && 'needs git and python3'}, async () => {
   const folder = mkdtempSync(join(tmpdir(), 'capstone-'));
@@ -18,12 +18,21 @@ test('the shipped capstone matches its build script and its judge fails a fresh 
     assert.equal(refs(join(folder, 'rebuilt.bundle')), refs(bundle), 'rebuild media/capstone/shelf.bundle after editing the script');
     const repo = join(folder, 'shelf');
     await cloneCapstone(bundle, repo);
+    assert.equal(execFileSync('git', ['rev-parse', 'start'], {cwd: repo, encoding: 'utf8'}).trim(),
+      '9d7b2be98471876899eea8853f0b3f4e336bcbf9', 'existing capstone history and its start tag stay unchanged');
+    mkdirSync(join(repo, '.vscode'));
+    writeFileSync(join(repo, '.vscode/settings.json'), '{}');
+    assert.equal(execFileSync('git', ['status', '--porcelain'], {cwd: repo, encoding: 'utf8'}), '');
     const tests = spawnSync('python3', ['-m', 'unittest', 'discover', '-s', 'tests', '-t', '.'], {cwd: repo, encoding: 'utf8'});
     assert.equal(tests.status, 0, 'the teammate\'s tests pass: the bug is not covered');
     const judge = spawnSync('python3', ['check.py'], {cwd: repo, encoding: 'utf8'});
     assert.equal(judge.status, 1);
     assert.match(judge.stdout, /FAIL Issue #12: 'dune' finds Dune/);
     assert.match(judge.stdout, /2 of 10 checks passed/);
+    assert.match(judge.stdout, /PASS Working tree is clean/);
+    writeFileSync(join(repo, 'README.md'), '# Uncommitted project work\n');
+    const dirty = spawnSync('python3', ['check.py'], {cwd: repo, encoding: 'utf8'});
+    assert.match(dirty.stdout, /FAIL Working tree is clean/);
     await assert.rejects(cloneCapstone(bundle, repo), /Could not create the capstone repository/);
   } finally { rmSync(folder, {recursive: true, force: true}); }
 });

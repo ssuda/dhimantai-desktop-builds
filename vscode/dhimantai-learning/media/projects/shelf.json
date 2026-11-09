@@ -1,0 +1,78 @@
+{
+  "id": "shelf",
+  "version": 1,
+  "title": "Shelf Capstone · fix a repository bug",
+  "files": ["CAPSTONE.md", "ISSUE.md", "README.md", "shelf/__main__.py", "shelf/cli.py", "shelf/search.py", "shelf/models.py", "shelf/storage.py", "shelf/report.py", "tests/test_search.py", "tests/test_models.py", "tests/test_storage.py", "tests/test_report.py", "books.json", "PR.md", "check.py"],
+  "steps": [
+    {
+      "id": "map", "title": "1. Map the repository",
+      "goal": "Understand the issue, entry point, source files and tests before editing.",
+      "opening": "You have joined the Shelf team. Your task is to fix issue #12 and leave evidence a reviewer can follow.",
+      "task": "Read CAPSTONE.md, ISSUE.md and README.md. In the course terminal, run python -m shelf list. Follow shelf/__main__.py into cli.py and locate the search branch. Use Check this step to run the existing tests and record the baseline.",
+      "files": ["CAPSTONE.md", "ISSUE.md", "README.md", "shelf/__main__.py", "shelf/cli.py"],
+      "check": "all", "expected": "The starter tests pass. That baseline does not establish that the reported search behavior is correct.",
+      "hint": "Start at the command entry point and follow only the calls needed for search. Keep storage, matching and display responsibilities separate.",
+      "reflection": "Which files receive the command, load books, decide matches and test the result?"
+    },
+    {
+      "id": "reproduce", "title": "2. Reproduce issue #12",
+      "goal": "Compare the user's expected result with the actual command output.",
+      "opening": "A useful bug report becomes a small, repeatable example before it becomes a code change.",
+      "task": "Inspect books.json and predict the result for dune. Run this step, then try python -m shelf search \"le guin\" --by author in the course terminal. Trace the query from cli.py to search.py. Record expected and actual results without editing the implementation yet.",
+      "files": ["ISSUE.md", "books.json", "shelf/cli.py", "shelf/search.py"],
+      "check": "shelf:search", "expected": "The original code prints No books found. A successful command exit only means it ran; compare the output with the issue.",
+      "hint": "Inspect the values on both sides of the matching operation, including their case and whitespace.",
+      "reflection": "What smallest input demonstrates the difference between the intended and observed behavior?"
+    },
+    {
+      "id": "regression", "title": "3. Write a regression test",
+      "goal": "Capture the reported behavior with a test that fails for the actual defect.",
+      "opening": "The old tests pass because they exercise particular inputs. Your new test should distinguish broken behavior from a correct implementation.",
+      "task": "Read tests/test_search.py and compare its fixtures with books.json. Add a focused test there, or in a new tests/test_*.py file. Run all tests with this step before fixing search.py. Read the failure and confirm it describes issue #12 rather than an import, syntax or setup problem.",
+      "files": ["tests/test_search.py", "shelf/search.py", "shelf/models.py", "books.json"],
+      "check": "all", "expected": "Your new regression test fails on the original code for the reported search behavior; unrelated tests still pass.",
+      "hint": "Use a small Book fixture and assert the returned books. A test that passes on both versions cannot prove this bug is fixed.",
+      "reflection": "Which assertion fails, and how does it connect to the user's report?"
+    },
+    {
+      "id": "history", "title": "4. Investigate Git history",
+      "goal": "Identify the change that introduced the defect using a patch and test evidence.",
+      "opening": "Commit subjects help navigation, but the changed code is the evidence for a cause.",
+      "task": "In Runtime → Open terminal, inspect git status, git log --oneline, and git log -p -- shelf/search.py. Use git show <commit> -- shelf/search.py to inspect a candidate. Record the short hash and explain the changed behavior. Keep your regression test and edits safe; the focused tests remain available here.",
+      "files": ["CAPSTONE.md", "shelf/search.py", "tests/test_search.py"],
+      "check": "all", "expected": "You can connect a specific patch to the reproduction. Tests may still fail while the bug is unfixed.",
+      "hint": "Compare the matching expression before and after a candidate change. Ask Coach about log, show or bisect before using an unfamiliar Git operation.",
+      "reflection": "What evidence identifies the cause beyond the commit's title?"
+    },
+    {
+      "id": "fix", "title": "5. Make and debug a focused fix",
+      "goal": "Fix the behavior on a branch while preserving existing functionality.",
+      "opening": "Use the failing test to guide a small change, then verify the surrounding behavior.",
+      "task": "Check git status and create your branch with git switch -c fix-search-case if needed. Make the smallest justified change in shelf/search.py. Run this step, then rerun both issue commands in the course terminal. If something fails, compare the assertion, actual output and relevant source before changing more code.",
+      "files": ["shelf/search.py", "tests/test_search.py", "ISSUE.md", "shelf/cli.py"],
+      "check": "all", "expected": "The regression and existing tests pass, and the issue commands return the intended books.",
+      "hint": "Keep the original optimization's purpose in mind. Verify title and author searches as well as query case and extra spaces.",
+      "reflection": "Why does your change address the cause, and what behavior did you verify it preserves?"
+    },
+    {
+      "id": "commit", "title": "6. Review and commit the change",
+      "goal": "Produce a focused commit with a readable explanation and verified tests.",
+      "opening": "Review the exact patch you are about to record, including your regression test.",
+      "task": "Inspect git status and git diff. Stage only your intended source and test paths with git add, then inspect git diff --cached. Commit with a message describing the change and mentioning #12. Rerun tests if you changed code during review. Ask Coach to explain staging, diffs or commits when needed.",
+      "files": ["CAPSTONE.md", "shelf/search.py", "tests/test_search.py"],
+      "check": "all", "expected": "Your source and regression test are committed on your branch, with #12 in a commit message. Passing tests alone do not verify the Git requirements.",
+      "hint": "Use explicit paths when staging and review the staged diff before committing. Do not include unrelated files or secrets.",
+      "reflection": "What will the reviewer learn from your commit message and test?"
+    },
+    {
+      "id": "review", "title": "7. Prepare the pull request and verify",
+      "goal": "Explain the cause, fix and test evidence, then inspect every capstone check.",
+      "opening": "The handoff should let a reviewer reproduce your evidence and understand any help you used.",
+      "task": "Create PR.md with ## Cause, ## Fix and ## Test sections. Include the culprit commit's short hash, your reasoning, verification commands and assistance used. Commit the note. Run this step to execute check.py in the course container, inspect each result, and address any remaining failure. Save a local checkpoint with your evidence and next action.",
+      "files": ["CAPSTONE.md", "PR.md", "shelf/search.py", "tests/test_search.py", "check.py"],
+      "check": "shelf:capstone", "expected": "The checker verifies tests, issue behavior, a regression test that fails on old code, branch, commits, clean working tree and PR note. These are local observations, not a grade or proof of independent mastery.",
+      "hint": "Read the specific failed check before changing anything. The checker tries the old search.py in a temporary copy to test your regression test.",
+      "reflection": "Can another engineer reproduce the defect and verify your fix using your PR note?"
+    }
+  ]
+}

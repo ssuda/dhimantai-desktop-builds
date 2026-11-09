@@ -30,14 +30,14 @@ export async function run() {
     }
     return host;
   };
-  const click = async (action: string) => {
+  const click = async (action: string, id?: string) => {
     const dom = new JSDOM(panel()!.webview.html, {runScripts:'outside-only'});
     try {
       const sent: any[] = [];
       (dom.window as any).acquireVsCodeApi = () => ({postMessage:(message: any) => sent.push(message)});
       for (const script of dom.window.document.querySelectorAll('script')) dom.window.eval(script.textContent!);
       assert.equal(sent.length, 0);
-      const button = dom.window.document.querySelector<HTMLButtonElement>(`button[data-action="${action}"]`);
+      const button = dom.window.document.querySelector<HTMLButtonElement>(`button[data-action="${action}"]${id ? `[data-id="${id}"]` : ''}`);
       assert.ok(button, `Missing ${action} button`);
       button.click();
       assert.equal(sent.length, 1);
@@ -56,6 +56,76 @@ export async function run() {
       assert.match(panel()!.webview.html, /data-action="signIn"/);
       assert.ok(!vscode.window.tabGroups.all.some(g => g.tabs.some(t => /Instructor notebook|Doubt Solver notebook/.test(t.label))),
         'welcome does not start an unsolicited learning session');
+    });
+    await check('command search delegates to the native palette before sign-in', async () => {
+      const execute = vscode.commands.executeCommand;
+      const opened: unknown[][] = [];
+      (vscode.commands as any).executeCommand = async (command: string, ...args: unknown[]) => {
+        if (command === 'workbench.action.quickOpen') { opened.push(args); return; }
+        return execute(command, ...args);
+      };
+      try {
+        await click('commands');
+        assert.deepEqual(opened, [['>dhimantAI ']]);
+      } finally { (vscode.commands as any).executeCommand = execute; }
+    });
+    await check('Projects is a standalone catalog category with complete cards before sign-in', async () => {
+      const dom = new JSDOM(panel()!.webview.html);
+      try {
+        const section = dom.window.document.querySelector('main > section[aria-labelledby="projects-title"]')!;
+        assert.ok(section, 'projects are independent of Engineering Essentials');
+        const cards = [...section.querySelectorAll<HTMLElement>('[data-project]')];
+        assert.deepEqual(cards.map(c => c.dataset.project), ['shelf-reading', 'rich-reading', 'course-agent', 'shelf']);
+        for (const card of cards) {
+          assert.ok(card.querySelector('h2')!.textContent!.length > 10);
+          assert.ok(card.querySelector('p')!.textContent!.length > 40, 'each project has a description');
+          assert.match(card.textContent!, /Beginner|Intermediate/);
+          assert.match(card.textContent!, /Estimated \d+–\d+ hours/);
+          assert.match(card.textContent!, /Learning outcomes/);
+          assert.ok(card.querySelectorAll('li').length >= 3);
+          const buttons = [...card.querySelectorAll<HTMLButtonElement>('button')];
+          assert.equal(buttons.length, 1, 'one clear action per project');
+          assert.equal(buttons[0].textContent, 'Start Project');
+          assert.equal(buttons[0].dataset.id, card.dataset.project);
+          assert.equal(buttons[0].disabled, false);
+        }
+      } finally { dom.window.close(); }
+    });
+    await check('Start Project selects the exact project without a second picker, even offline', async () => {
+      const execute = vscode.commands.executeCommand, pick = vscode.window.showQuickPick;
+      let setups = 0;
+      (vscode.commands as any).executeCommand = async (command: string, ...args: unknown[]) => {
+        if (command === 'dhimantai.setupCourse') { setups++; return; } // Cancel before any runtime or file mutation.
+        return execute(command, ...args);
+      };
+      (vscode.window as any).showQuickPick = async () => { throw new Error('A selected project must not open another picker'); };
+      try {
+        await settings(true);
+        await catalog.refresh();
+        for (const id of ['shelf-reading', 'rich-reading', 'course-agent', 'shelf']) await click('project', id);
+        assert.equal(setups, 4, 'every card reaches the existing course runtime setup');
+        await (catalog as any).handle({type:'project', id:'unknown'});
+        await vscode.commands.executeCommand('dhimantai.startCapstone', '../unknown');
+        assert.equal(setups, 4, 'unknown IDs cannot start setup');
+      } finally {
+        (vscode.commands as any).executeCommand = execute;
+        (vscode.window as any).showQuickPick = pick;
+        await settings(false);
+        await catalog.refresh();
+      }
+    });
+    await check('the command palette and code-reading course retain their project pickers', async () => {
+      const pick = vscode.window.showQuickPick;
+      const choices: string[][] = [];
+      (vscode.window as any).showQuickPick = async (items: {id: string}[]) => { choices.push(items.map(i => i.id)); };
+      try {
+        await vscode.commands.executeCommand('dhimantai.startCapstone');
+        await vscode.commands.executeCommand('dhimantai.startCapstone', 'engineering-code-reading');
+        assert.deepEqual(choices, [
+          ['shelf-reading', 'rich-reading', 'course-agent', 'shelf'],
+          ['shelf-reading', 'rich-reading'],
+        ]);
+      } finally { (vscode.window as any).showQuickPick = pick; }
     });
     await check('lifecycle messages cannot restart a pending catalog load', async () => {
       let reads = 0, release!: () => void;

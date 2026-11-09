@@ -22,7 +22,7 @@ export async function run() {
   await auth.signInWithPassword(account.email,account.password);
   const cdp=await connect();
   const ui=(expression:string)=>cdp.webview(`d=>{if(!d.querySelector('#reading'))return null;return (${expression})(d);}`);
-  const snapshot=()=>ui(`d=>({text:d.querySelector('#response').textContent,html:d.querySelector('#response').innerHTML,
+  const snapshot=()=>ui(`d=>({text:d.querySelector('.study-exchange:last-child')?.textContent??'',html:d.querySelector('.study-exchange:last-child')?.innerHTML??'',history:d.querySelector('#response').textContent,
     busy:d.querySelector('#question').disabled,
     draft:d.querySelector('#question').value,status:d.querySelector('#help-status').textContent,
     attachments:d.querySelectorAll('#attachments .attachment').length,
@@ -41,9 +41,9 @@ export async function run() {
       lk.Room.prototype.on=function(...args){if(!this.__practiceQa){this.__practiceQa=true;q.room=this;
         on.call(this,lk.RoomEvent.DataReceived,bytes=>{try{const p=JSON.parse(new TextDecoder().decode(bytes));if(['display_on_screen','write_on_whiteboard'].includes(p.method))q.events.push({type:'board',time:Date.now(),request:p.study_request_id,content:p.content});}catch{}});
         on.call(this,lk.RoomEvent.ParticipantAttributesChanged,(changed,peer)=>{if(peer.isAgent&&changed['lk.agent.state']){
-          const heading=Array.from(d.querySelectorAll('#response h2,#response h3')).find(h=>/Your turn|Practice/i.test(h.textContent));
+          const heading=d.querySelector('.study-exchange:last-child .study-turn-marker');
           const rect=heading?.getBoundingClientRect(),pane=d.querySelector('#study-content').getBoundingClientRect();
-          q.events.push({type:'state',time:Date.now(),state:changed['lk.agent.state'],visible:d.querySelector('#response').textContent,
+          q.events.push({type:'state',time:Date.now(),state:changed['lk.agent.state'],visible:d.querySelector('.study-exchange:last-child')?.textContent??'',
             questionVisible:!!rect&&rect.top>=pane.top&&rect.bottom<=pane.bottom});}});
         on.call(this,lk.RoomEvent.TrackSubscribed,track=>{if(track.kind==='audio')q.audio=track;});
       }return on.apply(this,args);};return true;}`);
@@ -84,7 +84,7 @@ export async function run() {
       assert.ok(media.audioElements>0&&media.stats?.bytesReceived>0,'live voice frames reach the reader');
       await ui(`d=>{const s=d.querySelector('#sound');if(s.getAttribute('aria-pressed')==='true')s.click();return true;}`);
       const final=await snapshot();report.turns.push({label,question,...final,media});save();
-      if(practice)await ui(`d=>{const h=Array.from(d.querySelectorAll('#response h2,#response h3')).find(h=>/Your turn|Practice/i.test(h.textContent));h?.scrollIntoView({block:'center'});return true;}`);
+      if(practice)await ui(`d=>{d.querySelector('.study-exchange:last-child .study-turn-marker')?.scrollIntoView({block:'center'});return true;}`);
       await vscode.commands.executeCommand('notifications.hideToasts');
       const shot=await cdp.send('Page.captureScreenshot',{format:'png'});
       writeFileSync(join(output,label+'.png'),Buffer.from(shot.data,'base64'));
@@ -95,7 +95,7 @@ export async function run() {
     assert.doesNotMatch(practice,/\b(?:3|three) comparisons\b/i,'answer stays hidden before attempt');
     const hint=await ask('hint-before-attempt','Give me one hint for that practice question without giving the answer. Keep the question visible.');
     assert.doesNotMatch(hint.text,/\b(?:3|three) comparisons\b/i,'hint does not reveal the answer');
-    assert.match(hint.text,/8.*3.*5.*1/s,'original question remains available during the hint');
+    assert.match(hint.history,/8.*3.*5.*1/s,'original question remains available during the hint');
     const answer=await ask('attempt-feedback','My answer is 3 comparisons: compare 8, then 3, then 5 and stop at the match. Is my reasoning correct?');
     assert.match(answer.text,/correct|right|exactly/i,'feedback evaluates the actual attempt');
     assert.match(answer.text,/3|three/i);

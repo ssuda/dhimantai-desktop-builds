@@ -122,7 +122,8 @@ export class CourseWorkspaces {
       .map((key) => this.context.globalState.get<CourseRecord>(key)!);
   }
   get enabled() {
-    return this.available && vscode.workspace.getConfiguration('dhimantai').get('courseContainers', true);
+    // Older settings may contain courseContainers=false; learner execution is now container-only.
+    return this.available;
   }
   recordFor(uri: vscode.Uri) {
     return uri.scheme === 'file' ? this.records.find((r) =>
@@ -243,7 +244,7 @@ export class CourseWorkspaces {
   }
 
   private async prepare(s: CourseScope, previous?: CourseRecord, repair = false): Promise<CourseEngine> {
-    if (!this.enabled) throw new Error('Enable DhimantAI course containers in Settings to set up this workstation.');
+    if (!this.enabled) throw new Error('The course container is unavailable. Set up the course runtime before running.');
     await this.check(s);
     const record = await this.courseDirectory(s, previous);
     const { key } = record;
@@ -550,12 +551,14 @@ export class CourseWorkspaces {
   async terminal(target = this.activeFile()) {
     const engine = await this.forFile(target);
     if (!engine) throw new Error('Choose a course workstation first.');
-    openCourseTerminal(engine, this.recordFor(target)?.course);
+    const cwd = (await vscode.workspace.fs.stat(target)).type & vscode.FileType.Directory ? target.fsPath : dirname(target.fsPath);
+    openCourseTerminal(engine, this.recordFor(target)?.course, cwd);
   }
   async terminalOptions(target: vscode.Uri): Promise<vscode.TerminalOptions> {
     const engine = await this.forFile(target);
     if (!engine) throw new Error('Choose a course workstation before opening its terminal.');
-    return courseTerminalOptions(engine, this.recordFor(target)!.course);
+    const cwd = (await vscode.workspace.fs.stat(target)).type & vscode.FileType.Directory ? target.fsPath : dirname(target.fsPath);
+    return courseTerminalOptions(engine, this.recordFor(target)!.course, cwd);
   }
   private async importPrevious(parent: string, root: string, scope: CourseScope, id: string) {
     if (!uuid.test(id)) throw new Error('Invalid exercise identifier.');

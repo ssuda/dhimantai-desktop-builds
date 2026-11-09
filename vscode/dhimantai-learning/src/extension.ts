@@ -1,6 +1,9 @@
 import { CourseWorkspaces } from './courseWorkspace';
 import { registerCourseKernel } from './courseKernel';
 import * as vscode from 'vscode';
+import { ProjectResults } from './projectResults';
+import { openProject } from './capstone';
+import { validateProjectWorkspace } from './projectSetup';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +14,7 @@ import { ENVIRONMENTS, Environment, EnvironmentName } from './environments';
 import { registerNextLine } from './nextLine';
 import { PracticeBrowser } from './practiceBrowser';
 import { registerLearningNavigation } from './learningNavigation';
+import { registerGitHub } from './gitHub';
 import { CourseCatalog } from './courseCatalog';
 import { registerStudyReader } from './studyReader';
 import { registerCourseShellProfile } from './courseShellProfile';
@@ -29,10 +33,12 @@ import { registerPracticeKernel } from './practiceKernel';
 import { MIRRORED, MirroredLanguage, mirrorFolder, registerCellMirrors } from './cellMirror';
 import { practiceLink } from './practiceIpynb';
 import { jupyterMetadata } from './notebookCommands';
-import { runPublicTests, Toolchains } from './localRunner';
 
 export async function activate(context: vscode.ExtensionContext) {
   registerLearningNavigation(context);
+  registerGitHub(context);
+  context.subscriptions.push(vscode.commands.registerCommand('dhimantai.searchCommands', () =>
+    vscode.commands.executeCommand('workbench.action.quickOpen', '>dhimantAI ')));
   // Integration tests point the extension at a local contract server; never honoured outside VS Code's test mode.
   const testing = context.extensionMode === vscode.ExtensionMode.Test;
   const testEnvironment: Environment | undefined = testing && process.env.DHIMANTAI_TEST_ENVIRONMENT
@@ -68,7 +74,10 @@ export async function activate(context: vscode.ExtensionContext) {
   registerCourseKernel(courses,context,auth);
   context.subscriptions.push(vscode.commands.registerCommand('dhimantai.courseDockerfile', () =>
     courses.openDockerfile().catch(e => vscode.window.showErrorMessage(e.message))));
-  const practice = new PracticeBrowser(auth, envName, env, courses);
+  const projectChanges = new vscode.EventEmitter<void>();
+  const projectResults = new ProjectResults(context.globalState, () => projectChanges.fire());
+  const projectMedia = vscode.Uri.joinPath(context.extensionUri, 'media').fsPath;
+  const practice = new PracticeBrowser(auth, envName, env, courses, projectResults, projectMedia);
   context.subscriptions.push(registerCourseShellProfile(() => practice.courseTerminalOptions(),
     uri => !!courses.recordFor(uri), () => courses.enabled));
   const workstationAction = async <T>(action: () => Promise<T>): Promise<T | undefined> => {
@@ -88,7 +97,22 @@ export async function activate(context: vscode.ExtensionContext) {
   );
   const study = await registerStudyReader(context, auth, envName, env, copilotPolicy);
   context.subscriptions.push(study);
-  const catalog = new CourseCatalog(auth, envName, env, () => practice.refresh(), learningRoom.hasNotebook, study.companions);
+  const catalog = new CourseCatalog(auth, envName, env, () => practice.refresh(), learningRoom.hasNotebook, study.companions, projectResults, projectMedia);
+  context.subscriptions.push(projectChanges, projectChanges.event(() => { practice.refresh(); void catalog.refresh(); }),
+    vscode.window.onDidChangeWindowState(state => { if (state.focused) practice.refresh(); }),
+    vscode.commands.registerCommand('dhimantai.openSavedProject', async (root: string) => {
+      const environment = envName();
+      const account = (await auth.session())?.user.id ?? 'local';
+      const saved = typeof root === 'string' && projectResults.get(environment, account, root);
+      if (!saved) return;
+      try {
+        await validateProjectWorkspace(projectMedia, saved.projectId, root);
+        if ((await auth.session())?.user.id !== (account === 'local' ? undefined : account) || envName() !== environment) return;
+        if (vscode.workspace.workspaceFolders?.some(folder => folder.uri.fsPath === root))
+          await vscode.commands.executeCommand('dhimantai.openProjectCoach', root);
+        else await openProject(context, saved.title, root, false);
+      } catch (error) { void vscode.window.showErrorMessage('Could not open this saved project: ' + (error instanceof Error ? error.message : String(error))); }
+    }));
   context.subscriptions.push(catalog);
   context.subscriptions.push(vscode.commands.registerCommand('dhimantai.pricing', () => catalog.open()));
   const installed = context.extension.packageJSON.version as string;
@@ -122,7 +146,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   };
   const media = vscode.Uri.joinPath(context.extensionUri, 'media');
-  const projectCoach = new ProjectCoach(context, auth, envName, env, courses);
+  const projectCoach = new ProjectCoach(context, auth, envName, env, courses, projectResults);
   context.subscriptions.push(projectCoach);
   // Notebook teaching stays inside its notebook. Projects reuse the Coach in the right sidebar.
   context.subscriptions.push(vscode.commands.registerCommand('dhimantai.hideCoach', async () => {
@@ -136,35 +160,20 @@ export async function activate(context: vscode.ExtensionContext) {
   const service = (name: EnvironmentName) => testEnvironment ?? ENVIRONMENTS[name];
   context.subscriptions.push(registerNextLine(context.secrets, service, task));
   // Practice lives in one real notebook: help, sample tests and Instructor replies are cells and toolbar actions.
-  // A notebook outside a course folder uses a course container when the learner has a course; with none, or with
-  // containers off, it runs on this computer as before. Hold the first Run while setup/repair completes.
+  // Every Practice notebook needs a course container. Hold Run while setup/repair completes.
   const runtimeFolders = new WeakMap<vscode.NotebookDocument, vscode.Uri>();
-  const localNotebooks = new WeakSet<vscode.NotebookDocument>();
-  const offerLocal = async (doc: vscode.NotebookDocument, message: string) => {
-    const choice = await vscode.window.showErrorMessage(message, 'Use this computer', 'Open settings');
-    if (choice === 'Use this computer') { localNotebooks.add(doc); return undefined; }
-    if (choice === 'Open settings') void vscode.commands.executeCommand('workbench.action.openSettings', 'dhimantai.courseContainers');
-    throw new Error(message);
-  };
   const notebookEngine = async (doc: vscode.NotebookDocument, language: string) => {
-    if (!vscode.workspace.getConfiguration('dhimantai').get('courseContainers', true)) return undefined;
     const inCourse = !!courses.recordFor(doc.uri);
-    if (!inCourse && (!courses.enabled || localNotebooks.has(doc))) return undefined;
     if (!courses.enabled) throw new Error('The course container is unavailable. Set up the course runtime before running.');
     let target = inCourse ? doc.uri : runtimeFolders.get(doc);
     if (!target) {
-      let failure = 'Choose a course container to run this notebook.';
-      try { target = await practice.setupCourse(doc.uri); } catch (error) {
-        failure = error instanceof Error ? error.message : String(error);
-        if (failure.startsWith('Join a course')) return undefined; // no course yet: this computer, as before
-      }
-      if (!target) return offerLocal(doc, failure);
+      target = await practice.setupCourse(doc.uri);
+      if (!target) throw new Error('Choose a course container to run this notebook.');
       runtimeFolders.set(doc, target);
     }
     const engine = await courses.forFile(target, language);
     const failed = 'The course container could not start. Open the course setup log to resolve the remaining error.';
-    if (!engine && inCourse) throw new Error(failed);
-    if (!engine) return offerLocal(doc, failed);
+    if (!engine) throw new Error(failed);
     return engine;
   };
   context.subscriptions.push(registerPracticeKernel(notebookEngine,{lab:doc=>courses.languageFor(doc.uri)==='pglab',resetEvents:reset=>[auth.onDidChange(()=>reset()),vscode.workspace.onDidChangeConfiguration(e=>{
@@ -173,11 +182,8 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(registerPracticeInNotebook({
     secrets: context.secrets, service, ...learningRoom.help,
     async tests(doc, language, source, cases) {
-      const toolchains = vscode.workspace.getConfiguration('dhimantai').get<Toolchains>('toolchains', {});
       const engine = await notebookEngine(doc, language);
-      if ((language === 'sql' || language === 'pglab') && !engine) throw new Error('PostgreSQL sample tests run in the course container, which includes PostgreSQL.');
-      return engine ? engine.tests(language, {source, stdin: '', argv: [], files: []}, cases)
-        : runPublicTests(language, source, cases, vscode.Uri.joinPath(media, 'pycall.py').fsPath, toolchains);
+      return engine.tests(language, {source, stdin: '', argv: [], files: []}, cases);
     },
   }));
   // Official language extensions analyse files, so non-Python Practice code is mirrored into a hidden project.
@@ -197,6 +203,21 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const command = (id: string, label: string, action: (...args: any[]) => Promise<unknown>) =>
     vscode.commands.registerCommand(id, (...args: any[]) => task(label, async () => { await action(...args); }));
+
+  // An open account page must not hold the shared command lock while the learner fills in the form.
+  const accountCommand = (mode: 'signIn' | 'signUp') => vscode.commands.registerCommand(`dhimantai.${mode}`, async (expectedEnvironment?: string) => {
+    try {
+      if (expectedEnvironment && expectedEnvironment !== envName()) throw new Error(`Choose ${expectedEnvironment} in Dhimantai: Environment before continuing with that account.`);
+      const session = await auth[mode]();
+      if (!session) return;
+      if (mode === 'signUp') {
+        void vscode.window.showInformationMessage('Your account is ready. Join a course to get started.');
+        await catalog.open();
+      } else void vscode.window.showInformationMessage(`Signed in to dhimantAI as ${session.user.email ?? 'your account'}.`);
+    } catch (error) {
+      void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Could not open your account. Please try again.');
+    }
+  });
 
   const uriHandler: vscode.UriHandler = {
     async handleUri(uri) {
@@ -278,19 +299,8 @@ export async function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('dhimantai.autoUpdate') && !testing) void checkUpdates();
     }),
 
-    command('dhimantai.signIn', 'Signing in', async (expectedEnvironment?: string) => {
-      if (expectedEnvironment && expectedEnvironment !== envName()) throw new Error(`Choose ${expectedEnvironment} in Dhimantai: Environment before signing in to that account.`);
-      const session = await auth.signIn();
-      if (session) void vscode.window.showInformationMessage(`Signed in to dhimantAI as ${session.user.email ?? session.user.phone ?? 'your account'}.`);
-    }),
-    command('dhimantai.signUp', 'Creating account', async (expectedEnvironment?: string) => {
-      if (expectedEnvironment && expectedEnvironment !== envName()) throw new Error(`Choose ${expectedEnvironment} in Dhimantai: Environment before signing up.`);
-      const session = await auth.signUp();
-      if (session) {
-        void vscode.window.showInformationMessage('Your account is ready. Join a course to get started.');
-        await catalog.open();
-      }
-    }),
+    accountCommand('signIn'),
+    accountCommand('signUp'),
     command('dhimantai.signOut', 'Signing out', () => auth.signOut()),
     command('dhimantai.openExercise', 'Opening exercise', async (questionId?: string, expectedUser?: string, course?: string, selectedTitle?: string) => {
       let session = (await auth.session()) ?? (await auth.signIn());
@@ -345,7 +355,7 @@ export async function activate(context: vscode.ExtensionContext) {
   if (!restoringExercise && (!testing || process.env.DHIMANTAI_TEST_WELCOME === '1')) {
     void welcome().catch(error => output.appendLine(`Course Catalog welcome: ${error instanceof Error ? error.message : String(error)}`));
   }
-  return testing ? { auth, courses, practice, notebookSubmissionView, uriHandler, copilotPolicy, catalog, welcome } : undefined;
+  return testing ? { auth, courses, practice, notebookSubmissionView, uriHandler, copilotPolicy, catalog, welcome, projectResults } : undefined;
 }
 
 // Nothing keeps running after VS Code closes: course containers stop, and a machine dhimantAI started stops too.

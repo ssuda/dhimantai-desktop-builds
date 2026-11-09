@@ -1,10 +1,47 @@
-# dhimantAI Learning 0.39.2
+# dhimantAI Learning 0.39.8
 
 Learn with **Instructor**, ask questions in **Doubt Solver**, and find your next course
 in **Course Catalog**, all inside VS Code. Write, save, debug, and test code in
-VS Code. Your runtime can be a course container, tools on this computer, or
-Google Colab for supported Python notebooks. **Colab supplies the runtime;
+VS Code. Projects, tests and course terminals use the managed course container
+on Windows, macOS and Linux. Google Colab is available for supported Python notebooks. **Colab supplies the runtime;
 VS Code remains your coding workspace.**
+
+The password eye buttons show or hide what you type in Sign in and Create account.
+Passwords start masked and are masked again when you submit or retry.
+
+## Find a command
+
+Run **dhimantAI: Search Commands** to open the Command Palette filtered to
+available dhimantAI actions, then type part of the command name. New commands
+appear automatically, with VS Code's normal availability rules and shortcuts.
+You can also choose **Search commands** under **About code help and runtime
+setup** in Course Catalog, even before signing in. The extension's built-in
+**Features → Commands** table is supplied by VS Code; this search uses its
+existing Command Palette.
+
+## Git and GitHub repositories
+
+Run **dhimantAI: Git & GitHub** from the Command Palette or find it through
+**dhimantAI: Search Commands**. The custom dhimantAI desktop also has a
+**Git & GitHub** entry in its Learning sidebar.
+
+- **Create GitHub repository** publishes the open folder through VS Code's
+  built-in flow: sign in, choose a repository name and public/private visibility,
+  and select initial files when prompted. Publishing creates the repository and
+  uploads its commits.
+- **Clone repository** accepts a Git URL or lets you choose a GitHub repository.
+- **Push**, **Pull**, and **Fetch** upload commits, integrate remote changes, or
+  download remote history without merging, respectively.
+- **Initialize local repository**, **Create branch**, **Switch branch**, and
+  **Add remote** use the editor's existing repository controls.
+- **Open Source Control** lets you review, stage and commit changes before pushing.
+
+Git, GitHub and GitHub Authentication are built into VS Code; no additional
+Marketplace extension is needed for these actions. Install Git on the computer
+where VS Code's Git extension runs, and keep these built-in extensions enabled.
+GitHub sign-in is handled by the editor when needed. dhimantAI does not store
+GitHub credentials or publish anything when this menu is opened.
+See [VS Code's repository guide](https://code.visualstudio.com/docs/sourcecontrol/repos-remotes).
 
 ## Appearance
 
@@ -34,9 +71,15 @@ The **Engineering Essentials** courses appear together below the other
 courses. Terminal and Linux, VS Code, and Git are free; the others include a
 free first chapter. They are short courses on the terminal and Linux, VS Code, Git, reading code,
 debugging, testing, review, and more. Filter them by a suggested path, such as **Before a first
-project**. That path ends with **Start the capstone**, a real repository to fix.
+project**.
 Challenges with one right answer run in Practice with hidden tests; the others
 are written and get Instructor feedback. Both use the same **Stuck?** help steps.
+
+The separate **Projects** section has cards for reading shelf, reading Rich,
+building a Course Research Agent, and fixing a shelf repository bug. Each card
+includes a description, difficulty, estimated time and learning outcomes.
+Choose **Start Project** to begin that project in your course container. Time
+estimates exclude initial runtime setup. Catalog search also finds projects.
 
 Switch between the Instructor and Doubt Solver tabs while keeping each notebook's
 lesson, conversation, unsent drafts, and runtime state. Clicking either action
@@ -123,8 +166,8 @@ from **DhimantAI Practice** in the left Explorer, or choose **dhimantAI: New Cou
 Notebook**. The extension prepares the course container. Setup verifies a small
 program before reporting ready. The terminal stays closed unless you open it.
 
-Use the notebook's single **Runtime** dropdown for **Course container** (the default),
-**This computer**, **Open course terminal**, and **Set up / rebuild course**. Notes,
+Use the notebook's single **Runtime** dropdown for **Course container**,
+**Open course terminal**, and **Set up / rebuild course**. Notes,
 code, feedback, and questions stay in the notebook; a separate assistant panel does not
 open automatically. Use the separate **Ask Instructor** / **Answer Instructor** message bar below the learning
 notebook (or Ctrl/Cmd+Enter). Enter adds a new line. The message bar scrolls with the
@@ -165,15 +208,10 @@ Guided strategies and contextual reply suggestions require the matching worker u
 For a standalone `.ipynb`, **Ask about This Notebook** adds the question and
 Instructor reply directly to the notebook. Linked Doubt Solver notebooks use Doubt
 Solver instead. The notebook's **Select Kernel** control selects the runtime.
-The **dhimantAI Practice** kernel uses the course container by default, including
+The **dhimantAI Practice** kernel uses the course container, including
 for notebooks outside the course folder: select the matching course when asked.
 Google Colab remains available through its extension for supported Python notebooks.
 Course source files use **Run code** in the course terminal.
-
-For **This computer**, enable the Microsoft Python and Jupyter extensions and
-choose a Python environment with `ipykernel`. If the picker cannot open, use
-**Select Kernel** above the notebook. Cancelling the picker leaves the notebook
-unchanged; confirm the selected kernel before using **Run Cell**.
 
 ## Course runtimes
 
@@ -192,7 +230,7 @@ Use **dhimantAI: Open Course Dockerfile** to inspect or edit the recipe for the 
 
 ### Course terminal
 
-The terminal is optional: choose **Open course terminal** in the runtime dropdown when you want an interactive shell. Choose a course when none is active. The extension prepares or starts its container and attaches directly with `podman exec -it`; no SSH server, keys or port setup is needed. The default shell is **zsh with [Oh My Zsh](https://github.com/ohmyzsh/ohmyzsh)** and the Git plugin, with a clear `/course $` prompt. The framework is pinned in the extension’s shell recipe and automatic framework updates are disabled. Course source-file runs reuse this terminal and return to its prompt when finished. A busy terminal asks you to finish its current command before running another program.
+Choose **Runtime → Open course terminal**, or **Terminal → New Terminal** in a course/project workspace. The default profile is **dhimantAI Course Container** on Windows, macOS and Linux. Choose a course when none is active. The extension prepares or starts its container and attaches directly with `podman exec -it`; no SSH server, keys or port setup is needed. The default shell is **zsh with [Oh My Zsh](https://github.com/ohmyzsh/ohmyzsh)** and the Git plugin, with a clear `/course $` prompt. The framework is pinned in the extension’s shell recipe and automatic framework updates are disabled. Course source-file runs reuse this terminal and return to its prompt when finished. A busy terminal asks you to finish its current command before running another program.
 
 Commands run inside the container in `/course`, the course folder saved on your computer. The course language brings its toolchain: Python/pip, JavaScript or TypeScript/npm, Java/Maven, C/Make/CMake, Go, or Rust/Cargo. Bash and Zsh cells can install dependencies, build projects, run tests and start programs using the same tools. `sudo` applies inside this learner-owned container; for example, `sudo apt-get install <package>` installs a Linux tool and `sudo python -m pip install <package>` makes a Python library available to the course kernel. Use project manifests and normal build/run commands in a shell cell for projects with multiple files.
 
@@ -203,7 +241,7 @@ companion lessons and Practice questions use Java 17 and a complete `Main` progr
 in each code cell. Find available courses with **Open Course Catalog**; catalog
 availability follows the selected DhimantAI environment.
 
-**Windows setup.** For the WSL 2 setup, use 64-bit Windows 10 build 19043 or later, or Windows 11, with virtualization enabled. An administrator can enable WSL 2. Restart Windows and check `wsl --status` in PowerShell. If automatic installation is unavailable, complete Podman Desktop’s onboarding, including the engine and machine. Restart VS Code and run `podman info` in its terminal, then retry **Open Course Runtime**. [Official Windows installation guide](https://podman-desktop.io/docs/installation/windows-install)
+**Windows setup.** For the WSL 2 setup, use 64-bit Windows 10 build 19043 or later, or Windows 11, with virtualization enabled. Follow the installer’s WSL 2 and restart prompts. If automatic installation is unavailable, complete Podman Desktop’s onboarding, including the engine and machine. Restart VS Code and choose **Runtime → Set up / rebuild course**, then **Open course terminal**. [Official Windows installation guide](https://podman-desktop.io/docs/installation/windows-install)
 
 ## Colab TPU in VS Code
 
@@ -280,7 +318,7 @@ learning notebook interface, not an added runnable Jupyter cell.
 Use **＋ Code**
 to add Python, JavaScript, TypeScript, C, Java, Go, Rust, Bash, Zsh, SQL, or PostgreSQL lab cells. Language-tagged
 examples from Instructor are editable too. **Run** executes only when you request it,
-using the course container by default. Choose **This computer** explicitly to use installed language tools.
+using the course container.
 Python cells share executed definitions until **Restart runtime**, closing the
 notebook, or an account change. JavaScript, TypeScript, C, Java, Go and Rust run complete programs
 per embedded cell. Include the definitions each such program needs. Execution uses the
@@ -349,18 +387,16 @@ Choose **Open Course Catalog** in the Command Palette or the Practice
 Explorer header. You can search courses and preview their level, prerequisites
 and published lesson outline before creating an account.
 
-Choose **Sign up → Individual learner** to register with your name, email and
-password inside VS Code. No institute code, roll number or institute approval is
-required. If the service requires email confirmation, follow the email link and
-then choose **Sign In → Email and password**. Once signed in, select **Join course**
-in the catalog. Joined courses appear in **DhimantAI Practice**. Opening a preview
-or creating an account does not automatically enroll you.
+Choose **Sign up** to open the account-creation page in VS Code. Enter your
+name, email, password and password confirmation together in the form. Choose
+**Sign in** to open the email-and-password page, or switch between the two pages
+using the link below the form. Authentication does not use Command Palette prompts.
+If email confirmation is required, follow the email link and return to sign in.
+Errors appear in the form so you can correct them and retry.
 
-Institute students can choose **Sign up → Institute student** to complete the
-existing registration in their browser, then sign in with their institute code,
-roll number and password after approval. Signup and the catalog use the selected
-**Dhimantai: Environment**. Local institute registration uses your local web app's
-`/#/student-signup` page.
+Once signed in, select **Join course** in the catalog. Joined courses appear in
+**DhimantAI Practice**. Opening a preview or creating an account does not automatically
+enroll you. Account pages and the catalog use the selected **Dhimantai: Environment**.
 
 Open **Explorer → DhimantAI Practice** and sign in with your learner account.
 Expand a course and chapter. **Textbook Questions** and **Institution Questions**
@@ -388,7 +424,7 @@ task reopens your file; it is never replaced.
   course container. The first Run waits for setup and any automatic startup repair
   (Podman, its machine and the course image; your computer may ask for
   approval), then runs the same cell without a second click. This keeps state in the selected runtime.
-  Choose a local Python kernel or Colab from the kernel picker at any time.
+  Supported Python notebooks can also use the Colab kernel.
   The **Run with** cell under your code holds the program's arguments (split
   like a terminal command) and typed input. **More → Run with arguments or input** fills
   it from a sample test or lets you write your own; the task's sample files sit
@@ -426,7 +462,7 @@ input: predict exactly what your program prints, then Run, with no help during t
 These tools run your code; they never ask Instructor. Add notes and
 experiments in any of the seven supported languages. Task feedback uses the
 exercise's language and selected source. Opening and editing work without Podman;
-execution prepares and uses the course container by default. Turn off **dhimantai.courseContainers** only when you explicitly want to use local language tools.
+execution prepares and uses the course container. Setup must succeed before code or tests can run.
 
 Open **Engineering skills** below a code cell. Its selector explains each skill in
 plain language and gives one first exercise, even with AI off. **Practise this skill
@@ -521,11 +557,9 @@ so both versions are preserved. Run the failing test and relevant regression cas
 again. Source copies stay on your computer. Raw debugger snapshots are not saved in
 notebooks; written Instructor feedback follows the notebook's normal local autosave.
 
-The selected runtime supplies language tools. Local Python also uses the Python
-Debugger extension's bundled debugpy; JavaScript/TypeScript use VS Code's built-in
-JavaScript debugger. Launch profiles are also provided for Java (Debugger for Java),
-Go (Go extension and Delve), and C/Rust (C/C++ for the course container, CodeLLDB for
-local tools). Missing adapters or tools must be installed/enabled before retrying.
+The course container supplies language tools and debugpy. VS Code supplies debugger
+adapters: Python Debugger, the built-in JavaScript debugger, Debugger for Java,
+Go, and C/C++. Missing adapters must be installed/enabled before retrying.
 Native debugging works with AI off; **Discuss paused state** requires AI assistance
 and the matching worker/API update. The older Python **Step through** remains a
 recorded trace, separately from this live debugger.
@@ -568,9 +602,26 @@ These content checks need the matching API update and its configured
 `PROGRAM_EDITOR_SSH_CONFIG` restricted runner (see
 `deploy/project-worker/README.md` in the source checkout).
 Generated reference programs are temporary; learner runs stay on the selected
-local/course runtime. Failed learner runs are labelled **Run failed**.
+course container. Failed learner runs are labelled **Run failed**.
 
 ## Course projects with Coach
+
+At the final milestone, **Submit Project** runs the full checker in your course container
+and saves the result, source digest, commit details and assistance on this computer.
+Course Catalog and **My courses** show local completion, failed checks and changes since
+submission. Reading projects require a checkpoint explanation and remain labelled as
+self-reported reading completion. Passing public checks is not a grade or proof of mastery.
+
+Use **Project actions → View saved results** for the latest 20 attempts. **Publish to
+GitHub** and **Create pull request** are optional: commit and review your work first,
+then choose the destination in VS Code. Publishing includes Git history. The existing
+teacher-review handoff remains separate from local completion and GitHub sharing.
+
+After preparing a project, dhimantAI shows its name and saved folder before opening
+it. Choose **Open in New Window** to keep your original workspace open, or **Open in
+Current Window** to replace it. Cancel leaves the saved project available to reopen.
+The project name appears in the workspace window title and Explorer. The workspace
+file is stored in extension storage, outside the project's source repository.
 
 **dhimantAI: Start a Course Project** includes two code-reading routes for
 **Read an Unfamiliar Codebase**: **Rich**, a complete pinned upstream Python source
@@ -593,7 +644,9 @@ failure handling, testing, live-model comparison and handoff. The existing Coach
 opens in the right panel; **Open Project Coach** resumes it when needed.
 
 Each step links relevant files and runs public checks in the managed course container.
-Runtime setup and terminal access stay in the runtime dropdown. New projects
+Runtime setup and **Open course terminal** stay in the runtime dropdown. The default
+terminal profile in course/project folders is **dhimantAI Course Container**.
+The terminal supplies the same Python and Git commands on Windows, macOS and Linux. New projects
 are created inside the managed course folder. There is no host Python option or fallback.
 The container supplies Python 3.10+. Implementation tasks are intentionally unfinished.
 Setup checks pass immediately; the learner builds the functions needed by later checks.
@@ -614,17 +667,28 @@ The authored flow and validation boundaries are documented in the repository at
 teammate's seven-commit history and a user's bug report (issue #12). You read the code,
 reproduce the bug, write a test that fails because of it, find the commit that caused it
 (`git log -p` or `git bisect`), fix it on a branch, commit with `#12`, and write `PR.md`
-(Cause, Fix, Test). `python3 check.py` in the repository is the judge: it also restores the
-old `search.py` to confirm your test really catches the bug. Git and Python 3.10+ are
-required. The repository is built reproducibly by `scripts/capstone/build_shelf.py` into
+(Cause, Fix, Test). Open **dhimantAI: Open Course Terminal**, run
+`cd /course/shelf-capstone`, then `python check.py`. The judge runs in the container: it also restores the
+old `search.py` to confirm your test really catches the bug. The container supplies
+Git and Python 3.10+. Use `python -m unittest discover -s tests -t .` there to run tests.
+The same commands apply on Windows, macOS and Linux. The repository is built reproducibly by `scripts/capstone/build_shelf.py` into
 `media/capstone/shelf.bundle`; a unit test fails if the two drift apart.
+
+Coach supports this fourth project as well as both reading projects and the Course
+Research Agent. Its seven milestones follow the capstone workflow, including Git,
+regression tests, debugging and the PR note. Existing Shelf clones open without a
+migration or changes to learner files. Coach shares bounded public excerpts,
+learner-added Python tests, current check/checkpoint state and a visible Git summary.
+Git changes invalidate earlier capstone check evidence. Run checks and `check.py`
+in the managed course container through the existing Coach controls. This support
+requires the matching backend schema accepting the `shelf` project and Git context.
 
 ## Notebook workflow
 
 1. Open a course or Practice notebook inside VS Code. For an existing export,
    choose **Download for VS Code** in the app and open the `.ipynb` in VS Code.
-2. Select a runtime: the course container, tools on this computer, or a Colab
-   kernel for a supported Python notebook through Google's VS Code extension.
+2. Select **dhimantAI Practice** and choose the course container when asked.
+   Supported Python notebooks can also use Colab through Google's VS Code extension.
 3. Write, run, and save your notebook in VS Code. A Colab kernel executes your
    cells remotely; it does not move editing to the Colab website.
 4. Return to the Practice question and choose **Attach work for feedback**.
@@ -635,8 +699,6 @@ required. The repository is built reproducibly by `scripts/capstone/build_shelf.
 From Instructor, download the notebook with the selected question and code, then choose **Open in VS Code**. The link identifies this local export. If the notebook was renamed or saved outside Downloads, VS Code asks you to select it. VS Code confirms after the notebook opens. You can also use **File → Open File**.
 
 For a downloaded notebook, select **dhimantAI Practice** to use the course container and choose its course when asked. **Open Copy in Course** can also copy it to that course folder. Use VS Code notebook output settings to wrap wide output.
-
-If you explicitly choose a local Python kernel, install the Microsoft Python and Jupyter extensions, activate the intended environment in a terminal and run `python -m pip install ipykernel`. Select the same environment in the notebook’s kernel picker and rerun the cell. [VS Code kernel selection](https://code.visualstudio.com/docs/datascience/jupyter-kernel-management) · [IPython kernel installation](https://ipython.readthedocs.io/en/stable/install/kernel_install.html)
 
 To check a prediction in Practice, save it in the notebook prediction cell before choosing **Run Cell**. The notebook compares it locally with the selected cell’s text output. Asking about that run shares a bounded text excerpt for the reply. After you attach and submit your work in Practice, **Exercise summary** shows the source review and a next practice step.
 
@@ -738,7 +800,7 @@ before authentication or transport.
 - `npm run compile && node out/test/integration/runTest.js suiteLearningVideo`: automated native check using the production room bundle and live Token Embeddings YouTube player. Asserts decoded audio/video, both question/pause paths, explicit resume, and server-requested pause. Catalog, auth and Instructor transport are fixtures; real Instructor answers need a signed-in staging check. For acceptance with the sandbox enabled, use `scripts/check-vscode-video-runtime.cjs` with an explicit native executable; `@vscode/test-electron` adds sandbox-disabling flags. In the source checkout, see `scripts/video-runtime.md` for runtime repair and distribution notes and `test/integration/learningVideo-check.md` for acceptance results.
 - `npm run compile && node out/test/integration/runTest.js suiteCoachPlayback`: real WebRTC/worklet playback in a VS Code test host. Select **Start audio check** in its panel to satisfy the browser's user-gesture requirement. The probe compares the unattached track with the fixed playback path, then checks pause, buffered resume, completion, replay and silent-stream rejection without an account or microphone.
 - `npm run test:b2c`: individual signup, confirmation, recovery and catalog enrollment in a real VS Code test host.
-- `npm run test:signup`: institute browser signup handoff and return to sign-in in a real VS Code test host, with no account creation.
+- `npm run test:signup`: email-only account pages, validation, retry, confirmation, cancellation and service changes in a real VS Code test host against a local auth fixture.
 - `npm run test:colab`: local notebook preparation and kernel handoff in VS Code 1.106.3, with a simulated Colab provider. A real Google sign-in and TPU runtime remain a separate acceptance check.
 - `npm run test:vscode`: notebook-first startup, Practice from the Explorer, Instructor notebook handoff and rejection of legacy upload paths.
 - `npm run test:coach-chat`: compatibility alias for the inline history suite below.

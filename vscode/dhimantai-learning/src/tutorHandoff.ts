@@ -63,14 +63,13 @@ export function tutorFiles(row: any, id: string): { entry: string; files: Record
     'tutor-context.json': JSON.stringify({ lesson: p.lesson, language: p.language, mode: p.mode }, null, 2) + '\n',
     'README.txt': 'Instructor workspace\n\nThis is a local copy of your Instructor code. Edits here do not sync back to the app.\n' +
       'Return to Instructor to continue the lesson or paste your changes into its code editor.\n\n' +
-      'Use the VS Code language extension and a local toolchain to run or debug this file.\n' +
+      'Choose Runtime → Set up / rebuild course, then copy these files into that course folder.\nUse Runtime → Open course terminal to run commands in the container.\n' +
       'Nothing runs or installs automatically. Practice grading and coaching do not apply to this copy.\n' +
       'stdin.txt contains your input; tutor-context.json records the lesson and execution mode.\n' +
-      (p.mode === 'python_repl' ? 'This code came from Python shell mode. Run its expressions in a Python REPL to display their values.\n' : '') +
-      (p.language === 'python' ? '\nFor Python packages, open a terminal in this folder and create a virtual environment:\n' +
-        '  Windows: py -m venv .venv\n  macOS/Linux: python3 -m venv .venv\n' +
-        'Activate it (Windows Command Prompt: .venv\\Scripts\\activate; macOS/Linux: source .venv/bin/activate).\n' +
-        'Then run: python -m pip install -r requirements.txt\nSelect that interpreter in the VS Code Python extension.\n' : '') };
+      (p.mode === 'python_repl' ? 'This code came from Python shell mode. In the course terminal, run python to open a Python REPL and display expression values.\n' : '') +
+      (p.language === 'python' ? '\nIn the course terminal, from the copied project folder:\n' +
+        '  python -m pip install -r requirements.txt\n  python main.py < stdin.txt\n' +
+        'These container commands are the same on Windows, macOS and Linux.\n' : '') };
   if (p.language === 'python') files['requirements.txt'] = p.packages.join('\n') + (p.packages.length ? '\n' : '');
   return { entry, files };
 }

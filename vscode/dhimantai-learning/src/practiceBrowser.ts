@@ -5,10 +5,12 @@ import { Api, ApiError, Chapter, Course, Language, GeneratedExercise, PracticeQu
 import { Auth } from './auth';
 import { jupyterMetadata } from './notebookCommands';
 import { Environment, EnvironmentName } from './environments';
+import { ProjectResults, ProjectSummary } from './projectResults';
 
 type Scope = { account: string; environment: EnvironmentName };
 type ChapterNode = Scope & { kind: 'chapter'; chapter: Chapter; course: string; languages: Language[] };
 type Node = ChapterNode
+  | { kind: 'project'; project: ProjectSummary }
   | (Scope & { kind: 'course'; course: Course; languages: Language[] })
   | { kind: 'pool'; parent: ChapterNode; pool: QuestionPool }
   | { kind: 'topic'; parent: ChapterNode; name: string; questions: PracticeQuestion[] }
@@ -22,7 +24,8 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
   private sequence = 0;
 
   constructor(private readonly auth: Auth, private readonly environment: () => EnvironmentName,
-      private readonly service: () => Environment, private readonly containers?: CourseWorkspaces) {}
+      private readonly service: () => Environment, private readonly containers?: CourseWorkspaces,
+      private readonly results?: ProjectResults, private readonly media = '') {}
 
   refresh() { this.sequence++; this.changed.fire(); }
   dispose() { this.changed.dispose(); }
@@ -48,6 +51,15 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
       return item;
     };
     switch (node.kind) {
+      case 'project': {
+        const item = new vscode.TreeItem(node.project.title);
+        item.id = 'project:' + node.project.root;
+        item.description = node.project.status;
+        item.tooltip = node.project.root + '\n' + node.project.status + '\nSaved on this computer; not a grade.';
+        item.iconPath = new vscode.ThemeIcon('repo');
+        item.command = {command: 'dhimantai.openSavedProject', title: 'Open project', arguments: [node.project.root]};
+        return item;
+      }
       case 'course': {
         const item = folder(node.course.name, 'library');
         if (hasColabLabs(node.course.name)) item.contextValue = 'dhimantaiCourseColab';
@@ -95,10 +107,15 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
 
   async getChildren(node?: Node): Promise<Node[]> {
     const sequence = this.sequence;
+    let projects: Node[] = [];
     try {
       if (!node) {
         const account = (await this.auth.session())?.user.id;
+        projects = (await this.results?.summaries(this.media, this.environment(), account ?? 'local') ?? [])
+          .map(project => ({kind: 'project' as const, project}));
+        if (sequence !== this.sequence) return [];
         if (!account) return [
+          ...projects,
           { kind: 'notice', label: 'Course Catalog · first chapter free', command: 'dhimantai.courseCatalog' },
           { kind: 'notice', label: 'Create an account', command: 'dhimantai.signUp' },
           { kind: 'notice', label: 'Sign in', command: 'dhimantai.signIn' },
@@ -110,7 +127,7 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
         const nodes: Node[] = courses.length ? courses.map(course => ({ kind: 'course', course, languages, ...scope }))
           : [{ kind: 'notice', label: 'No courses yet. Browse the catalog to get started.' }];
         // The catalog, pricing and purchases are one page, also in this view's title bar.
-        return [...nodes, { kind: 'notice', label: 'Saved Practice notebooks', command: 'dhimantai.practiceHistory' },
+        return [...nodes, ...projects, { kind: 'notice', label: 'Saved Practice notebooks', command: 'dhimantai.practiceHistory' },
           { kind: 'notice', label: 'Course Catalog · courses & pricing', command: 'dhimantai.courseCatalog' }];
       }
       if (node.kind === 'course' || node.kind === 'chapter') await this.requireScope(node);
@@ -147,7 +164,7 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
       const message = !node && error instanceof ApiError && [404, 410].includes(error.status)
         ? 'Practice browsing is unavailable on this service. Check the DhimantAI environment and backend version.'
         : error instanceof Error ? error.message : 'Could not load Practice.';
-      return [{ kind: 'notice', label: message },
+      return [...projects, { kind: 'notice', label: message },
         { kind: 'notice', label: 'Retry loading Practice', command: 'dhimantai.refreshPractice' },
         ...(!node ? [{ kind: 'notice' as const, label: 'Saved Practice notebooks', command: 'dhimantai.practiceHistory' }] : [])];
     }
@@ -164,7 +181,7 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
   }
 
   private async workstationScope(target?: vscode.Uri | Extract<Node, {kind: 'course'}>): Promise<CourseScope | undefined> {
-    if (!this.containers?.enabled) throw new Error('Enable DhimantAI course containers in Settings to use the course workstation.');
+    if (!this.containers?.enabled) throw new Error('The course container is unavailable. Set up the course runtime before running.');
     if (target && 'kind' in target && target.kind === 'course') {
       await this.requireScope(target);
       return { course: target.course.name, account: target.account, environment: target.environment };
@@ -180,7 +197,7 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     await this.requireScope(scope);
     if (!courses.length) throw new Error('Join a course from Browse Course Catalog before setting up its workstation.');
     const selected = await vscode.window.showQuickPick(courses.map(course => ({label: course.name})), {
-      title: 'Course workstation', placeHolder: 'Choose the course to prepare on this computer'
+      title: 'Course workstation', placeHolder: 'Choose the course container to prepare'
     });
     if (!selected) return;
     await this.requireScope(scope);
@@ -206,7 +223,10 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     const scope = await this.workstationScope(target);
     if (!scope) return;
     const root = await this.containers!.courseFolder(scope);
-    return this.containers!.terminalOptions(root);
+    const candidates = target ? [target] : [vscode.window.activeNotebookEditor?.notebook.uri,
+      vscode.window.activeTextEditor?.document.uri, ...(vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri)];
+    const current = candidates.find(uri => uri && this.containers!.recordFor(uri)?.root === root.fsPath);
+    return this.containers!.terminalOptions(current ?? root);
   }
 
   async openCourseTerminal(target?: vscode.Uri) {
@@ -236,7 +256,7 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
   async openCopyInCourse(doc = vscode.window.activeNotebookEditor?.notebook) {
     if (!doc || doc.isClosed || doc.uri.scheme !== 'file' || doc.notebookType !== 'jupyter-notebook')
       throw new Error('Save and open a local .ipynb notebook first.');
-    if (!this.containers?.enabled) throw new Error('Enable DhimantAI course containers to use Podman.');
+    if (!this.containers?.enabled) throw new Error('Set up the course container before opening this notebook.');
     if (this.containers.recordFor(doc.uri)) {
       await vscode.window.showNotebookDocument(doc, {viewColumn: vscode.ViewColumn.One, preview: false});
       await vscode.commands.executeCommand('notebook.selectKernel', { id: 'dhimantai-course', extension: 'optficial.dhimantai-learning' });

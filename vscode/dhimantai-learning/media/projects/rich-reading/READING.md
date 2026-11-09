@@ -14,14 +14,14 @@ with **shelf**. Basic functions, imports, classes and lists are enough to begin.
 
 Open Project Coach in the right panel. All Python runs use the course container.
 Choose **Runtime → Set up course** if needed. The project must be inside that course
-folder. No Python installation on your computer is required.
+folder. The container supplies Python and Git on Windows, macOS and Linux.
 
 On step 1 choose **Run this step**. Setup installs the pinned dependencies in
 `.dhimantai-local/deps` inside the project mount, using Python in the container.
 This first setup needs network access. If it times out, inspect the output and
 retry explicitly. Subsequent reading runs and tests need no network or API key.
 
-From **Runtime → Open terminal**, the equivalent commands are:
+From **Runtime → Open course terminal**, the equivalent commands are:
 
 ```sh
 python -m reading.run setup
@@ -40,8 +40,8 @@ Start with a question, not the first line of the first file. Use Explorer to map
 `rich/`, `tests/`, `examples/` and `docs/`. **Quick Open** finds a named file.
 **Go to Symbol in Editor** finds a method in a long file. **Go to Definition** and
 **Find All References** help follow calls when Python navigation is available;
-otherwise use workspace search for the exact method name. No local interpreter
-is needed for Quick Open, text search or Coach's links to relevant definitions.
+otherwise use workspace search for the exact method name. Quick Open, text search
+and Coach's links to relevant definitions work directly in VS Code.
 
 Trace one path: caller → inputs → transformation → returned/yielded values → output.
 Before each run, write a prediction in READING_NOTES.md. Afterward, record what the

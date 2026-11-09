@@ -21,7 +21,6 @@ import { learningComposer } from './learningComposer';
 import { sharedNotebookContext } from './notebookContext';
 import { Environment, EnvironmentName } from './environments';
 import { CourseWorkspaces } from './courseWorkspace';
-import { runLocally, runPublicTests, Toolchains, traceLocally } from './localRunner';
 import { makeVariation, newVariationSeed } from './learningLoop';
 import { exportRecords, HelpEvent, MAX_HELP_LEVEL, nextLevel, ProblemRecord, record, trend, trendText, validRecords } from './helpRecord';
 import { ladderToken, rememberLadderToken } from './ladderTokens';
@@ -86,18 +85,16 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
     let savedSequence = 0;
     let lessonCourses: Course[] = [], lessonAccount = '';
     let notebookWrites = Promise.resolve();
-    let useCourse = courses?.enabled ?? false;
     const courseEngine = async (language: string) => {
-      if (!useCourse) return;
-      if (!courses?.enabled) throw new Error('Enable course containers and set up the course runtime before running.');
+      if (!courses?.enabled) throw new Error('Set up the course container before running.');
       if (!courseFile) courseFile = await vscode.commands.executeCommand<vscode.Uri>('dhimantai.setupCourse');
       if (!courseFile) throw new Error('Choose a course workstation before running code.');
       const engine = await courses.forFile(courseFile, language);
       if (!engine) throw new Error('Set up the course workstation before running code.');
       return engine;
     };
-    const cells = new NotebookCells(() => vscode.workspace.getConfiguration('dhimantai').get<Toolchains>('toolchains', {}),
-      courseEngine, async engine => join(engine?.root ?? notebookDirectory, 'notebook-files',
+    const cells = new NotebookCells(() => ({}),
+      courseEngine, async engine => join(engine!.root, 'notebook-files',
         createHash('sha256').update(name+'|'+documentAccount+'|'+key+'|'+(practice?.id??'')).digest('hex').slice(0,24)));
     let notebookRequest: AbortController | undefined;
     let testEvidence: {snapshot: import('./roomCode').CodeSnapshot; rows: {id:string; verdict:string; stdin:string; expected:string; actual:string; stderr:string}[]} | undefined;
@@ -132,10 +129,9 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
     });
     host.onDidDispose(() => credentials.dispose());
     const settings = vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('dhimantai.toolchains') || event.affectsConfiguration('dhimantai.courseContainers')) {
+      if (event.affectsConfiguration('dhimantai.courseContainers')) {
         testEvidence = undefined; notebookRequest?.abort();
-        if (event.affectsConfiguration('dhimantai.courseContainers')) useCourse = courses?.enabled ?? false;
-        void debugging.stop(); cells.restart(); codeSession?.clear(); void view.postMessage({type:'runtimeRestarted', runtime:useCourse ? 'course' : 'local'});
+        void debugging.stop(); cells.restart(); codeSession?.clear(); void view.postMessage({type:'runtimeRestarted', runtime:'course'});
       }
       if (event.affectsConfiguration('dhimantai.aiAssistance')) {
         if (!aiEnabled()) clearAudio();
@@ -153,7 +149,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
       if (msg?.type === 'ready') {
         await view.postMessage({type:'visibility', visible:host.visible});
         await view.postMessage(practice ? {type:'openPractice'} : {type:'openTutor', mode:initialMode});
-        if (useCourse && courseFile) {
+        if (courses?.enabled && courseFile) {
           await view.postMessage({type:'workstationState', label:'preparing…'});
           try {
             await courses!.forFile(courseFile, practice?.language);
@@ -164,14 +160,8 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
         }
         return;
       }
-      if (msg?.type === 'runtime' && ['course', 'local', 'terminal', 'setup'].includes(msg.runtime)) {
+      if (msg?.type === 'runtime' && ['course', 'terminal', 'setup'].includes(msg.runtime)) {
         if (msg.runtime !== 'terminal') testEvidence = undefined;
-        if (msg.runtime === 'local') {
-          useCourse = false; notebookRequest?.abort();
-          void debugging.stop(); cells.restart(); codeSession?.clear();
-          await view.postMessage({type:'runtimeSelected', runtime:'local'});
-          return;
-        }
         const target = courseFile;
         if (msg.runtime === 'terminal') {
           const root = await vscode.commands.executeCommand<vscode.Uri>('dhimantai.courseTerminal', target);
@@ -180,7 +170,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
         }
         const root = await vscode.commands.executeCommand<vscode.Uri>('dhimantai.setupCourse', target);
         if (!root || !ownsPanel() || name !== environment()) return;
-        courseFile = root; useCourse = true; notebookRequest?.abort();
+        courseFile = root; notebookRequest?.abort();
         void debugging.stop(); cells.restart(); codeSession?.clear();
         await view.postMessage({type:'runtimeSelected', runtime:'course'});
         return;
@@ -316,7 +306,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
             ...(practice ? {help:helpState(helpRecords, practice.id)} : {}),
             ...(practice ? {practice:{id:practice.id, language:practice.language, title:practice.title,
               tools:{tests:practice.tests.length, trace:practice.language === 'python'}}} : {}),
-            codeRuntime: useCourse ? (courseFile ? courses?.recordFor(courseFile)?.course ?? 'Course' : 'Course') + ' · Podman' : 'Local language tools', ...grant});
+            codeRuntime: (courseFile ? courses?.recordFor(courseFile)?.course ?? 'Course' : 'Course') + ' · Podman', ...grant});
         } catch (e) {
           if (active(id)) await view.postMessage({type: 'failed', attempt: msg.attempt,
             message: e instanceof Error ? e.message : 'Could not start the learning room.'});
@@ -356,7 +346,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
           if (msg.action === 'start') {
             const engine = await courseEngine(snapshot.language);
             if (!await current()) throw new Error('Your notebook changed during debugger setup.');
-            await debugging.start(snapshot,engine,vscode.workspace.getConfiguration('dhimantai').get<Toolchains>('toolchains',{}),current);
+            await debugging.start(snapshot,engine,{},current);
             reply({});
           } else {
             if (!debugging.owns(snapshot)) throw new Error('Start Debug in VS Code from this cell first.');
@@ -452,19 +442,17 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
             return;
           }
           if (!vscode.workspace.isTrusted) throw new Error('Trust this VS Code workspace before running code.');
-          const toolchains = vscode.workspace.getConfiguration('dhimantai').get<Toolchains>('toolchains', {});
           const input = {source:snapshot.source, stdin:snapshot.stdin, argv:snapshot.argv??[], files:snapshot.files??[]};
           const engine = await courseEngine(snapshot.language);
           if (!active(id) || (await auth.session())?.user.id !== owner) return;
           if (tool === 'test_code') {
-            const execution = engine ? await engine.run(snapshot.language,input) : await runLocally(snapshot.language,input,toolchains);
+            const execution = await engine.run(snapshot.language,input);
             if (!active(id) || (await auth.session())?.user.id !== owner) return;
             reply({execution}); return;
           }
           if (tool === 'tests' || tool === 'my_tests') {
             if (!cases.length) throw new Error('This exercise has no sample tests yet.');
-            const results = engine ? await engine.tests(snapshot.language, input, cases)
-              : await runPublicTests(snapshot.language, snapshot.source, cases, vscode.Uri.joinPath(media, 'pycall.py').fsPath, toolchains);
+            const results = await engine.tests(snapshot.language, input, cases);
             if (!active(id) || (await auth.session())?.user.id !== owner) return;
             const rows = results.map(r => {
               const test = cases.find(t => t.id === r.id);
@@ -481,7 +469,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
             return;
           }
           if (snapshot.language !== 'python') throw new Error('Step-through is available for Python.');
-          const trace = engine ? await engine.trace(input) : await traceLocally(vscode.Uri.joinPath(media, 'pytrace.py').fsPath, input, toolchains);
+          const trace = await engine.trace(input);
           if (trace.execution.status === 'toolchain_missing') throw new Error(trace.execution.stderr);
           if (!trace.steps.length) throw new Error(trace.execution.stderr || 'The program finished before any of your lines ran.');
           reply({trace:{stopped:trace.stopped, error:trace.error, stdout:trace.stdout.slice(0, 4000),
@@ -524,8 +512,8 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' ${view.cspSource}; style-src ${view.cspSource} 'unsafe-inline'; font-src ${view.cspSource}; img-src data: blob:; media-src blob:; connect-src ${audioPolicy}; frame-src 'self' ${origin}">
 <link rel="stylesheet" href="${asset('learning-room/room.css')}"></head><body>
 <header class="workspace-header"><div class="workspace-topline"><div class="workspace-title"><span id="notebook-mode" class="eyebrow">DHIMANTAI · ${practice ? 'PRACTICE NOTEBOOK' : initialMode === 'doubt_solver' ? 'DOUBT SOLVER' : 'INSTRUCTOR NOTEBOOK'}</span><h1>${html(practice?.title || courseName || 'Your learning notebook')}</h1></div>
-<div class="workspace-actions"><select id="course-runtime" aria-label="Runtime"><option value="course" ${useCourse ? 'selected' : ''}>Course container</option><option value="local" ${useCourse ? '' : 'selected'}>This computer</option></select>
-<details class="workspace-menu"><summary aria-label="Notebook options" title="Notebook options">⋯</summary><div class="menu-content"><button id="doubt_solver" ${practice ? 'hidden' : ''} aria-pressed="false">Open Doubt Solver</button><button id="runtime-terminal">Open course terminal</button><button id="runtime-setup">Set up / rebuild course</button><hr><button id="save-notebook">Save a copy</button><button id="open-notebook" aria-describedby="notebook-format">Open saved notebook</button><small id="notebook-format">${NOTEBOOK_FORMAT_HELP}</small><button id="restart-runtime">Restart runtime</button><button id="wide" aria-pressed="false">Focus view</button><hr>
+<div class="workspace-actions"><select id="course-runtime" aria-label="Runtime"><option value="course">Course container</option><option value="terminal">Open course terminal</option><option value="setup">Set up / rebuild course</option></select>
+<details class="workspace-menu"><summary aria-label="Notebook options" title="Notebook options">⋯</summary><div class="menu-content"><button id="doubt_solver" ${practice ? 'hidden' : ''} aria-pressed="false">Open Doubt Solver</button><hr><button id="save-notebook">Save a copy</button><button id="open-notebook" aria-describedby="notebook-format">Open saved notebook</button><small id="notebook-format">${NOTEBOOK_FORMAT_HELP}</small><button id="restart-runtime">Restart runtime</button><button id="wide" aria-pressed="false">Focus view</button><hr>
 <label class="code-follow"><input type="checkbox" id="follow-code" checked> Let ${assistantName} follow code edits and runs</label><label class="code-follow"><input type="checkbox" id="stuck-hints"> Offer hints when I’m stuck</label><small id="code-observer-status" role="status"></small></div></details></div></div>
 <div class="workspace-status"><span id="status" role="status">${practice ? 'Opening Practice…' : initialMode === 'doubt_solver' ? 'Connecting to Doubt Solver…' : 'Choose a lesson to learn with Instructor.'}</span><small id="notebook-save-status" role="status">Your notebook stays on this computer.</small><button id="tutor" hidden aria-pressed="false">Retry</button><button id="end" hidden disabled>End session</button></div>
 ${practice ? '' : '<section id="tutor-lessons" aria-label="Instructor lessons" hidden><label for="lesson-course">Course or subject</label><select id="lesson-course"></select><p>Choose a lesson to learn step by step.</p><div id="lesson-list" role="group" aria-label="Available lessons"></div><button type="button" id="lesson-catalog" class="quiet">Course Catalog</button></section>'}</header>
@@ -606,7 +594,7 @@ ${practice ? '' : `<script nonce="${nonce}" src="${asset('livekit-client.umd.js'
       // The shared learning notebook is the default; native Jupyter remains an explicit option.
       if (vscode.workspace.getConfiguration('dhimantai').get<string>('practiceEditor', 'panel') === 'notebook') {
         const folder = practice.runtimeFile ? vscode.Uri.file(practice.runtimeFile) : fallbackFolder(context.globalStorageUri, env, session.user.id);
-        // One Practice kernel: the course container inside a course folder, otherwise this computer's tools.
+        // Practice always runs in the selected course container.
         const doc = await openPracticeFile(practice, env, folder, PRACTICE_KERNEL);
         await note(session.user.id, {type:'open', id:practice.id, title:practice.title, language:practice.language});
         if (doc.cellCount === 0) throw new Error('The Practice notebook is empty.');

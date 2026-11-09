@@ -6,7 +6,8 @@ import * as vscode from 'vscode';
 import type { activate } from '../../src/extension';
 import { COLAB_EXTENSION, ensureColab, requireColabHost, useColabForNotebook } from '../../src/colab';
 import { CourseWorkspaces } from '../../src/courseWorkspace';
-import { bindNotebookRuntime, newNotebook, useLocalNotebookKernel } from '../../src/notebookRuntime';
+import { bindNotebookRuntime, newNotebook } from '../../src/notebookRuntime';
+import { openNotebookKernelPicker } from '../../src/notebookKernelPicker';
 import { EMAIL, PASSWORD } from './contractServer';
 
 export async function run() {
@@ -34,6 +35,7 @@ export async function run() {
       if (id === 'workbench.extensions.installExtension') {
         assert.equal(args[0], COLAB_EXTENSION); installs++; installed = true; return;
       }
+      if (id === 'dhimantai.newCourseNotebook') return;
       if (id === 'notebook.selectKernel') {
         kernelPicks++; assert.deepEqual(args, [{}]);
         if (kernelFailure) throw new TypeError("Cannot use 'in' operator to search for 'notebookEditorId' in null");
@@ -46,7 +48,6 @@ export async function run() {
     (vscode.window as any).showQuickPick = async (items: any[]) => items[0];
     (CourseWorkspaces.prototype as any).prepare = async () => { throw new Error('Colab must never start Podman'); };
     await cfg.update('exercisesFolder', root, vscode.ConfigurationTarget.Global);
-    await cfg.update('courseContainers', false, vscode.ConfigurationTarget.Global);
     await auth.signInWithPassword(EMAIL, PASSWORD);
     const courses = await practice.getChildren();
     const llm = courses.find(node => node.kind === 'course' && node.course.name === 'Build an LLM from Scratch');
@@ -57,7 +58,7 @@ export async function run() {
       assert.equal(installs, 0); assert.equal(kernelPicks, 0);
       assert.deepEqual(await readdir(root), []);
     });
-    await check('Colab installs on request and opens eight scoped local notebooks with containers disabled', async () => {
+    await check('Colab installs on request and opens eight scoped local notebooks without preparing a container', async () => {
       consent = true;
       assert.equal(practice.getTreeItem(llm).contextValue, 'dhimantaiCourseColab');
       await vscode.commands.executeCommand('dhimantai.openCourseColab', llm);
@@ -108,22 +109,14 @@ export async function run() {
       await assert.rejects(ensureColab(), /Colab activation failed/);
       assert.equal(kernelPicks, 3);
     });
-    await check('new notebook cancels without writes, then creates a saved empty Python notebook without running it', async () => {
-      const before = await readdir(root);
-      (vscode.window as any).showSaveDialog = async () => undefined;
-      assert.equal(await newNotebook(), undefined);
-      assert.deepEqual(await readdir(root), before);
+    await check('new notebooks always route through course setup without invoking a host kernel', async () => {
+      await newNotebook();
+      assert.equal(commands.at(-1), 'dhimantai.newCourseNotebook');
+      assert.equal(kernelPicks, 3);
       const uri = vscode.Uri.file(join(root, 'My notebook.ipynb'));
-      (vscode.window as any).showSaveDialog = async () => uri;
-      await vscode.commands.executeCommand('dhimantai.newNotebook');
-      const saved = JSON.parse(await readFile(uri.fsPath, 'utf8'));
-      assert.equal(saved.metadata.kernelspec.language, 'python');
-      assert.equal(saved.cells.length, 1);
-      assert.equal(saved.cells[0].source, '');
-      assert.equal(saved.cells[0].execution_count, null);
-      assert.deepEqual(saved.cells[0].outputs, []);
-      assert.equal(kernelPicks, 3, 'creation does not connect or execute');
-      assert.equal(installs, 1, 'creation does not install providers');
+      await writeFile(uri.fsPath, JSON.stringify({nbformat:4, nbformat_minor:5,
+        metadata:{kernelspec:{name:'python3',language:'python',display_name:'Python 3'}},
+        cells:[{cell_type:'code',source:'',metadata:{},outputs:[],execution_count:null}]}));
     });
     await check('right-side runtime choices retain the notebook, reject stale clicks and preserve edits', async () => {
       activateProvider = undefined;
@@ -148,7 +141,7 @@ export async function run() {
         await receive({type: 'runtime', uri: doc.uri.toString(), runtime: 'local'});
         await receive({type: 'runtime', uri: doc.uri.toString(), runtime: 'colab'});
         await receive({type: 'runtime', uri: doc.uri.toString(), runtime: 'podman'});
-        assert.equal(kernelPicks, 5);
+        assert.equal(kernelPicks, 4);
         assert.deepEqual(containers, [doc]);
         assert.equal(doc.cellAt(0).document.getText(), 'answer = 42');
         assert.equal(doc.isDirty, true, 'switching does not save or replace learner edits');
@@ -156,14 +149,9 @@ export async function run() {
         assert.equal(messages.at(-1).busy, false);
         assert.match(messages.at(-1).status, /run a cell to verify execution/, 'the picker never claims a connected runtime');
 
-        kernelFailure = true;
+        const picksBefore = kernelPicks;
         await receive({type: 'runtime', uri: doc.uri.toString(), runtime: 'local'});
-        assert.match(messages.at(-1).status, /Could not open the kernel picker.*Select Kernel/);
-        assert.doesNotMatch(messages.at(-1).status, /notebookEditorId|null/);
-        assert.equal(messages.at(-1).busy, false);
-        kernelFailure = false;
-        await receive({type: 'runtime', uri: doc.uri.toString(), runtime: 'local'});
-        assert.match(messages.at(-1).status, /Check the kernel shown/);
+        assert.equal(kernelPicks, picksBefore, 'removed local runtime messages cannot open a host kernel');
         activateProvider = async () => { throw new Error('Colab activation failed'); };
         await receive({type: 'runtime', uri: doc.uri.toString(), runtime: 'colab'});
         assert.match(messages.at(-1).status, /Colab activation failed/);
@@ -178,7 +166,7 @@ export async function run() {
       const dismiss = setInterval(() => { void original.execute('workbench.action.closeQuickOpen'); }, 250);
       let timeout: ReturnType<typeof setTimeout>;
       try {
-        const result = await Promise.race([useLocalNotebookKernel(doc), new Promise<never>((_, reject) => {
+        const result = await Promise.race([openNotebookKernelPicker(doc), new Promise<never>((_, reject) => {
           timeout = setTimeout(() => reject(new Error('Kernel picker did not settle')), 10000);
         })]);
         assert.match(result, /No kernel was selected|Check the kernel shown/);

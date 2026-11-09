@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { JSDOM } from 'jsdom';
 
 test('runtime setup distinguishes file runs, notebook availability and kernel verification', () => {
-  const dom = new JSDOM('<select id="runtime"><option value=""></option><option value="local"></option><option value="colab"></option><option value="podman"></option><option value="terminal"></option><option value="setup"></option></select><button id="new-notebook"></button><p id="runtime-target"></p><p id="runtime-status"></p>', {runScripts: 'outside-only'});
+  const dom = new JSDOM('<select id="runtime"><option value=""></option><option value="colab"></option><option value="podman"></option><option value="terminal"></option><option value="setup"></option></select><button id="new-notebook"></button><p id="runtime-target"></p><p id="runtime-status"></p>', {runScripts: 'outside-only'});
   try {
     const win = dom.window, sent: any[] = [];
     win.eval(readFileSync(resolve(__dirname, '../../media/notebookRuntime.js'), 'utf8'));
@@ -22,12 +22,13 @@ test('runtime setup distinguishes file runs, notebook availability and kernel ve
     assert.equal(select.disabled, false);
     assert.match(win.document.body.textContent!, /readiness is not verified/);
     assert.equal((select.querySelector('[value="podman"]') as HTMLOptionElement).disabled, true);
-    select.value = 'local'; select.dispatchEvent(new win.Event('change'));
-    assert.equal(sent.at(-1).runtime, 'local');
+    assert.equal(select.querySelector('[value="local"]'), null);
+    select.value = 'colab'; select.dispatchEvent(new win.Event('change'));
+    assert.equal(sent.at(-1).runtime, 'colab');
     assert.equal(sent.at(-1).uri, 'file:///test.ipynb');
     assert.equal(select.value, '', 'a selected action is not evidence of a connected kernel');
-    post({uri: 'file:///test.ipynb', busy: true, status: 'Opening the Python kernel picker…'});
+    post({uri: 'file:///test.ipynb', busy: true, status: 'Opening Google Colab runtime setup…'});
     assert.equal(select.disabled, true);
-    assert.match(win.document.body.textContent!, /Opening the Python kernel picker/);
+    assert.match(win.document.body.textContent!, /Opening Google Colab runtime setup/);
   } finally { dom.window.close(); }
 });

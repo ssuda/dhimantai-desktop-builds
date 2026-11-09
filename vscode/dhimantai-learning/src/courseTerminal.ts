@@ -12,15 +12,16 @@ export function courseTerminalOptions(engine: CourseEngine, label = 'Course', cw
     name: label, iconPath: new vscode.ThemeIcon('terminal'), cwd,
     shellPath: engine.bin,
     shellArgs: ['exec', '-it', '--workdir', engine.path(cwd), '--env', 'DHIMANTAI_TERMINAL_ID=' + id, engine.name, '/bin/zsh', '-il'],
-    env: { DHIMANTAI_COURSE_CONTAINER: engine.name, DHIMANTAI_TERMINAL_ID: id },
+    env: { DHIMANTAI_COURSE_CONTAINER: engine.name, DHIMANTAI_COURSE_DIRECTORY: engine.path(cwd), DHIMANTAI_TERMINAL_ID: id },
   };
 }
 
 /** One ordinary interactive shell per course, reused by setup, the runtime picker and Run. */
-export function openCourseTerminal(engine: CourseEngine, label?: string) {
+export function openCourseTerminal(engine: CourseEngine, label?: string, cwd = engine.root) {
   const terminal = vscode.window.terminals.find(t => !t.exitStatus &&
-    'env' in t.creationOptions && t.creationOptions.env?.DHIMANTAI_COURSE_CONTAINER === engine.name)
-    ?? vscode.window.createTerminal(courseTerminalOptions(engine, label));
+    'env' in t.creationOptions && t.creationOptions.env?.DHIMANTAI_COURSE_CONTAINER === engine.name &&
+    t.creationOptions.env?.DHIMANTAI_COURSE_DIRECTORY === engine.path(cwd))
+    ?? vscode.window.createTerminal(courseTerminalOptions(engine, label, cwd));
   terminal.show(true);
   return terminal;
 }

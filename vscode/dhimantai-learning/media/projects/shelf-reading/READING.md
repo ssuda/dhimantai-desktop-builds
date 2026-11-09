@@ -7,8 +7,10 @@ and intentional search defect are preserved. Reading does not require fixing it.
 
 Open Project Coach on the right. Use its steps to map folders, find an entry point,
 follow a call, trace data, predict output and compare tests with real behaviour.
-**Runtime → Open terminal** runs in the course container and this project directory.
-There is no local Python requirement. The project must be inside its course folder.
+The sample data is in **books.json** in the project root; `shelf/storage.py` loads it.
+**Runtime → Open course terminal** runs in the course container and this project directory.
+Run the commands below there on Windows, macOS and Linux. The container supplies
+Python and Git. The project must be inside its course folder.
 
 ```sh
 python -m shelf --help
