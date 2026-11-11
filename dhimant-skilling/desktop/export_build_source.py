@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
-INPUTS = ['.github/workflows/desktop-preview.yml', '.github/workflows/desktop-windows-acceptance.yml', 'dhimant-skilling/desktop',
+INPUTS = ['.github/workflows/desktop-preview.yml', '.github/workflows/desktop-build.yml', '.github/workflows/desktop-windows-acceptance.yml', 'dhimant-skilling/desktop',
           'dhimant-skilling/dhimantai-learning', 'website/upskill/assets/dhimantai-logo.png',
           'assets/epub_reader', 'agent/course_projects/data/book_companions.json',
           'content/courses/build-an-llm-from-scratch/*.md']
@@ -46,12 +46,14 @@ def main():
     (args.out / 'README.md').write_text('# dhimantAI desktop builds\n\nPrivate build inputs exported from commit `' + commit + '`.\n\n'
         'The source of truth is the Bitbucket repository. Only desktop inputs are mirrored here; '
         'shared reader assets and packaged course data are included, but backend and Flutter app '
-        'code and repository history are excluded. Run the Custom desktop preview workflow '
-        'with the staging environment. Configure FLUTTER_STAGING_ENV_JSON as an Actions secret '
-        'containing only LIVEKIT_TOKEN_URL and LIVEKIT_TOKEN_SECRET. macOS builds default to '
-        'Developer ID signing and notarization; configure the Apple Actions secrets listed in '
+        'code and repository history are excluded. Every push to main starts the staging desktop build '
+        'automatically: Windows x64 and its installer acceptance, macOS ARM64, macOS x64, then Linux x64, '
+        'one job at a time. Linux ARM64 and Windows ARM64 are excluded. '
+        'Configure FLUTTER_STAGING_ENV_JSON as an Actions secret '
+        'containing only LIVEKIT_TOKEN_URL and LIVEKIT_TOKEN_SECRET. The staging pipeline explicitly uses '
+        'ad-hoc macOS signing without notarization. For Developer ID builds, configure the Apple Actions secrets listed in '
         '[the desktop guide](dhimant-skilling/desktop/README.md#macos-developer-id-signing-and-notarization). '
-        'An unnotarized internal preview requires explicitly selecting macos_signing=ad-hoc.\n\n'
+        'Then change both macOS callers to macos_signing: developer-id.\n\n'
         'Installers and their SHA-256 build receipts are retained as private workflow artifacts. '
         'Publishing them to dhimant.ai is a separate release step.\n')
     print(f'Exported {len(files)} desktop inputs from {commit} to {args.out}')

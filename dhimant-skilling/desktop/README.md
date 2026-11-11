@@ -14,7 +14,7 @@ Provider/authentication/API configuration is retained for an optional compatible
 
 Light Modern is the whole editor's default theme. Learning panels inherit the editor theme; there is no separate extension appearance setting or palette. Users can still select a different editor theme.
 
-`lock.json` pins VSCodium, Code OSS, Electron and Node. `customize.py` applies narrow source changes and fails when upstream context changes. `build.py` produces a macOS DMG, Windows user setup EXE, or Linux tarball and Debian package on native x64/ARM64 runners. The manual GitHub workflow defines all six targets; it neither publishes releases nor updates a running service.
+`lock.json` pins VSCodium, Code OSS, Electron and Node. `customize.py` applies narrow source changes and fails when upstream context changes. `build.py` produces a macOS DMG, Windows user setup EXE, or Linux tarball and Debian package on native x64/ARM64 runners. Pushing the exported build repository to `main` builds the four supported targets sequentially; it neither publishes releases nor updates a running service.
 
 ## Build
 
@@ -87,45 +87,68 @@ Flutter app code, credentials, or monorepo history. `build-source.json` records
 the originating commit and file hashes; builds verify those bytes before use.
 Receipts distinguish that source commit from the GitHub build commit.
 
-Run the manual **Custom desktop preview** workflow with `environment=staging`
-and `targets=windows-linux`, `all`, or one platform/processor pair. For the five
-currently published website targets, dispatch each target separately so optional
-Windows ARM64 does not delay the release:
+The push above starts **Custom desktop preview** automatically on GitHub `main`;
+there is no manual-dispatch step. Its jobs run in this order, with each requiring
+the previous job to succeed:
+
+1. Windows x64 build, then installation/CLI/uninstall acceptance.
+2. macOS ARM64.
+3. macOS Intel x64.
+4. Linux x64.
+
+Linux ARM64 and Windows ARM64 are not built. Workflow concurrency also prevents
+two pushes from building at the same time; a running build is allowed to finish.
+The automatic pipeline uses staging and explicitly uses ad-hoc macOS signing.
+The shared build job lives in `.github/workflows/desktop-build.yml`; the calling
+jobs and their dependencies live in `.github/workflows/desktop-preview.yml`.
 
 ```sh
-# This is the existing unnotarized staging preview channel.
-# Use developer-id instead after configuring the Apple signing secrets below.
-for desktop_target in windows-x64 linux-x64 linux-arm64 macos-x64 macos-arm64; do
-  gh workflow run desktop-preview.yml --repo ssuda/dhimantai-desktop-builds \
-    --ref main -f environment=staging -f targets="$desktop_target" -f macos_signing=ad-hoc
-done
 gh run list --repo ssuda/dhimantai-desktop-builds --workflow desktop-preview.yml \
   --commit "$(git -C "$desktop_build_repo" rev-parse HEAD)" \
   --json databaseId,status,conclusion,url
-```
-
-Save each returned run ID. Wait for successful completion and download its
-`desktop-*` artifact, including its JSON build receipt, before publishing. For example:
-
-```sh
+gh run watch BUILD_RUN_ID --repo ssuda/dhimantai-desktop-builds --exit-status
 gh run download BUILD_RUN_ID --repo ssuda/dhimantai-desktop-builds \
-  --pattern 'desktop-*' --dir /absolute/path/to/artifacts/PLATFORM
-gh workflow run desktop-windows-acceptance.yml --repo ssuda/dhimantai-desktop-builds \
-  --ref main -f build_run=WINDOWS_BUILD_RUN_ID -f arch=x64
+  --pattern 'desktop-*' --dir /absolute/path/to/artifacts
+gh run download BUILD_RUN_ID --repo ssuda/dhimantai-desktop-builds \
+  --name windows-install-acceptance-x64 --dir /absolute/path/to/acceptance
 ```
 
-The staging
-Actions secret contains only the Flutter client's token URL and client HMAC
+Save the run ID and download its successful `desktop-*` artifacts and JSON build
+receipts before publishing. Windows acceptance uses the installer uploaded in the
+same run and completes before the first macOS build starts.
+
+The staging Actions secret contains only the Flutter client's token URL and client HMAC
 key. The workflow refuses a public repository and never deploys a service.
 Linux runners use temporary swap; native compilation may take substantially
 longer than extension compilation. Installers and receipts are retained for
 14 days, build logs for 7 days. Download the artifacts before retention expires.
 
-After a Windows build finishes, run **Windows desktop installer acceptance**
-with its build run ID and matching processor. On a fresh native Windows runner,
-it verifies the installer checksum, installs into a temporary directory,
+**Windows desktop installer acceptance** runs automatically after the Windows
+build. On a fresh native Windows runner, it verifies the installer checksum, installs into a temporary directory,
 checks the packaged architecture and staging defaults, runs the installed CLI,
 and uninstalls. Its receipt does not certify GUI, YouTube or physical devices.
+
+If a job fails before any steps start, inspect its Actions annotation. The message
+“recent account payments have failed or your spending limit needs to be increased”
+requires the `ssuda` account owner to resolve [GitHub billing](https://github.com/settings/billing)
+before a retry can run. A Git remote or a new access token does not fix that block.
+For HTTP 403 while downloading debugger extensions, check GitHub API rate limits;
+Ubuntu package-host DNS failures occur in **Native Linux prerequisites**.
+The native build receives the job-scoped `GITHUB_TOKEN` for authenticated dependency
+downloads. Linux prerequisite setup fails on an incomplete package-index refresh
+and has a five-minute timeout. Read the failed job logs before retrying, and retain
+successful artifacts.
+
+```sh
+gh run view BUILD_RUN_ID --repo ssuda/dhimantai-desktop-builds --log-failed
+gh run rerun BUILD_RUN_ID --repo ssuda/dhimantai-desktop-builds --failed
+# For a cancelled run, rerun the whole run instead:
+gh run rerun CANCELLED_RUN_ID --repo ssuda/dhimantai-desktop-builds
+```
+
+Keep a release in draft until all intended installers and their acceptance checks
+pass. Record partial builds and the blocker in `deploy/releases/`; leave the live
+website downloads on the last verified release until the replacement is complete.
 
 Publish verified receipt/artifact pairs with
 `./deploy_dhimantai.sh --desktop-receipt /absolute/path/to/receipt.json`
@@ -139,11 +162,13 @@ increment the desktop release when changing its payload.
 
 ## macOS Developer ID signing and notarization
 
-The next preview build is **1.143.10006-preview.6**, with new artifact filenames.
+The next preview build is **1.143.10007-preview.7**, with new artifact filenames.
 Published preview 3 and preview 5 downloads remain unchanged. Both native
-macOS runners use the same signing path. Select `macos_signing=developer-id`
-(the workflow default) for signed builds, or explicitly select `ad-hoc` for an
-internal preview that will still trigger Gatekeeper warnings.
+macOS runners use the same signing path. The automatic staging pipeline sets
+`macos_signing: ad-hoc` in both macOS jobs, so these previews still trigger
+Gatekeeper warnings. After configuring the Apple secrets below, change both
+callers in `.github/workflows/desktop-preview.yml` to `macos_signing: developer-id`
+for signed and notarized builds.
 
 Configure these **repository Actions secrets** in
 [the private build repository](https://github.com/ssuda/dhimantai-desktop-builds/settings/secrets/actions):
