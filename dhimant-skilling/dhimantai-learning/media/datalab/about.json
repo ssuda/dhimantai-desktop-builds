@@ -1,0 +1,185 @@
+{
+  "shop": {
+    "title": "Shop: Sahyadri Daily Needs, six branches",
+    "summary": "Daily sales of a grocery and household chain with six branches in Madhya Pradesh, Maharashtra and Karnataka, 1 January to 30 June 2026. Each sales row is one product's total for one branch on one day. Returns are recorded separately, in the returns table.",
+    "tables": [
+      {
+        "name": "branches",
+        "description": "One row per branch.",
+        "columns": {
+          "branch_id": "Branch number.",
+          "branch_name": "Short name used in the shop.",
+          "city": "City.",
+          "state": "State.",
+          "opened_on": "Date the branch opened. Hubballi opened in the middle of the period.",
+          "floor_area_sqft": "Selling area in square feet."
+        }
+      },
+      {
+        "name": "products",
+        "description": "One row per product sold by the chain.",
+        "columns": {
+          "product_id": "Product number.",
+          "product_name": "Product and pack size.",
+          "category": "Product group.",
+          "current_price": "Today's shelf price in rupees. Prices changed during the period; the price actually charged is in sales.unit_price."
+        }
+      },
+      {
+        "name": "sales",
+        "description": "One row per product, branch and day: the quantity sold that day.",
+        "columns": {
+          "sale_id": "Row number.",
+          "sale_date": "Day of the sales.",
+          "branch_id": "Branch (see branches).",
+          "product_id": "Product (see products).",
+          "quantity": "Units sold that day.",
+          "unit_price": "Price charged per unit that day, in rupees.",
+          "amount": "quantity times unit_price, in rupees, before any returns."
+        }
+      },
+      {
+        "name": "returns",
+        "description": "Goods brought back by customers. Not subtracted in sales: net sales = sales.amount minus returns.refund_amount.",
+        "columns": {
+          "return_id": "Row number.",
+          "return_date": "Day the goods came back.",
+          "sale_id": "The sales row they were sold on.",
+          "branch_id": "Branch that took the return.",
+          "product_id": "Product returned.",
+          "quantity": "Units returned.",
+          "refund_amount": "Money given back, in rupees.",
+          "reason": "Reason noted by the cashier. Often blank: cashiers did not always ask."
+        }
+      }
+    ],
+    "gaps": [
+      "There is no customer information, so the data cannot say how many customers came or who came back.",
+      "There is no cost price, so the data cannot say which product or branch made a profit.",
+      "Nagpur has no sales rows for 10 to 12 April 2026. The data does not say whether the shop was closed or the records were lost.",
+      "Hubballi opened on 16 March 2026, so its totals cover a shorter time than the other branches.",
+      "Return reasons are blank for many returns."
+    ],
+    "try": [
+      "Which branch sold the most in May?",
+      "Which branch sold the most in May, net of returns?",
+      "Which product made the most profit?",
+      "What were total sales of cooking oil each month?"
+    ],
+    "rows": 3774
+  },
+  "school": {
+    "title": "School: Vaigai Higher Secondary School, classes 8 to 10",
+    "summary": "Six classes (grades 8, 9 and 10, sections A and B) in an invented school in Madurai, academic year 2025-26 (June 2025 to March 2026): students, monthly attendance and marks in three exams.",
+    "tables": [
+      {
+        "name": "classes",
+        "description": "One row per class section.",
+        "columns": {
+          "class_id": "Class number.",
+          "grade": "Grade (8, 9 or 10).",
+          "section": "Section letter.",
+          "class_teacher": "Class teacher (invented name)."
+        }
+      },
+      {
+        "name": "students",
+        "description": "One row per student. Names are invented.",
+        "columns": {
+          "student_id": "Student number.",
+          "student_name": "Invented name with initial.",
+          "class_id": "Class (see classes).",
+          "gender": "F or M, as recorded at admission.",
+          "joined_on": "Date the student joined. Some joined after the year began."
+        }
+      },
+      {
+        "name": "attendance",
+        "description": "One row per student per month, only for months after the student joined.",
+        "columns": {
+          "student_id": "Student (see students).",
+          "month": "First day of the month.",
+          "school_days": "Days the school was open that month for this student.",
+          "days_present": "Days the student was present. Compare students with days_present / school_days, not raw counts."
+        }
+      },
+      {
+        "name": "exams",
+        "description": "One row per exam.",
+        "columns": {
+          "exam_id": "Exam number.",
+          "exam_name": "Exam name.",
+          "held_on": "First day of the exam.",
+          "max_marks": "Marks each paper is out of. The unit test is out of 25, the others out of 100."
+        }
+      },
+      {
+        "name": "marks",
+        "description": "One row per student, exam and subject.",
+        "columns": {
+          "student_id": "Student (see students).",
+          "exam_id": "Exam (see exams).",
+          "subject": "English, Maths or Science.",
+          "marks": "Marks scored. Blank (NULL) when the student was absent for that paper; blank is not zero."
+        }
+      }
+    ],
+    "gaps": [
+      "No reason is recorded for any absence, so the data cannot say why a student missed school.",
+      "Blank marks mean the student was absent. The data does not say whether a re-test happened.",
+      "There is nothing about families, income, travel or health, so the data cannot explain why marks differ.",
+      "Students who joined late have fewer months of attendance and may have missed the first exam.",
+      "The data does not say who taught each subject."
+    ],
+    "try": [
+      "Which class had the best attendance in December?",
+      "What was the average Maths mark in the Half-yearly exam by class?",
+      "Why did grade 9B do worse in Science?"
+    ],
+    "rows": 4026
+  },
+  "clinic": {
+    "title": "Clinic: Periyar Community Clinic, Kochi",
+    "summary": "Out-patient appointments with five doctors at an invented community clinic in Kochi, January to March 2026. Each row is one appointment or walk-in visit, with the booked, arrival and seen times.",
+    "tables": [
+      {
+        "name": "doctors",
+        "description": "One row per doctor (invented names).",
+        "columns": {
+          "doctor_id": "Doctor number.",
+          "doctor_name": "Invented name.",
+          "speciality": "Speciality.",
+          "clinic_days": "Days of the week the doctor sees patients here. One doctor comes only twice a week."
+        }
+      },
+      {
+        "name": "appointments",
+        "description": "One row per appointment or walk-in visit.",
+        "columns": {
+          "appointment_id": "Row number.",
+          "patient_code": "Invented patient code; the same code means the same patient.",
+          "doctor_id": "Doctor (see doctors).",
+          "visit_date": "Day of the visit.",
+          "visit_type": "booked (appointment made earlier) or walk_in (no appointment).",
+          "booked_time": "Appointment time. Blank for walk-ins.",
+          "arrived_time": "Time reception marked the patient as arrived. Blank if the patient never came.",
+          "seen_time": "Time the doctor called the patient in. Blank if the patient was not seen.",
+          "status": "seen, cancelled (by the patient, in advance) or no_show (booked but never came).",
+          "wait_minutes": "Minutes from arrival to being seen. Blank unless the patient was seen. It is not how late the doctor ran: early arrivals wait longer."
+        }
+      }
+    ],
+    "gaps": [
+      "No reason is recorded for cancellations or no-shows, so the data cannot say why patients did not come.",
+      "There is nothing about the patient (age, illness, distance), so the data cannot explain who waits longer or why.",
+      "The data does not record how long each consultation took or when it ended.",
+      "Reception rounded times to the nearest 5 minutes."
+    ],
+    "try": [
+      "What was the average wait for each doctor in February?",
+      "What share of booked appointments were no-shows?",
+      "Why do patients cancel appointments?"
+    ],
+    "rows": 3094
+  }
+}

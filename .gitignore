@@ -4,3 +4,9 @@ node_modules/
 *.vsix
 .env*
 desktop-flutter.json
+*.p8
+*.p12
+*.pfx
+*.pem
+*.key
+*.keychain*

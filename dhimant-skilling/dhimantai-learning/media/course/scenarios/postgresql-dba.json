@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "course": "postgresql-dba",
+  "manifest_sha256": "b066dddb8678d6c0209c6cc72f994044e76a1c07d7e2e452c2c74af1b056bff0",
+  "scenarios": [
+    {
+      "id": "be054040-a525-5dc2-9705-0730e3524959",
+      "title": "Bring the server back",
+      "setup": "psql -q -c \"CREATE DATABASE shop\"\npsql -q -d shop -c \"CREATE TABLE orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL);\n                    INSERT INTO orders SELECT g, g * 10 FROM generate_series(1, 5) g;\"\npg_ctl stop -D \"$PGDATA\" -m fast -w > /dev/null\n",
+      "setup_sha256": "e79e67f542c859d1638f5c2060e5e05e38ab4bffd88ff2e216896a14fbcfb572"
+    },
+    {
+      "id": "4c518a75-004c-5d3a-b88d-32a366819be0",
+      "title": "End one runaway session",
+      "setup": "psql -q -c \"CREATE DATABASE shop\"\npsql -q -d shop -c \"CREATE TABLE orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL);\n                    INSERT INTO orders SELECT g, g * 10 FROM generate_series(1, 5) g;\"\n# Two long-running client sessions: report-job and billing. Each runs two long statements from a file, so\n# cancelling the first statement does not end the session.\nprintf 'SELECT pg_sleep(300);\\nSELECT pg_sleep(300);\\n' > \"$LAB/long.sql\"\nfor name in report-job billing; do\n    PGAPPNAME=$name nohup psql -q -d shop -f \"$LAB/long.sql\" > /dev/null 2>&1 &\ndone\nfor i in $(seq 1 100); do\n    [ \"$(psql -Atc \"SELECT count(*) FROM pg_stat_activity WHERE application_name IN ('report-job', 'billing')\")\" = 2 ] && break\n    sleep 0.1\ndone\n",
+      "setup_sha256": "6c1a0439c189701ab7c222ba89288ab79e37b04fdd43c106ec04ea381935ecee"
+    },
+    {
+      "id": "fc643330-0481-5ead-993d-b9f7dbe340f6",
+      "title": "Apply a restart-only setting",
+      "setup": "psql -q -c \"CREATE DATABASE shop\"\npsql -q -d shop -c \"CREATE TABLE orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL);\n                    INSERT INTO orders SELECT g, g * 10 FROM generate_series(1, 5) g;\"\npsql -qc \"ALTER SYSTEM SET max_connections = 25\"\n",
+      "setup_sha256": "ef48006139d4a66e6d5516653232890cc51e9a8895448df3750f244295c10e9c"
+    },
+    {
+      "id": "21a14721-8426-5f53-860a-7bf8f1e461e1",
+      "title": "Clear the configuration errors",
+      "setup": "psql -q -c \"CREATE DATABASE shop\"\npsql -q -d shop -c \"CREATE TABLE orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL);\n                    INSERT INTO orders SELECT g, g * 10 FROM generate_series(1, 5) g;\"\n# A colleague's tuning: work_mem 32MB and maintenance_work_mem 256MB, typed by hand.\nprintf \"%s\\n\" \"# tuning, ticket 4711\" \"work_mem = '32mb'\" \"maintenance_work_mem = 256MB\" >> \"$PGDATA/postgresql.conf\"\npsql -qAtc \"SELECT pg_reload_conf()\" > /dev/null\nsleep 0.5\n",
+      "setup_sha256": "81a373eebfcf6d34194a5b89901f6b5f7db04b0c673a3fcf3ce5a744192dcec3"
+    },
+    {
+      "id": "eb3ccb96-3aaf-5c7b-b60b-810e402878ef",
+      "title": "Log slow queries for good",
+      "setup": "psql -q -c \"CREATE DATABASE shop\"\npsql -q -d shop -c \"CREATE TABLE orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL);\n                    INSERT INTO orders SELECT g, g * 10 FROM generate_series(1, 5) g;\"\npsql -qc \"CREATE ROLE report LOGIN\"\n",
+      "setup_sha256": "832443c3924518d8728ea08beaa6ee0fef9cb0b043d10c4ebc97acc308469bea"
+    },
+    {
+      "id": "e81ffc39-865d-58d2-921f-44edc2fa4319",
+      "title": "Lock the app role to SCRAM over TCP",
+      "setup": "psql -q -c \"CREATE DATABASE shop\"\npsql -q -d shop -c \"CREATE TABLE orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL);\n                    INSERT INTO orders SELECT g, g * 10 FROM generate_series(1, 5) g;\"\npsql -qc \"CREATE ROLE app LOGIN PASSWORD 'app-pass-1'\" -c \"CREATE ROLE report LOGIN\"\nsleep 1.1\n",
+      "setup_sha256": "7eb53fd0f3d53490a5cb77c32915d54b57a3d3d2d259cadcdf76a43d94c0764b"
+    },
+    {
+      "id": "dcb39aec-2aea-598f-98dd-e9a0e179a8b6",
+      "title": "A least-privilege app role",
+      "setup": "psql -q -c \"CREATE ROLE shop_owner NOLOGIN\" -c \"CREATE DATABASE shop OWNER shop_owner\"\npsql -q -d shop -c \"SET ROLE shop_owner;\n    CREATE TABLE customers (id int PRIMARY KEY, name text NOT NULL, email text);\n    CREATE TABLE orders (id serial PRIMARY KEY, customer_id int NOT NULL, total numeric(10,2) NOT NULL);\n    CREATE TABLE staff_salaries (staff text PRIMARY KEY, salary numeric(10,2) NOT NULL);\n    INSERT INTO customers VALUES (1, 'Asha', 'asha@example.com'), (2, 'Ravi', 'ravi@example.com');\n    INSERT INTO orders (customer_id, total) VALUES (1, 120), (2, 80);\n    INSERT INTO staff_salaries VALUES ('meena', 90000);\"\npsql -q -c \"CREATE ROLE support\" -c \"CREATE ROLE alice LOGIN IN ROLE support\"\n",
+      "setup_sha256": "1ef7e395240873de6b480911fc71652ca9dd173b5b2445ecdced264475abab3c"
+    },
+    {
+      "id": "9beaa174-f932-5cd2-938f-0b0006a48061",
+      "title": "A read-only role that keeps up",
+      "setup": "psql -q -c \"CREATE ROLE shop_owner NOLOGIN\" -c \"CREATE DATABASE shop OWNER shop_owner\"\npsql -q -d shop -c \"SET ROLE shop_owner;\n    CREATE TABLE customers (id int PRIMARY KEY, name text NOT NULL, email text);\n    CREATE TABLE orders (id serial PRIMARY KEY, customer_id int NOT NULL, total numeric(10,2) NOT NULL);\n    CREATE TABLE staff_salaries (staff text PRIMARY KEY, salary numeric(10,2) NOT NULL);\n    INSERT INTO customers VALUES (1, 'Asha', 'asha@example.com'), (2, 'Ravi', 'ravi@example.com');\n    INSERT INTO orders (customer_id, total) VALUES (1, 120), (2, 80);\n    INSERT INTO staff_salaries VALUES ('meena', 90000);\"\npsql -q -c \"CREATE ROLE support\" -c \"CREATE ROLE alice LOGIN IN ROLE support\"\npsql -q -d shop -c \"SET ROLE shop_owner;\n    CREATE SCHEMA reporting;\n    CREATE TABLE reporting.daily_sales (day date PRIMARY KEY, total numeric(12,2) NOT NULL);\"\n",
+      "setup_sha256": "6a9a47fc82794d4dd347563cfdd863cfbb933a10711345b69ccc25ababb6194f"
+    },
+    {
+      "id": "cbb08125-9089-595c-8595-d1dbb2860fea",
+      "title": "Remove a departing user's role",
+      "setup": "psql -q -c \"CREATE ROLE shop_owner NOLOGIN\" -c \"CREATE DATABASE shop OWNER shop_owner\"\npsql -q -d shop -c \"SET ROLE shop_owner;\n    CREATE TABLE customers (id int PRIMARY KEY, name text NOT NULL, email text);\n    CREATE TABLE orders (id serial PRIMARY KEY, customer_id int NOT NULL, total numeric(10,2) NOT NULL);\n    CREATE TABLE staff_salaries (staff text PRIMARY KEY, salary numeric(10,2) NOT NULL);\n    INSERT INTO customers VALUES (1, 'Asha', 'asha@example.com'), (2, 'Ravi', 'ravi@example.com');\n    INSERT INTO orders (customer_id, total) VALUES (1, 120), (2, 80);\n    INSERT INTO staff_salaries VALUES ('meena', 90000);\"\npsql -q -c \"CREATE ROLE support\" -c \"CREATE ROLE alice LOGIN IN ROLE support\"\npsql -q -c \"CREATE ROLE dave LOGIN PASSWORD 'dave-pass-1'\"\npsql -q -d shop -c \"GRANT CREATE ON SCHEMA public TO dave\" -c \"GRANT SELECT ON customers TO dave\"\npsql -q -d shop -c \"SET ROLE dave;\n    CREATE TABLE dave_notes (id int PRIMARY KEY, note text);\n    INSERT INTO dave_notes VALUES (1, 'call Asha');\n    CREATE VIEW dave_customers AS SELECT id, name FROM customers;\"\n",
+      "setup_sha256": "33ba2cbf352fdb2176af99fc43f1cca60d93914dfaac5cfce2096c378688a731"
+    },
+    {
+      "id": "3899204d-ca6f-53bf-8b01-7c6373d7e9f6",
+      "title": "Keep tenants apart",
+      "setup": "psql -q -c \"CREATE ROLE shop_owner NOLOGIN\" -c \"CREATE DATABASE shop OWNER shop_owner\"\npsql -q -c \"CREATE ROLE acme LOGIN\" -c \"CREATE ROLE globex LOGIN\"\npsql -q -d shop -c \"SET ROLE shop_owner;\n    CREATE TABLE orders (id int PRIMARY KEY, tenant text NOT NULL, item text NOT NULL, total numeric(10,2) NOT NULL);\n    INSERT INTO orders VALUES (1, 'acme', 'bolts', 120), (2, 'acme', 'nuts', 40), (3, 'globex', 'gears', 300),\n                              (4, 'initech', 'staplers', 15);\n    GRANT SELECT, INSERT, UPDATE, DELETE ON orders TO acme, globex;\"\npsql -q -c \"CREATE ROLE auditor LOGIN\"\npsql -q -d shop -c \"GRANT SELECT ON orders TO auditor\"\n",
+      "setup_sha256": "95edb77eff4104b2ed24875c3af96777a0f8049da15799f36f8b0d0a28dd2a75"
+    },
+    {
+      "id": "0ac62640-c89f-59fa-a03e-1484ec52496d",
+      "title": "No way around the policy",
+      "setup": "psql -q -c \"CREATE ROLE shop_owner NOLOGIN\" -c \"CREATE DATABASE shop OWNER shop_owner\"\npsql -q -c \"CREATE ROLE acme LOGIN\" -c \"CREATE ROLE globex LOGIN\"\npsql -q -d shop -c \"SET ROLE shop_owner;\n    CREATE TABLE orders (id int PRIMARY KEY, tenant text NOT NULL, item text NOT NULL, total numeric(10,2) NOT NULL);\n    INSERT INTO orders VALUES (1, 'acme', 'bolts', 120), (2, 'acme', 'nuts', 40), (3, 'globex', 'gears', 300),\n                              (4, 'initech', 'staplers', 15);\n    GRANT SELECT, INSERT, UPDATE, DELETE ON orders TO acme, globex;\"\npsql -q -c \"CREATE ROLE shop_app LOGIN\" -c \"CREATE ROLE etl LOGIN BYPASSRLS\"\npsql -q -d shop -c \"GRANT CREATE ON SCHEMA public TO shop_app\"\npsql -q -d shop -c \"SET ROLE shop_app;\n    CREATE TABLE invoices (id int PRIMARY KEY, tenant text NOT NULL, amount numeric(10,2) NOT NULL);\n    INSERT INTO invoices VALUES (1, 'acme', 100), (2, 'acme', 250), (3, 'globex', 75);\n    ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;\n    CREATE POLICY tenant_isolation ON invoices USING (tenant = current_setting('app.tenant', true));\n    GRANT SELECT ON invoices TO etl;\"\n",
+      "setup_sha256": "bbfc2b084badec480610b8bc17d29a8666d7251d42142befbde4a98d600e57cf"
+    },
+    {
+      "id": "37179c1b-463b-5c15-ab1b-a3321d0335be",
+      "title": "An audit trail users cannot touch",
+      "setup": "psql -q -c \"CREATE ROLE shop_owner NOLOGIN\" -c \"CREATE DATABASE shop OWNER shop_owner\"\npsql -q -c \"CREATE ROLE acme LOGIN\" -c \"CREATE ROLE globex LOGIN\"\npsql -q -d shop -c \"SET ROLE shop_owner;\n    CREATE TABLE orders (id int PRIMARY KEY, tenant text NOT NULL, item text NOT NULL, total numeric(10,2) NOT NULL);\n    INSERT INTO orders VALUES (1, 'acme', 'bolts', 120), (2, 'acme', 'nuts', 40), (3, 'globex', 'gears', 300),\n                              (4, 'initech', 'staplers', 15);\n    GRANT SELECT, INSERT, UPDATE, DELETE ON orders TO acme, globex;\"\npsql -q -d shop -c \"SET ROLE shop_owner;\n    CREATE TABLE audit_log (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(),\n                            actor text NOT NULL, action text NOT NULL, row_id int, old_row jsonb, new_row jsonb);\"\n",
+      "setup_sha256": "5eeb42ab07262a8e6e83b10ca18901616b2cb111d4868c2ba9867a05c2789286"
+    },
+    {
+      "id": "c005dfe2-4027-57e5-a471-d263157b84b4",
+      "title": "Turn autovacuum back on",
+      "setup": "psql -q -o /dev/null \\\n     -c \"CREATE TABLE accounts (id int PRIMARY KEY, balance int NOT NULL) WITH (autovacuum_enabled = false)\" \\\n     -c \"INSERT INTO accounts SELECT g, 100 FROM generate_series(1, 1000) g\" \\\n     -c \"SELECT pg_stat_force_next_flush()\"\npsql -q -o /dev/null \\\n     -c \"CREATE TABLE ledger (id int PRIMARY KEY, amount int) WITH (autovacuum_enabled = false)\" \\\n     -c \"CREATE TABLE customers (id int PRIMARY KEY, name text)\" \\\n     -c \"INSERT INTO ledger SELECT g, g FROM generate_series(1, 500) g\"\n# Someone \"fixed\" a slow batch job by turning autovacuum and statistics counting off.\npsql -qc \"ALTER SYSTEM SET autovacuum = off\"\necho \"track_counts = off\" >> \"$PGDATA/postgresql.conf\"\npsql -Atqc \"SELECT pg_reload_conf()\" > /dev/null\n",
+      "setup_sha256": "b18c95093b2b26197518e238bcbfac96a47ad1f499a0a1f5d271cc4ccf0e4d2b"
+    },
+    {
+      "id": "76b17f63-c0f9-529d-b396-598f848f5ea0",
+      "title": "Clean up a bloated table",
+      "setup": "psql -q -o /dev/null \\\n     -c \"CREATE TABLE accounts (id int PRIMARY KEY, balance int NOT NULL) WITH (autovacuum_enabled = false)\" \\\n     -c \"INSERT INTO accounts SELECT g, 100 FROM generate_series(1, 1000) g\" \\\n     -c \"SELECT pg_stat_force_next_flush()\"\necho \"autovacuum = off\" >> \"$PGDATA/postgresql.conf\"\npsql -Atqc \"SELECT pg_reload_conf()\" > /dev/null\npsql -q -c \"CREATE TABLE events (id int PRIMARY KEY, payload text)\" -c \"INSERT INTO events SELECT g, repeat('x', 100) FROM generate_series(1, 4000) g\" -c \"DELETE FROM events WHERE id <= 3600\"\npsql -q -c \"CREATE TABLE customers (id int PRIMARY KEY, payload text)\" -c \"INSERT INTO customers SELECT g, repeat('x', 100) FROM generate_series(1, 330) g\" -c \"DELETE FROM customers WHERE id <= 30\"\npsql -q -c \"CREATE TABLE orders (id int PRIMARY KEY, payload text)\" -c \"INSERT INTO orders SELECT g, repeat('x', 100) FROM generate_series(1, 24000) g\" -c \"DELETE FROM orders WHERE id <= 4000\"\npsql -q -o /dev/null -c \"CREATE TABLE lab_baseline AS SELECT relname, relfilenode FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace\" -c \"SELECT pg_stat_force_next_flush()\"\n",
+      "setup_sha256": "8580a2308b45df34335294594859e6d1b15094327ed31d790b5dabe5a82b3a80"
+    },
+    {
+      "id": "9bc50f1d-2700-5fde-9e1b-887cd4eceb0a",
+      "title": "Tune autovacuum for a hot table",
+      "setup": "psql -q -o /dev/null \\\n     -c \"CREATE TABLE accounts (id int PRIMARY KEY, balance int NOT NULL) WITH (autovacuum_enabled = false)\" \\\n     -c \"INSERT INTO accounts SELECT g, 100 FROM generate_series(1, 1000) g\" \\\n     -c \"SELECT pg_stat_force_next_flush()\"\npsql -q -o /dev/null -c \"CREATE TABLE page_views (id bigint PRIMARY KEY, url text, hits int) WITH (fillfactor = 90)\" \\\n     -c \"INSERT INTO page_views SELECT g, '/p/' || g, 0 FROM generate_series(1, 2000) g\"\n",
+      "setup_sha256": "32315f7169c6f33189c248965415896cea41e5385a5486fa75db3359d76d3a4f"
+    },
+    {
+      "id": "b46ce869-ef0b-5062-aed8-83785ded5762",
+      "title": "End the root blocker",
+      "setup": "psql -q -c \"CREATE DATABASE shop\" -c \"CREATE ROLE app LOGIN\" -c \"CREATE ROLE report LOGIN\"\npsql -q -d shop -c \"CREATE TABLE orders (id int PRIMARY KEY, status text NOT NULL);\n                    INSERT INTO orders SELECT g, 'new' FROM generate_series(1, 5) g;\n                    GRANT SELECT, UPDATE ON orders TO app, report;\"\n# client NAME SQL: a session named NAME runs SQL, then stays connected without sending anything more.\nclient() { (printf '%s\\n' \"$2\"; sleep 600) | PGAPPNAME=$1 nohup psql -q -d shop > /dev/null 2>&1 & }\n# waiting N: wait until N sessions are waiting for a lock.\nwaiting() {\n    for i in $(seq 1 100); do\n        [ \"$(psql -Atc \"SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'\")\" = \"$1\" ] && return\n        sleep 0.1\n    done\n}\nclient batch-import \"BEGIN; UPDATE orders SET status = 'importing' WHERE id = 1;\"\nclient reporting \"BEGIN; SELECT count(*) FROM orders;\"\nsleep 0.5\nclient checkout \"UPDATE orders SET status = 'paid' WHERE id = 1;\"\nsleep 0.3\nwaiting 1\n",
+      "setup_sha256": "b3a757f7321d139501c2962cf48a15928beade4186c1267025f65661ce39bb21"
+    },
+    {
+      "id": "74205446-6f7a-512e-8f17-67fd99908fc2",
+      "title": "Time out idle transactions for the app role",
+      "setup": "psql -q -c \"CREATE DATABASE shop\" -c \"CREATE ROLE app LOGIN\" -c \"CREATE ROLE report LOGIN\"\npsql -q -d shop -c \"CREATE TABLE orders (id int PRIMARY KEY, status text NOT NULL);\n                    INSERT INTO orders SELECT g, 'new' FROM generate_series(1, 5) g;\n                    GRANT SELECT, UPDATE ON orders TO app, report;\"\n",
+      "setup_sha256": "f113d80e7d9d3e08b0a2f1677428022f79d033e144b8943838a271af1497a898"
+    },
+    {
+      "id": "db815a90-ca3d-50d3-b7dc-3d0ac40a925c",
+      "title": "Log lock waits",
+      "setup": "psql -q -c \"CREATE DATABASE shop\" -c \"CREATE ROLE app LOGIN\" -c \"CREATE ROLE report LOGIN\"\npsql -q -d shop -c \"CREATE TABLE orders (id int PRIMARY KEY, status text NOT NULL);\n                    INSERT INTO orders SELECT g, 'new' FROM generate_series(1, 5) g;\n                    GRANT SELECT, UPDATE ON orders TO app, report;\"\npsql -q -c \"CREATE TABLE lab_start AS SELECT pg_postmaster_start_time() AS started\"\n",
+      "setup_sha256": "8c7e7897d037003e78d1575fa4c1f7299682297df4bde0f73308aed0e8cf10dc"
+    },
+    {
+      "id": "ddf6df99-a8db-5540-a730-f68ded4da27a",
+      "title": "Add the missing index, drop the unused ones",
+      "setup": "psql -q -o /dev/null \\\n     -c \"CREATE TABLE orders (id int PRIMARY KEY, customer_id int NOT NULL, email text NOT NULL,\n                              status text NOT NULL, total numeric(10,2) NOT NULL, note text)\" \\\n     -c \"INSERT INTO orders SELECT g, g % 5000, 'User' || (g % 5000) || '@example.com',\n                CASE WHEN g % 100 = 0 THEN 'pending' ELSE 'done' END, (g % 997) + 0.5, md5(g::text)\n         FROM generate_series(1, 50000) g\" \\\n     -c \"VACUUM ANALYZE orders\"\npsql -q -c \"CREATE INDEX orders_status_idx ON orders (status) WHERE status = 'pending'\"\npsql -q -c \"CREATE INDEX orders_note_idx ON orders (note)\"\necho \"SELECT id, total FROM orders WHERE lower(email) = 'user42@example.com';\" > \"$LAB/slow.sql\"\npsql -q -o /dev/null -c \"SELECT count(*) FROM orders WHERE status = 'pending'\" -c \"SELECT count(*) FROM orders WHERE status = 'pending' AND total > 100\" -c \"SELECT pg_stat_force_next_flush()\"\n",
+      "setup_sha256": "b9be22f1589ec9055bc54a30eedd14500ec8ed97c4c24734d0f9962a9a471ea0"
+    },
+    {
+      "id": "fa63f27e-d407-578c-b554-d8bbac975c22",
+      "title": "Fix stale statistics",
+      "setup": "psql -q -o /dev/null \\\n     -c \"CREATE TABLE orders (id int PRIMARY KEY, customer_id int NOT NULL, email text NOT NULL,\n                              status text NOT NULL, total numeric(10,2) NOT NULL, note text)\" \\\n     -c \"INSERT INTO orders SELECT g, g % 5000, 'User' || (g % 5000) || '@example.com',\n                CASE WHEN g % 100 = 0 THEN 'pending' ELSE 'done' END, (g % 997) + 0.5, md5(g::text)\n         FROM generate_series(1, 50000) g\" \\\n     -c \"VACUUM ANALYZE orders\"\npsql -q -o /dev/null \\\n     -c \"CREATE TABLE tasks (id int PRIMARY KEY, status text NOT NULL, payload text) WITH (autovacuum_enabled = false)\" \\\n     -c \"INSERT INTO tasks SELECT g, CASE WHEN g % 200 = 0 THEN 'failed' ELSE 'done' END, md5(g::text)\n         FROM generate_series(1, 20000) g\" \\\n     -c \"CREATE INDEX tasks_status_idx ON tasks (status)\" -c \"ANALYZE tasks\"\n# A bulk import, after the last ANALYZE.\npsql -q -o /dev/null -c \"INSERT INTO tasks SELECT g, 'pending', md5(g::text) FROM generate_series(20001, 40000) g\" \\\n     -c \"SELECT pg_stat_force_next_flush()\"\n",
+      "setup_sha256": "65184833b3a8f7d2e44b86b1776f7cf88a68cee514e4952b0c14aab9a84030b0"
+    },
+    {
+      "id": "9a749e74-7c16-5b26-996b-801fa1f46c70",
+      "title": "Find the heaviest query",
+      "setup": "psql -q -o /dev/null \\\n     -c \"CREATE TABLE orders (id int PRIMARY KEY, customer_id int NOT NULL, email text NOT NULL,\n                              status text NOT NULL, total numeric(10,2) NOT NULL, note text)\" \\\n     -c \"INSERT INTO orders SELECT g, g % 5000, 'User' || (g % 5000) || '@example.com',\n                CASE WHEN g % 100 = 0 THEN 'pending' ELSE 'done' END, (g % 997) + 0.5, md5(g::text)\n         FROM generate_series(1, 50000) g\" \\\n     -c \"VACUUM ANALYZE orders\"\npsql -qc \"CREATE TABLE heaviest (query text)\"\n{ for i in $(seq 1 100); do echo \"SELECT 1 + 1;\"; done\n  for i in $(seq 1 30); do echo \"SELECT pg_sleep(0.05), 'checkout';\"; done\n  echo \"SELECT count(*) FROM pg_sleep(0.6);\"; } > \"$LAB/workload.sql\"\n",
+      "setup_sha256": "47facd86dc146debefb0500b0c198aa4668b809eb648cb5c02c1f5e798d42b20"
+    },
+    {
+      "id": "53fd424e-5ba2-58de-ad20-9e3302c26854",
+      "title": "Bring back one table",
+      "setup": "psql -q -c \"CREATE ROLE app LOGIN\" -c \"CREATE ROLE report LOGIN\" -c \"CREATE DATABASE shop OWNER app\"\npsql -q -d shop -U app -c \"CREATE TABLE customers (id int PRIMARY KEY, name text NOT NULL);\n    CREATE TABLE orders (id int PRIMARY KEY, customer_id int NOT NULL, total numeric(10,2) NOT NULL);\n    CREATE INDEX orders_customer_idx ON orders (customer_id);\n    INSERT INTO customers SELECT g, 'customer ' || g FROM generate_series(1, 100) g;\n    INSERT INTO orders SELECT g, g % 100 + 1, g * 1.5 FROM generate_series(1, 1000) g;\n    GRANT SELECT ON customers, orders TO report;\"\npg_dump -Fc -f \"$LAB/shop.dump\" shop\n# After the backup: new customers arrive, then the accident.\npsql -q -d shop -c \"INSERT INTO customers SELECT g, 'customer ' || g FROM generate_series(101, 110) g\"\npsql -q -d shop -c \"DROP TABLE orders\"\n",
+      "setup_sha256": "ca5450986f33779f9074dd8d6014ace64868e9088de01010a68a8a82b2c2736f"
+    },
+    {
+      "id": "47934146-4531-5143-afaf-c7cc31e3cf7e",
+      "title": "Restore a backup of unknown format",
+      "setup": "psql -q -c \"CREATE ROLE app LOGIN\" -c \"CREATE ROLE report LOGIN\" -c \"CREATE DATABASE shop OWNER app\"\npsql -q -d shop -U app -c \"CREATE TABLE customers (id int PRIMARY KEY, name text NOT NULL);\n    CREATE TABLE orders (id int PRIMARY KEY, customer_id int NOT NULL, total numeric(10,2) NOT NULL);\n    CREATE INDEX orders_customer_idx ON orders (customer_id);\n    INSERT INTO customers SELECT g, 'customer ' || g FROM generate_series(1, 100) g;\n    INSERT INTO orders SELECT g, g % 100 + 1, g * 1.5 FROM generate_series(1, 1000) g;\n    GRANT SELECT ON customers, orders TO report;\"\npg_dump -Fc -f \"$LAB/nightly\" shop\n# Changes made after the backup, which the restored copy must not contain.\npsql -q -d shop -c \"UPDATE orders SET total = 0 WHERE id <= 10\" -c \"DELETE FROM customers WHERE id > 90\"\n",
+      "setup_sha256": "a417fccf080f283d14371f97b6106c3eb7600f2dfc6a0116f99c026185372c78"
+    },
+    {
+      "id": "a9543fbc-551e-5447-a5f2-387a5de525f5",
+      "title": "Restore onto a server without the roles",
+      "setup": "psql -q -c \"CREATE ROLE app LOGIN\" -c \"CREATE ROLE report LOGIN\" -c \"CREATE DATABASE shop OWNER app\"\npsql -q -d shop -U app -c \"CREATE TABLE customers (id int PRIMARY KEY, name text NOT NULL);\n    CREATE TABLE orders (id int PRIMARY KEY, customer_id int NOT NULL, total numeric(10,2) NOT NULL);\n    CREATE INDEX orders_customer_idx ON orders (customer_id);\n    INSERT INTO customers SELECT g, 'customer ' || g FROM generate_series(1, 100) g;\n    INSERT INTO orders SELECT g, g % 100 + 1, g * 1.5 FROM generate_series(1, 1000) g;\n    GRANT SELECT ON customers, orders TO report;\"\npg_dumpall --globals-only -f \"$LAB/globals.sql\"\npg_dump -Fc -f \"$LAB/shop.dump\" shop\n# The server is lost. This one has no shop database and none of the application roles.\ndropdb shop\npsql -Atc \"SELECT format('DROP ROLE %I;', rolname) FROM pg_roles WHERE rolname IN ('app', 'report', 'readers')\" | psql -q\n",
+      "setup_sha256": "6c9f85c4f43e0376eadcb2f3438227e65da5ed9a6f028b12321ddff4c190cfd6"
+    },
+    {
+      "id": "306f5365-e27c-59de-8029-656f5b2ab71d",
+      "title": "Turn on WAL archiving",
+      "setup": "psql -q -c \"CREATE SCHEMA shop\" -c \"CREATE TABLE shop.orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL)\" \\\n     -c \"INSERT INTO shop.orders SELECT g, g * 10 FROM generate_series(1, 5) g\"\n# Someone started on archiving: the settings are written but the server was only reloaded.\npsql -q -c \"ALTER SYSTEM SET archive_mode = on\" -c \"ALTER SYSTEM SET archive_command = 'cp %p /mnt/wal_archive/%f'\"\npsql -qAtc \"SELECT pg_reload_conf()\" > /dev/null\n",
+      "setup_sha256": "29da806da9d52465d51cc8701ebef46d1db9ed50b4f019710439798ed105f8b6"
+    },
+    {
+      "id": "49c9c443-e615-5ed8-ad01-400059541f4d",
+      "title": "Take a base backup you can restore",
+      "setup": "psql -q -c \"CREATE SCHEMA shop\" -c \"CREATE TABLE shop.orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL)\" \\\n     -c \"INSERT INTO shop.orders SELECT g, g * 10 FROM generate_series(1, 5) g\"\nmkdir -p \"$LAB/archive\"\npsql -q -c \"ALTER SYSTEM SET archive_mode = on\" \\\n     -c \"ALTER SYSTEM SET archive_command = 'test ! -f $LAB/archive/%f && cp %p $LAB/archive/%f'\"\npg_ctl restart -D \"$PGDATA\" -m fast -w -l \"$LAB/server.log\" > /dev/null\n# An earlier backup attempt died halfway and left files behind.\nmkdir -p \"$LAB/backup/base\"\necho \"17\" > \"$LAB/backup/PG_VERSION\"\n",
+      "setup_sha256": "e548a963597b87737b635b0234a3c916d743957f991861a341291a23c5d74b25"
+    },
+    {
+      "id": "36e8fcee-e48f-519b-a69d-46cc442e6aa3",
+      "title": "Recover to a restore point",
+      "setup": "psql -q -c \"CREATE SCHEMA shop\" -c \"CREATE TABLE shop.orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL)\" \\\n     -c \"INSERT INTO shop.orders SELECT g, g * 10 FROM generate_series(1, 5) g\"\nmkdir -p \"$LAB/archive\"\npsql -q -c \"ALTER SYSTEM SET archive_mode = on\" \\\n     -c \"ALTER SYSTEM SET archive_command = 'test ! -f $LAB/archive/%f && cp %p $LAB/archive/%f'\"\npg_ctl restart -D \"$PGDATA\" -m fast -w -l \"$LAB/server.log\" > /dev/null\npg_basebackup -D \"$LAB/backup\" -c fast\n# Work done after the nightly base backup\npsql -qc \"INSERT INTO shop.orders VALUES (6, 60), (7, 70), (8, 80)\"\npsql -qAtc \"SELECT pg_create_restore_point('before_cleanup')\" > /dev/null\n# The accident, and work that happened after it\npsql -qc \"DELETE FROM shop.orders WHERE id > 2\"\npsql -qc \"INSERT INTO shop.orders VALUES (100, 1)\"\n",
+      "setup_sha256": "f5a92b3c81a4372ee219cde2b87af6ade13b20a9fd6bd9513b7fe3a0fcf70ff4"
+    },
+    {
+      "id": "06dfca8c-e2b4-5b0e-98da-08dc33744777",
+      "title": "Build a streaming replica",
+      "setup": "psql -q -c \"CREATE SCHEMA shop\" -c \"CREATE TABLE shop.orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL)\" \\\n     -c \"INSERT INTO shop.orders SELECT g, g * 10 FROM generate_series(1, 5) g\"\n",
+      "setup_sha256": "9024efebb6d9074e52477912db2e7578e31508e339e9c977075258eec79acf88"
+    },
+    {
+      "id": "cb29b9e5-3319-537f-a771-10a64717281f",
+      "title": "Drop the slot of a dead replica",
+      "setup": "psql -q -c \"CREATE SCHEMA shop\" -c \"CREATE TABLE shop.orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL)\" \\\n     -c \"INSERT INTO shop.orders SELECT g, g * 10 FROM generate_series(1, 5) g\"\npg_basebackup -D \"$LAB/replica\" -R -C -S replica_a -c fast -d \"application_name=replica_a\"\necho \"port = 5433\" >> \"$LAB/replica/postgresql.auto.conf\"\npg_ctl start -D \"$LAB/replica\" -w -l \"$LAB/replica.log\" > /dev/null\nuntil [ \"$(psql -Atc \"SELECT count(*) FROM pg_stat_replication WHERE application_name = 'replica_a'\n                      AND state = 'streaming' AND flush_lsn >= pg_current_wal_lsn()\")\" = 1 ]; do sleep 0.2; done\npsql -qAtc \"SELECT pg_create_physical_replication_slot('replica_b', true)\" > /dev/null\n# Some traffic while the dead replica's slot keeps its WAL\nfor i in 1 2 3; do\n    psql -qc \"INSERT INTO shop.orders SELECT g, 1 FROM generate_series(1000 * $i, 1000 * $i + 99) g\"\n    psql -qAtc \"SELECT pg_switch_wal()\" > /dev/null\ndone\npsql -qc \"CHECKPOINT\"\n",
+      "setup_sha256": "948b67d13f7cfe43c4f6bbb89c541d05e4fa0f8c9e7c46adc33aea944d7c9052"
+    },
+    {
+      "id": "696be67b-45ea-5af4-a238-61ec8e93a128",
+      "title": "Fail over to the replica",
+      "setup": "psql -q -c \"CREATE SCHEMA shop\" -c \"CREATE TABLE shop.orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL)\" \\\n     -c \"INSERT INTO shop.orders SELECT g, g * 10 FROM generate_series(1, 5) g\"\npg_basebackup -D \"$LAB/replica\" -R -C -S replica1 -c fast -d \"application_name=replica1\"\necho \"port = 5433\" >> \"$LAB/replica/postgresql.auto.conf\"\npg_ctl start -D \"$LAB/replica\" -w -l \"$LAB/replica.log\" > /dev/null\npsql -qc \"INSERT INTO shop.orders SELECT g, g FROM generate_series(100, 102) g\"\nuntil [ \"$(psql -Atc \"SELECT count(*) FROM pg_stat_replication WHERE application_name = 'replica1'\n                      AND state = 'streaming' AND flush_lsn >= pg_current_wal_lsn()\")\" = 1 ]; do sleep 0.2; done\n",
+      "setup_sha256": "3bd2c3f25408e0166f4cc7ef11926e10148cb96d050f230d1029962dd4e9219c"
+    },
+    {
+      "id": "1a4e0c2e-5326-5e21-864f-1f69fc869c0a",
+      "title": "Install pg_stat_statements properly",
+      "setup": "psql -q -c \"CREATE SCHEMA shop\" -c \"CREATE TABLE shop.orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL)\" \\\n     -c \"INSERT INTO shop.orders SELECT g, g * 10 FROM generate_series(1, 5) g\"\n",
+      "setup_sha256": "9024efebb6d9074e52477912db2e7578e31508e339e9c977075258eec79acf88"
+    },
+    {
+      "id": "23a12819-9612-50ed-9ac2-452bb7665fe9",
+      "title": "Repair a failed concurrent index build",
+      "setup": "psql -q -c \"CREATE SCHEMA shop\" -c \"CREATE TABLE shop.orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL)\" \\\n     -c \"INSERT INTO shop.orders SELECT g, g * 10 FROM generate_series(1, 5) g\"\npsql -q -c \"CREATE TABLE shop.customers (id int PRIMARY KEY, email text NOT NULL)\" \\\n     -c \"INSERT INTO shop.customers VALUES (1, 'ana@example.com'), (2, 'ben@example.com'), (3, 'ana@example.com'), (4, 'cy@example.com'), (5, 'ben@example.com')\"\n# The unique index build fails on duplicates and leaves an invalid index behind\npsql -qc \"CREATE UNIQUE INDEX CONCURRENTLY customers_email_key ON shop.customers (email)\" 2> /dev/null || true\n",
+      "setup_sha256": "3a0c807075c83c389a2ddd25bbf8c9f27c6935c39910eca113c18a167019d0e6"
+    },
+    {
+      "id": "b58f2106-2ad3-5c6a-8c1c-457e58f79835",
+      "title": "Bring extensions up to date",
+      "setup": "psql -q -c \"CREATE SCHEMA shop\" -c \"CREATE TABLE shop.orders (id int PRIMARY KEY, total numeric(10,2) NOT NULL)\" \\\n     -c \"INSERT INTO shop.orders SELECT g, g * 10 FROM generate_series(1, 5) g\"\npsql -qc \"CREATE EXTENSION hstore VERSION '1.6'\"\npsql -qc \"CREATE EXTENSION pg_trgm VERSION '1.4'\"\npsql -q -c \"CREATE TABLE shop.products (id int PRIMARY KEY, name text NOT NULL, attrs hstore)\" \\\n     -c \"CREATE INDEX products_name_trgm ON shop.products USING gin (name gin_trgm_ops)\" \\\n     -c \"INSERT INTO shop.products VALUES (1, 'blue mug', 'color=>blue'), (2, 'red mug', 'color=>red')\"\n",
+      "setup_sha256": "86a35f2098322f1fa979ed2e2154f46ea5e1e8f7c9a3adace7107a506c4db608"
+    },
+    {
+      "id": "118ae2fa-a385-5868-b7bc-e514ef5487d8",
+      "title": "Review the server settings",
+      "setup": "psql -q <<'SQL'\nCREATE SCHEMA shop;\nCREATE TABLE shop.customers (id int PRIMARY KEY, email text NOT NULL);\nCREATE TABLE shop.orders (id int PRIMARY KEY, customer_id int NOT NULL REFERENCES shop.customers, total numeric(10,2) NOT NULL);\nCREATE INDEX orders_customer_id_idx ON shop.orders (customer_id);\nCREATE TABLE shop.order_items (order_id int NOT NULL REFERENCES shop.orders, line int NOT NULL, sku text NOT NULL,\n                               PRIMARY KEY (order_id, line));\nCREATE TABLE shop.events (id int PRIMARY KEY, kind text NOT NULL);\nINSERT INTO shop.customers SELECT g, 'c' || g || '@example.com' FROM generate_series(1, 100) g;\nINSERT INTO shop.orders SELECT g, g % 100 + 1, g FROM generate_series(1, 1000) g;\nINSERT INTO shop.order_items SELECT g, l, 'sku' || l FROM generate_series(1, 1000) g, generate_series(1, 2) l;\nINSERT INTO shop.events SELECT g, 'view' FROM generate_series(1, 10000) g;\nSQL\npsql -qc \"ALTER SYSTEM SET autovacuum = 'off'\"\npsql -qc \"ALTER SYSTEM SET max_connections = '30'\"\npsql -qAtc \"SELECT pg_reload_conf()\" > /dev/null\n",
+      "setup_sha256": "942e1cec931651ef096021fd108e35ff88ea4ff8fc14df544e063dffbf2817af"
+    },
+    {
+      "id": "a3d1b85b-3c51-5db0-92d8-8752daef46af",
+      "title": "Review security",
+      "setup": "psql -q <<'SQL'\nCREATE SCHEMA shop;\nCREATE TABLE shop.customers (id int PRIMARY KEY, email text NOT NULL);\nCREATE TABLE shop.orders (id int PRIMARY KEY, customer_id int NOT NULL REFERENCES shop.customers, total numeric(10,2) NOT NULL);\nCREATE INDEX orders_customer_id_idx ON shop.orders (customer_id);\nCREATE TABLE shop.order_items (order_id int NOT NULL REFERENCES shop.orders, line int NOT NULL, sku text NOT NULL,\n                               PRIMARY KEY (order_id, line));\nCREATE TABLE shop.events (id int PRIMARY KEY, kind text NOT NULL);\nINSERT INTO shop.customers SELECT g, 'c' || g || '@example.com' FROM generate_series(1, 100) g;\nINSERT INTO shop.orders SELECT g, g % 100 + 1, g FROM generate_series(1, 1000) g;\nINSERT INTO shop.order_items SELECT g, l, 'sku' || l FROM generate_series(1, 1000) g, generate_series(1, 2) l;\nINSERT INTO shop.events SELECT g, 'view' FROM generate_series(1, 10000) g;\nSQL\npsql -qc \"ALTER SYSTEM SET password_encryption = 'md5'\"\npsql -qAtc \"SELECT pg_reload_conf()\" > /dev/null\npsql -qc \"CREATE ROLE app_user LOGIN SUPERUSER\"\npsql -qc \"CREATE ROLE report_user LOGIN PASSWORD 'report-2024'\"\npsql -qc \"GRANT USAGE ON SCHEMA shop TO report_user\" -c \"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA shop TO report_user\"\npsql -qc \"GRANT CREATE ON SCHEMA public TO PUBLIC\"\necho \"host all all 0.0.0.0/0 trust\" >> \"$PGDATA/pg_hba.conf\"\npsql -qAtc \"SELECT pg_reload_conf()\" > /dev/null\nsleep 1.1\n",
+      "setup_sha256": "99d1fd062bc95eb557edb4c19e07fd1bb91148eb1a93f33b3d2aa027f531d5bd"
+    },
+    {
+      "id": "510b8679-a797-5d79-92d2-aed1b684ad6f",
+      "title": "Review vacuum and table health",
+      "setup": "psql -q <<'SQL'\nCREATE SCHEMA shop;\nCREATE TABLE shop.customers (id int PRIMARY KEY, email text NOT NULL);\nCREATE TABLE shop.orders (id int PRIMARY KEY, customer_id int NOT NULL REFERENCES shop.customers, total numeric(10,2) NOT NULL);\nCREATE INDEX orders_customer_id_idx ON shop.orders (customer_id);\nCREATE TABLE shop.order_items (order_id int NOT NULL REFERENCES shop.orders, line int NOT NULL, sku text NOT NULL,\n                               PRIMARY KEY (order_id, line));\nCREATE TABLE shop.events (id int PRIMARY KEY, kind text NOT NULL);\nINSERT INTO shop.customers SELECT g, 'c' || g || '@example.com' FROM generate_series(1, 100) g;\nINSERT INTO shop.orders SELECT g, g % 100 + 1, g FROM generate_series(1, 1000) g;\nINSERT INTO shop.order_items SELECT g, l, 'sku' || l FROM generate_series(1, 1000) g, generate_series(1, 2) l;\nINSERT INTO shop.events SELECT g, 'view' FROM generate_series(1, 10000) g;\nSQL\nPGAPPNAME=nightly-batch nohup bash -c '(echo \"BEGIN; UPDATE shop.customers SET id = id WHERE id = 1;\"; sleep 300) | psql -q' > /dev/null 2>&1 &\nuntil [ \"$(psql -Atc \"SELECT count(*) FROM pg_stat_activity WHERE application_name = 'nightly-batch' AND state = 'idle in transaction'\")\" = 1 ]; do\n    sleep 0.1\ndone\npsql -qc \"ALTER TABLE shop.events SET (autovacuum_enabled = false)\"\npsql -qc \"DELETE FROM shop.events WHERE id % 2 = 0\"\npsql -qc \"DROP INDEX shop.orders_customer_id_idx\"\n",
+      "setup_sha256": "e02d58dfe529bfc723be515f6dda2746f1e1479c7f7effe5a9671f6c756a476d"
+    },
+    {
+      "id": "11c64554-6020-5b82-8e13-cb7f6161b077",
+      "title": "Repair stale reporting and spread reads across replicas",
+      "setup": "# dhimantai-compose-lab: read-scaling\n",
+      "setup_sha256": "72300274c23e23b52e93cf1693df743583adbe4166b6d15d8b25eb3a7bc66b62"
+    },
+    {
+      "id": "56864a3f-9314-5b2b-b751-ddcec7b864cf",
+      "title": "Restore durable commits with two standby candidates",
+      "setup": "# dhimantai-compose-lab: synchronous\n",
+      "setup_sha256": "792f716c34a4a8a964b187ace4a8694aa3d1364e8f5650e034cd73753ec86005"
+    },
+    {
+      "id": "4ca070cc-ab98-5a75-8709-2c4815046d06",
+      "title": "Choose the caught-up replica and preserve the remaining standby",
+      "setup": "# dhimantai-compose-lab: failover\n",
+      "setup_sha256": "cdf5b3c93219e35eaaad71ce393091588b839b88557be77540205b04d03944c1"
+    },
+    {
+      "id": "30d6c9b6-0eab-596e-a806-645a4ccc44e8",
+      "title": "Move a downstream replica behind a relay",
+      "setup": "# dhimantai-compose-lab: cascading\n",
+      "setup_sha256": "d7fc9b3311a4f16b969ad7b5de53d30cab4afab97f4ef047f4f55ed9bcfc0ef3"
+    }
+  ]
+}

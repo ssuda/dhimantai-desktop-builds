@@ -12,6 +12,11 @@ on:
         type: choice
         options: [all, windows-linux, windows-x64, windows-arm64, linux-x64, linux-arm64, macos-x64, macos-arm64]
         default: windows-linux
+      macos_signing:
+        description: macOS signing (ad-hoc is for internal previews only)
+        type: choice
+        options: [developer-id, ad-hoc]
+        default: developer-id
 permissions:
   contents: read
 jobs:
@@ -44,7 +49,7 @@ jobs:
           PY
   build:
     needs: matrix
-    timeout-minutes: 180
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.matrix.outputs.targets) }}
@@ -69,6 +74,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Check macOS signing configuration
+        if: runner.os == 'macOS' && inputs.macos_signing != 'ad-hoc'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: python dhimant-skilling/desktop/macos_credentials.py check
+      - name: Check desktop packaging
+        run: python -m unittest discover -s dhimant-skilling/desktop/tests -p 'test_*.py'
       - name: Native Linux prerequisites
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev libnss3 libgbm1 libasound2t64 libgtk-3-0t64 fakeroot dpkg-dev
@@ -84,12 +104,12 @@ jobs:
           sudo swapon /desktop-build.swap
           free -h
       - name: Build and check extension
-        working-directory: vscode/dhimantai-learning
+        working-directory: dhimant-skilling/dhimantai-learning
         run: |
           npm ci
           npm run compile
           node --test out/test/desktopRoom.test.js ../desktop/tests/*.test.mjs
-          npx --yes @vscode/vsce@3.2.1 package --no-dependencies --allow-missing-repository --baseContentUrl https://bitbucket.org/optficial/dhimantai/src/codex/question-bank-ux/vscode/dhimantai-learning/ --out desktop.vsix
+          npx --yes @vscode/vsce@3.2.1 package --no-dependencies --allow-missing-repository --baseContentUrl https://bitbucket.org/optficial/dhimantai/src/codex/question-bank-ux/dhimant-skilling/dhimantai-learning/ --out desktop.vsix
       - name: Prepare private client configuration
         env:
           CLIENT_ENVIRONMENT: ${{ inputs.environment }}
@@ -104,13 +124,38 @@ jobs:
           target=Path(os.environ['RUNNER_TEMP'])/'desktop-flutter.json'
           target.write_text(json.dumps({key:data[key] for key in ['LIVEKIT_TOKEN_URL','LIVEKIT_TOKEN_SECRET']}))
           PY
-      - name: Build native preview installer
+      - name: Build native desktop
         env:
-          CLIENT_ENVIRONMENT: ${{ inputs.environment }}
           TARGET_ARCH: ${{ matrix.arch }}
         run: |
           python -m pip install Pillow==11.3.0
-          python vscode/desktop/build.py --cache "$RUNNER_TEMP/desktop-build" --arch "$TARGET_ARCH" --vsix vscode/dhimantai-learning/desktop.vsix --flutter-env "$CLIENT_ENVIRONMENT=$RUNNER_TEMP/desktop-flutter.json" --out "$RUNNER_TEMP/desktop-artifacts" 2>&1 | tee "$RUNNER_TEMP/desktop-build.log"
+          python dhimant-skilling/desktop/build.py --stage prepare --cache "$RUNNER_TEMP/desktop-build" --arch "$TARGET_ARCH" 2>&1 | tee "$RUNNER_TEMP/desktop-build.log"
+          python dhimant-skilling/desktop/build.py --stage build --cache "$RUNNER_TEMP/desktop-build" --arch "$TARGET_ARCH" 2>&1 | tee -a "$RUNNER_TEMP/desktop-build.log"
+      - name: Import Developer ID and validate notarization credentials
+        if: runner.os == 'macOS' && inputs.macos_signing != 'ad-hoc'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: python dhimant-skilling/desktop/macos_credentials.py prepare
+      - name: Package and verify native installer
+        env:
+          CLIENT_ENVIRONMENT: ${{ inputs.environment }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          MACOS_SIGNING: ${{ inputs.macos_signing || 'developer-id' }}
+          MACOS_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && inputs.macos_signing != 'ad-hoc' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && inputs.macos_signing != 'ad-hoc' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          python dhimant-skilling/desktop/build.py --stage package --cache "$RUNNER_TEMP/desktop-build" --arch "$TARGET_ARCH" --vsix dhimant-skilling/dhimantai-learning/desktop.vsix --flutter-env "$CLIENT_ENVIRONMENT=$RUNNER_TEMP/desktop-flutter.json" --macos-signing "$MACOS_SIGNING" --out "$RUNNER_TEMP/desktop-artifacts" 2>&1 | tee -a "$RUNNER_TEMP/desktop-build.log"
+      - name: Remove temporary macOS signing keychain
+        if: always() && runner.os == 'macOS' && inputs.macos_signing != 'ad-hoc'
+        run: python dhimant-skilling/desktop/macos_credentials.py cleanup
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.runner }}-${{ matrix.arch }}
@@ -124,6 +169,13 @@ jobs:
           name: build-log-${{ matrix.id }}
           path: ${{ runner.temp }}/desktop-build.log
           retention-days: 7
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'macOS' && inputs.macos_signing != 'ad-hoc'
+        with:
+          name: notarization-${{ matrix.id }}
+          path: ${{ runner.temp }}/desktop-artifacts-notarization/
+          retention-days: 14
           if-no-files-found: ignore
       - name: Remove build configuration
         if: always()

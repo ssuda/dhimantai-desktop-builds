@@ -40,7 +40,7 @@ jobs:
         run: |
           $receipts = @(Get-ChildItem artifacts/dhimantAI-*.json)
           if ($receipts.Count -ne 1) { throw 'Expected one build receipt' }
-          python vscode/desktop/verify_windows_install.py $receipts[0].FullName
+          python dhimant-skilling/desktop/verify_windows_install.py $receipts[0].FullName
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:

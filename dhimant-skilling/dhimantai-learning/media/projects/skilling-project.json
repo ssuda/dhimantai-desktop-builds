@@ -1,0 +1,99 @@
+{
+  "id": "skilling-project",
+  "version": 1,
+  "mode": "guided",
+  "title": "Guided Skilling project",
+  "files": [
+    "README.md",
+    "EXPLANATION.md",
+    "src/README.md",
+    "tests/README.md"
+  ],
+  "steps": [
+    {
+      "id": "requirements",
+      "title": "Clarify requirements",
+      "goal": "Write inputs, outputs, constraints and measurable acceptance criteria in README.md.",
+      "opening": "Build evidence through a small attempt, inspect the result and explain what you learned.",
+      "task": "Write inputs, outputs, constraints and measurable acceptance criteria in README.md.",
+      "files": [
+        "README.md",
+        "EXPLANATION.md",
+        "src/README.md",
+        "tests/README.md"
+      ],
+      "check": "guided:inspect",
+      "expected": "Inspect the files and run your documented checks in the course terminal. File presence does not assess correctness.",
+      "hint": "Choose one observable acceptance criterion, predict its result and try the smallest implementation.",
+      "reflection": "What evidence supports your conclusion, and what remains untested?"
+    },
+    {
+      "id": "design",
+      "title": "Design and predict",
+      "goal": "Compare two designs and record predictions in EXPLANATION.md.",
+      "opening": "Build evidence through a small attempt, inspect the result and explain what you learned.",
+      "task": "Compare two designs and record predictions in EXPLANATION.md.",
+      "files": [
+        "README.md",
+        "EXPLANATION.md",
+        "src/README.md",
+        "tests/README.md"
+      ],
+      "check": "guided:inspect",
+      "expected": "Inspect the files and run your documented checks in the course terminal. File presence does not assess correctness.",
+      "hint": "Choose one observable acceptance criterion, predict its result and try the smallest implementation.",
+      "reflection": "What evidence supports your conclusion, and what remains untested?"
+    },
+    {
+      "id": "implement",
+      "title": "Build a working slice",
+      "goal": "Implement the smallest working path in src, run it in the course terminal and inspect its actual output.",
+      "opening": "Build evidence through a small attempt, inspect the result and explain what you learned.",
+      "task": "Implement the smallest working path in src, run it in the course terminal and inspect its actual output.",
+      "files": [
+        "README.md",
+        "EXPLANATION.md",
+        "src/README.md",
+        "tests/README.md"
+      ],
+      "check": "guided:inspect",
+      "expected": "Inspect the files and run your documented checks in the course terminal. File presence does not assess correctness.",
+      "hint": "Choose one observable acceptance criterion, predict its result and try the smallest implementation.",
+      "reflection": "What evidence supports your conclusion, and what remains untested?"
+    },
+    {
+      "id": "test",
+      "title": "Test and debug",
+      "goal": "Add normal, boundary and failure tests in tests. Reproduce a defect and verify its fix.",
+      "opening": "Build evidence through a small attempt, inspect the result and explain what you learned.",
+      "task": "Add normal, boundary and failure tests in tests. Reproduce a defect and verify its fix.",
+      "files": [
+        "README.md",
+        "EXPLANATION.md",
+        "src/README.md",
+        "tests/README.md"
+      ],
+      "check": "guided:inspect",
+      "expected": "Inspect the files and run your documented checks in the course terminal. File presence does not assess correctness.",
+      "hint": "Choose one observable acceptance criterion, predict its result and try the smallest implementation.",
+      "reflection": "What evidence supports your conclusion, and what remains untested?"
+    },
+    {
+      "id": "handoff",
+      "title": "Demonstrate and hand off",
+      "goal": "Document run and test commands, demonstrate the output, explain limitations and assistance, then request independent assessment from the course roadmap.",
+      "opening": "Build evidence through a small attempt, inspect the result and explain what you learned.",
+      "task": "Document run and test commands, demonstrate the output, explain limitations and assistance, then request independent assessment from the course roadmap.",
+      "files": [
+        "README.md",
+        "EXPLANATION.md",
+        "src/README.md",
+        "tests/README.md"
+      ],
+      "check": "guided:inspect",
+      "expected": "Inspect the files and run your documented checks in the course terminal. File presence does not assess correctness.",
+      "hint": "Choose one observable acceptance criterion, predict its result and try the smallest implementation.",
+      "reflection": "What evidence supports your conclusion, and what remains untested?"
+    }
+  ]
+}

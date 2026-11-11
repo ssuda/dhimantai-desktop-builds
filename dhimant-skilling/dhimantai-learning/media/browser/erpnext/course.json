@@ -1,0 +1,1115 @@
+{
+  "id": "erpnext-essentials",
+  "version": 3,
+  "title": "ERPNext Essentials",
+  "reference": "https://school.frappe.io/lms/courses/erpnext-training",
+  "lessons": [
+    {
+      "id": "company",
+      "title": "1. Find your company\u2019s accounts",
+      "doctype": "Company",
+      "scenario": "You have joined the back office of {{company}}, which buys Training Widgets, sells them and will assemble them into kits. Before recording anything, find where the company keeps track of who owes whom.",
+      "why": "A company owns its chart of accounts, warehouses and transactions. Its default receivable and payable accounts are where ERPNext records money customers owe you and money you owe suppliers. Every invoice later in this course posts to one of them.",
+      "steps": [
+        {
+          "field": "default_currency",
+          "value": "INR",
+          "text": "Find the default currency."
+        },
+        {
+          "field": "default_receivable_account",
+          "value": "Debtors - {{tag}}",
+          "text": "On the Accounts tab, find the default receivable account: money customers owe you.",
+          "decide": true
+        },
+        {
+          "field": "default_payable_account",
+          "value": "Creditors - {{tag}}",
+          "text": "Find the default payable account: money you owe suppliers.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "9d757088-f29f-5bbf-8b1f-5060a9166950",
+      "expected": {
+        "name": "{{company}}",
+        "default_currency": "INR",
+        "default_receivable_account": "Debtors - {{tag}}",
+        "default_payable_account": "Creditors - {{tag}}"
+      },
+      "explain": "In your own words: what is the difference between the receivable and the payable account, and which one will grow when you bill a customer?",
+      "record": "{{company}}",
+      "readOnly": true
+    },
+    {
+      "id": "customer",
+      "title": "2. Create a customer",
+      "doctype": "Customer",
+      "scenario": "A local business, Training Customer {{tag}}, in India, wants to buy from you regularly. Set them up once so every later document can point to them.",
+      "why": "A customer is reusable master data. Sales orders, deliveries, invoices and payments link to this one record instead of repeating the details.",
+      "steps": [
+        {
+          "field": "customer_name",
+          "value": "Training Customer {{tag}}",
+          "text": "Enter the customer name."
+        },
+        {
+          "field": "customer_type",
+          "value": "Company",
+          "text": "This customer is a business.",
+          "decide": true
+        },
+        {
+          "field": "customer_group",
+          "value": "Commercial",
+          "text": "Choose the group for a business customer.",
+          "decide": true
+        },
+        {
+          "field": "territory",
+          "value": "India",
+          "text": "Choose the territory the customer is in.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "cbb43e2b-a03d-5968-886a-459cb0a153ff",
+      "expected": {
+        "customer_name": "Training Customer {{tag}}",
+        "customer_type": "Company",
+        "customer_group": "Commercial",
+        "territory": "India"
+      },
+      "explain": "Why does ERPNext keep the customer as its own record instead of typing the name on each invoice? Give one thing that would go wrong otherwise."
+    },
+    {
+      "id": "supplier",
+      "title": "3. Create a supplier",
+      "doctype": "Supplier",
+      "scenario": "Training Supplier {{tag}}, a local company, will supply your widgets. Set them up as a supplier.",
+      "why": "A supplier is the party you buy from. Purchase orders, receipts, bills and payments link to it.",
+      "steps": [
+        {
+          "field": "supplier_name",
+          "value": "Training Supplier {{tag}}",
+          "text": "Enter the supplier name."
+        },
+        {
+          "field": "supplier_group",
+          "value": "Local",
+          "text": "This supplier is a local one.",
+          "decide": true
+        },
+        {
+          "field": "supplier_type",
+          "value": "Company",
+          "text": "The supplier is a business.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "ac11c078-af4b-54db-be86-79bff27dc427",
+      "expected": {
+        "supplier_name": "Training Supplier {{tag}}",
+        "supplier_type": "Company",
+        "supplier_group": "Local"
+      },
+      "explain": "If Training Supplier {{tag}} also bought from you one day, why would you still keep a separate customer record for them?"
+    },
+    {
+      "id": "item",
+      "title": "4. Create a stock item",
+      "doctype": "Item",
+      "scenario": "You will buy and sell Training Widgets, counted one by one and kept on your shelves. Create the item.",
+      "why": "An item code identifies what you buy, hold and sell. With Maintain Stock on, receipts and deliveries change warehouse quantities and stock value.",
+      "steps": [
+        {
+          "field": "item_code",
+          "value": "TRAINING-WIDGET-{{tag}}",
+          "text": "Use this unique item code."
+        },
+        {
+          "field": "item_name",
+          "value": "Training Widget",
+          "text": "Give the item a readable name."
+        },
+        {
+          "field": "item_group",
+          "value": "Products",
+          "text": "This is a finished product you sell.",
+          "decide": true
+        },
+        {
+          "field": "stock_uom",
+          "value": "Nos",
+          "text": "You count widgets one by one.",
+          "decide": true
+        },
+        {
+          "field": "is_stock_item",
+          "value": 1,
+          "text": "You keep widgets on a shelf, so track their stock.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "7a1b644f-ffdc-508f-9686-387cb9383a3f",
+      "expected": {
+        "item_code": "TRAINING-WIDGET-{{tag}}",
+        "item_name": "Training Widget",
+        "item_group": "Products",
+        "stock_uom": "Nos",
+        "is_stock_item": 1
+      },
+      "explain": "What changes because Maintain Stock is on? Name one document later in this course whose effect depends on it."
+    },
+    {
+      "id": "buying",
+      "title": "5. Order from your supplier",
+      "doctype": "Purchase Order",
+      "scenario": "Your shelves are empty. Order 5 widgets at INR 100 each from Training Supplier {{tag}}, needed today. Save, then Submit so the supplier can rely on it.",
+      "why": "A submitted purchase order is your commitment to buy. It does not change stock or accounts yet; it is what the delivery and the bill are checked against.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Check the order belongs to your company."
+        },
+        {
+          "field": "supplier",
+          "value": "Training Supplier {{tag}}",
+          "text": "Choose who you are buying from.",
+          "decide": true
+        },
+        {
+          "field": "schedule_date",
+          "value": "{{today}}",
+          "text": "You need the widgets today."
+        },
+        {
+          "field": "items",
+          "value": [
+            {
+              "item_code": "TRAINING-WIDGET-{{tag}}",
+              "qty": 5,
+              "rate": 100,
+              "schedule_date": "{{today}}"
+            }
+          ],
+          "text": "Order five widgets at the agreed price of INR 100 each.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "d5addd0b-cd88-5fe1-9add-5b5df5c2d574",
+      "expected": {
+        "company": "{{company}}",
+        "supplier": "Training Supplier {{tag}}",
+        "docstatus": 1,
+        "items": [
+          {
+            "item_code": "TRAINING-WIDGET-{{tag}}",
+            "qty": 5,
+            "rate": 100
+          }
+        ]
+      },
+      "explain": "You submitted the order. Has your stock or your accounting changed yet? Why or why not?",
+      "predict": {
+        "question": "After you submit this order, how many widgets will be in Stores?",
+        "options": [
+          "0",
+          "5"
+        ],
+        "answer": 0,
+        "evidence": {
+          "type": "stock",
+          "item": "TRAINING-WIDGET-{{tag}}",
+          "warehouse": "Stores - {{tag}}"
+        }
+      }
+    },
+    {
+      "id": "stock",
+      "title": "6. Receive what arrived",
+      "doctype": "Purchase Receipt",
+      "scenario": "The supplier\u2019s van arrives with only 4 widgets; one is back-ordered. On your purchase order choose Create \u2192 Purchase Receipt, record what actually arrived, then Submit.",
+      "why": "A purchase receipt records goods that physically arrived. Submitting it increases stock in the warehouse and updates how much of the order is received.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Check your company."
+        },
+        {
+          "field": "supplier",
+          "value": "Training Supplier {{tag}}",
+          "text": "The receipt came from your purchase order, so the supplier is already set. Check it."
+        },
+        {
+          "field": "items",
+          "value": [
+            {
+              "item_code": "TRAINING-WIDGET-{{tag}}",
+              "qty": 4,
+              "rate": 100,
+              "warehouse": "Stores - {{tag}}",
+              "purchase_order": "{{ref:buying}}"
+            }
+          ],
+          "text": "Set the received quantity to what actually arrived. Keep the link to your purchase order.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "bf8d17e3-d63c-5dd1-a7ac-73c354d3e195",
+      "expected": {
+        "company": "{{company}}",
+        "supplier": "Training Supplier {{tag}}",
+        "docstatus": 1,
+        "items": [
+          {
+            "item_code": "TRAINING-WIDGET-{{tag}}",
+            "qty": 4,
+            "warehouse": "Stores - {{tag}}",
+            "purchase_order": "{{ref:buying}}"
+          }
+        ]
+      },
+      "explain": "Your order now shows 80% received. What happens to the missing widget, and why did you record 4 instead of 5?",
+      "source": {
+        "task": "buying",
+        "action": "Purchase Receipt"
+      },
+      "also": [
+        {
+          "doctype": "Purchase Order",
+          "record": "{{ref:buying}}",
+          "expected": {
+            "per_received": 80
+          },
+          "text": "Your purchase order shows 80% received."
+        }
+      ],
+      "predict": {
+        "question": "After you submit this receipt, how many widgets will be in Stores?",
+        "options": [
+          "0",
+          "4",
+          "5"
+        ],
+        "answer": 1,
+        "evidence": {
+          "type": "stock",
+          "item": "TRAINING-WIDGET-{{tag}}",
+          "warehouse": "Stores - {{tag}}"
+        }
+      }
+    },
+    {
+      "id": "payables",
+      "title": "7. Record the supplier\u2019s bill",
+      "doctype": "Purchase Invoice",
+      "scenario": "The supplier\u2019s bill arrives for the widgets delivered. On your purchase receipt choose Create \u2192 Purchase Invoice, check it, then Submit.",
+      "why": "A submitted purchase invoice records what you owe. Created from the receipt, it bills only what arrived. It increases the payable account; stock already changed with the receipt.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Check your company."
+        },
+        {
+          "field": "supplier",
+          "value": "Training Supplier {{tag}}",
+          "text": "Check the supplier."
+        },
+        {
+          "field": "credit_to",
+          "value": "Creditors - {{tag}}",
+          "text": "Find the account this bill will add to: what you owe suppliers.",
+          "decide": true
+        },
+        {
+          "field": "items",
+          "value": [
+            {
+              "item_code": "TRAINING-WIDGET-{{tag}}",
+              "qty": 4,
+              "rate": 100,
+              "purchase_receipt": "{{ref:stock}}"
+            }
+          ],
+          "text": "Bill only the widgets you received, linked to your receipt.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "c5ea165b-696e-53a5-a262-095a4f035531",
+      "expected": {
+        "company": "{{company}}",
+        "supplier": "Training Supplier {{tag}}",
+        "credit_to": "Creditors - {{tag}}",
+        "docstatus": 1,
+        "items": [
+          {
+            "item_code": "TRAINING-WIDGET-{{tag}}",
+            "qty": 4,
+            "rate": 100,
+            "purchase_receipt": "{{ref:stock}}"
+          }
+        ]
+      },
+      "explain": "Submitting the bill changed your ledger. Which account went up, and why did the bill not change your stock?",
+      "source": {
+        "task": "stock",
+        "action": "Purchase Invoice"
+      },
+      "predict": {
+        "question": "Which account will this bill increase?",
+        "options": [
+          "Creditors - {{tag}}",
+          "Debtors - {{tag}}",
+          "Stock In Hand - {{tag}}"
+        ],
+        "answer": 0,
+        "evidence": {
+          "type": "ledger"
+        }
+      }
+    },
+    {
+      "id": "pay-supplier",
+      "title": "8. Pay the supplier",
+      "doctype": "Payment Entry",
+      "scenario": "Pay the supplier\u2019s bill in full, in cash, today. On your purchase invoice choose Create \u2192 Payment, check it, then Submit.",
+      "why": "A payment entry settles an invoice. Paying a supplier reduces cash and reduces what you owe; the bill then shows nothing outstanding.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Check your company."
+        },
+        {
+          "field": "payment_type",
+          "value": "Pay",
+          "text": "Money is leaving your business.",
+          "decide": true
+        },
+        {
+          "field": "party",
+          "value": "Training Supplier {{tag}}",
+          "text": "Check who you are paying."
+        },
+        {
+          "field": "paid_from",
+          "value": "Cash - {{tag}}",
+          "text": "You pay in cash. Check the account the money leaves.",
+          "decide": true
+        },
+        {
+          "field": "paid_amount",
+          "value": 400,
+          "text": "Pay the full bill.",
+          "decide": true
+        },
+        {
+          "field": "references",
+          "value": [
+            {
+              "reference_doctype": "Purchase Invoice",
+              "reference_name": "{{ref:payables}}",
+              "allocated_amount": 400
+            }
+          ],
+          "text": "The payment must settle your purchase invoice.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "1c220023-9a94-5cee-878c-4917c3dca599",
+      "expected": {
+        "company": "{{company}}",
+        "payment_type": "Pay",
+        "party": "Training Supplier {{tag}}",
+        "paid_from": "Cash - {{tag}}",
+        "paid_amount": 400,
+        "docstatus": 1,
+        "references": [
+          {
+            "reference_doctype": "Purchase Invoice",
+            "reference_name": "{{ref:payables}}",
+            "allocated_amount": 400
+          }
+        ]
+      },
+      "explain": "Which two accounts did this payment change, and in which direction?",
+      "source": {
+        "task": "payables",
+        "action": "Payment"
+      },
+      "also": [
+        {
+          "doctype": "Purchase Invoice",
+          "record": "{{ref:payables}}",
+          "expected": {
+            "outstanding_amount": 0
+          },
+          "text": "The supplier\u2019s bill shows nothing outstanding."
+        }
+      ],
+      "predict": {
+        "question": "Which accounts will this payment change?",
+        "options": [
+          "Cash goes down; Creditors goes down",
+          "Cash goes down; Creditors goes up",
+          "Cash goes up; Debtors goes down"
+        ],
+        "answer": 0,
+        "evidence": {
+          "type": "ledger"
+        }
+      }
+    },
+    {
+      "id": "selling",
+      "title": "9. Take a customer order",
+      "doctype": "Sales Order",
+      "scenario": "Training Customer {{tag}} phones: they want 2 widgets at INR 150 each, delivered today. Record the order, then Submit it.",
+      "why": "A submitted sales order is your commitment to the customer. It does not move stock or post to accounts; delivery and invoicing do.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Use your company."
+        },
+        {
+          "field": "customer",
+          "value": "Training Customer {{tag}}",
+          "text": "Choose who is ordering.",
+          "decide": true
+        },
+        {
+          "field": "delivery_date",
+          "value": "{{today}}",
+          "text": "The customer wants delivery today."
+        },
+        {
+          "field": "items",
+          "value": [
+            {
+              "item_code": "TRAINING-WIDGET-{{tag}}",
+              "qty": 2,
+              "rate": 150,
+              "delivery_date": "{{today}}"
+            }
+          ],
+          "text": "Enter what the customer ordered, at the agreed price.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "9872cbe4-db09-5acc-8567-f95ed49b544e",
+      "expected": {
+        "company": "{{company}}",
+        "customer": "Training Customer {{tag}}",
+        "docstatus": 1,
+        "items": [
+          {
+            "item_code": "TRAINING-WIDGET-{{tag}}",
+            "qty": 2,
+            "rate": 150
+          }
+        ]
+      },
+      "explain": "You have 4 widgets in stock. Did submitting this order reduce your stock? What does it change instead?",
+      "predict": {
+        "question": "After you submit this order, how many widgets will be in Stores?",
+        "options": [
+          "2",
+          "4"
+        ],
+        "answer": 1,
+        "evidence": {
+          "type": "stock",
+          "item": "TRAINING-WIDGET-{{tag}}",
+          "warehouse": "Stores - {{tag}}"
+        }
+      },
+      "guidance": "goals"
+    },
+    {
+      "id": "delivery",
+      "title": "10. Deliver the order",
+      "doctype": "Delivery Note",
+      "scenario": "Pack the 2 widgets from Stores. On your sales order choose Create \u2192 Delivery Note, check it, then Submit.",
+      "why": "A delivery note records goods leaving your warehouse. Submitting it reduces stock and marks the order as delivered.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Check your company."
+        },
+        {
+          "field": "customer",
+          "value": "Training Customer {{tag}}",
+          "text": "Check the customer."
+        },
+        {
+          "field": "items",
+          "value": [
+            {
+              "item_code": "TRAINING-WIDGET-{{tag}}",
+              "qty": 2,
+              "rate": 150,
+              "warehouse": "Stores - {{tag}}",
+              "against_sales_order": "{{ref:selling}}"
+            }
+          ],
+          "text": "Deliver what was ordered from Stores, linked to your sales order.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "6ae2c7de-19aa-551c-9cc2-e04ae2601bf2",
+      "expected": {
+        "company": "{{company}}",
+        "customer": "Training Customer {{tag}}",
+        "docstatus": 1,
+        "items": [
+          {
+            "item_code": "TRAINING-WIDGET-{{tag}}",
+            "qty": 2,
+            "warehouse": "Stores - {{tag}}",
+            "against_sales_order": "{{ref:selling}}"
+          }
+        ]
+      },
+      "explain": "Your stock went from 4 to 2. Which document caused that, and why has the customer not been billed yet?",
+      "source": {
+        "task": "selling",
+        "action": "Delivery Note"
+      },
+      "predict": {
+        "question": "After you submit this delivery, how many widgets will be in Stores?",
+        "options": [
+          "0",
+          "2",
+          "4"
+        ],
+        "answer": 1,
+        "evidence": {
+          "type": "stock",
+          "item": "TRAINING-WIDGET-{{tag}}",
+          "warehouse": "Stores - {{tag}}"
+        }
+      },
+      "guidance": "goals"
+    },
+    {
+      "id": "receivables",
+      "title": "11. Bill the customer",
+      "doctype": "Sales Invoice",
+      "scenario": "Bill the customer for the delivery. On your delivery note choose Create \u2192 Sales Invoice, check it, then Submit. Afterwards open View \u2192 Accounting Ledger on the invoice.",
+      "why": "A submitted sales invoice records what the customer owes: it debits the receivable account and credits income. Created from the delivery note, it bills what was delivered.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Check your company."
+        },
+        {
+          "field": "customer",
+          "value": "Training Customer {{tag}}",
+          "text": "Check the customer."
+        },
+        {
+          "field": "debit_to",
+          "value": "Debtors - {{tag}}",
+          "text": "Find the account this invoice will add to: what customers owe you.",
+          "decide": true
+        },
+        {
+          "field": "items",
+          "value": [
+            {
+              "item_code": "TRAINING-WIDGET-{{tag}}",
+              "qty": 2,
+              "rate": 150,
+              "delivery_note": "{{ref:delivery}}"
+            }
+          ],
+          "text": "Bill what you delivered, linked to your delivery note.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "76ca18e5-a13e-54c7-adc4-13b6769e8e87",
+      "expected": {
+        "company": "{{company}}",
+        "customer": "Training Customer {{tag}}",
+        "debit_to": "Debtors - {{tag}}",
+        "docstatus": 1,
+        "items": [
+          {
+            "item_code": "TRAINING-WIDGET-{{tag}}",
+            "qty": 2,
+            "rate": 150,
+            "delivery_note": "{{ref:delivery}}"
+          }
+        ]
+      },
+      "explain": "Look at the accounting ledger for your invoice. Which two accounts changed, by how much, and why?",
+      "source": {
+        "task": "delivery",
+        "action": "Sales Invoice"
+      },
+      "predict": {
+        "question": "What will this invoice post?",
+        "options": [
+          "Debit Debtors 300, credit Sales 300",
+          "Debit Sales 300, credit Debtors 300",
+          "Debit Cash 300, credit Sales 300"
+        ],
+        "answer": 0,
+        "evidence": {
+          "type": "ledger"
+        }
+      },
+      "guidance": "goals"
+    },
+    {
+      "id": "collect",
+      "title": "12. Collect the payment",
+      "doctype": "Payment Entry",
+      "scenario": "The customer pays the invoice in full, in cash. On your sales invoice choose Create \u2192 Payment, check it, then Submit.",
+      "why": "Receiving a payment increases cash and reduces what the customer owes; the invoice then shows nothing outstanding.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Check your company."
+        },
+        {
+          "field": "payment_type",
+          "value": "Receive",
+          "text": "Money is coming into your business.",
+          "decide": true
+        },
+        {
+          "field": "party",
+          "value": "Training Customer {{tag}}",
+          "text": "Check who is paying you."
+        },
+        {
+          "field": "paid_to",
+          "value": "Cash - {{tag}}",
+          "text": "The customer pays in cash. Check the account the money goes into.",
+          "decide": true
+        },
+        {
+          "field": "paid_amount",
+          "value": 300,
+          "text": "The customer pays the full invoice.",
+          "decide": true
+        },
+        {
+          "field": "references",
+          "value": [
+            {
+              "reference_doctype": "Sales Invoice",
+              "reference_name": "{{ref:receivables}}",
+              "allocated_amount": 300
+            }
+          ],
+          "text": "The payment must settle your sales invoice.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "7c43bdeb-c273-57e1-a94e-c24154adc64d",
+      "expected": {
+        "company": "{{company}}",
+        "payment_type": "Receive",
+        "party": "Training Customer {{tag}}",
+        "paid_to": "Cash - {{tag}}",
+        "paid_amount": 300,
+        "docstatus": 1,
+        "references": [
+          {
+            "reference_doctype": "Sales Invoice",
+            "reference_name": "{{ref:receivables}}",
+            "allocated_amount": 300
+          }
+        ]
+      },
+      "explain": "Compare this with paying your supplier. What is the same, and what runs in the opposite direction?",
+      "source": {
+        "task": "receivables",
+        "action": "Payment"
+      },
+      "also": [
+        {
+          "doctype": "Sales Invoice",
+          "record": "{{ref:receivables}}",
+          "expected": {
+            "outstanding_amount": 0
+          },
+          "text": "Your sales invoice shows nothing outstanding."
+        }
+      ],
+      "predict": {
+        "question": "Which accounts will this payment change?",
+        "options": [
+          "Cash goes up; Debtors goes down",
+          "Cash goes up; Sales goes up",
+          "Debtors goes up; Cash goes down"
+        ],
+        "answer": 0,
+        "evidence": {
+          "type": "ledger"
+        }
+      },
+      "guidance": "goals"
+    },
+    {
+      "id": "manufacturing",
+      "title": "13. Write the kit recipe",
+      "doctype": "BOM",
+      "scenario": "You will start assembling Training Kits from your widgets. Each kit needs 2 widgets. Write the recipe for your prepared Training Kit item, then Submit it.",
+      "why": "A bill of materials is a recipe: which components make one finished item. Submitting it makes it usable for production; it does not move stock.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Use your company."
+        },
+        {
+          "field": "item",
+          "value": "TRAINING-KIT-{{tag}}",
+          "text": "Choose your prepared Training Kit item."
+        },
+        {
+          "field": "quantity",
+          "value": 1,
+          "text": "The recipe makes one kit."
+        },
+        {
+          "field": "items",
+          "value": [
+            {
+              "item_code": "TRAINING-WIDGET-{{tag}}",
+              "qty": 2,
+              "rate": 100
+            }
+          ],
+          "text": "Enter the components one kit needs.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "58f9f6a4-d67e-53d7-960c-c3e3bc264a2f",
+      "expected": {
+        "company": "{{company}}",
+        "item": "TRAINING-KIT-{{tag}}",
+        "quantity": 1,
+        "docstatus": 1,
+        "items": [
+          {
+            "item_code": "TRAINING-WIDGET-{{tag}}",
+            "qty": 2
+          }
+        ]
+      },
+      "explain": "You have 2 widgets left. Did submitting the recipe use them? What would you need to do next to actually build a kit?",
+      "predict": {
+        "question": "After you submit this recipe, how many widgets will be in Stores?",
+        "options": [
+          "0",
+          "2"
+        ],
+        "answer": 1,
+        "evidence": {
+          "type": "stock",
+          "item": "TRAINING-WIDGET-{{tag}}",
+          "warehouse": "Stores - {{tag}}"
+        }
+      },
+      "guidance": "goals"
+    },
+    {
+      "id": "retail-customer",
+      "title": "14. Challenge: a new customer",
+      "doctype": "Customer",
+      "scenario": "Final challenge: from here the panel only describes the situation. Asha, who runs a small shop in India as an individual, wants to buy widgets. Set her up as the customer \u201cTraining Retail {{tag}}\u201d.",
+      "why": "Independent challenge. Set up master data from a description, without field guidance.",
+      "steps": [
+        {
+          "field": "customer_name",
+          "value": "Training Retail {{tag}}",
+          "text": "Customer name.",
+          "decide": true
+        },
+        {
+          "field": "customer_type",
+          "value": "Individual",
+          "text": "Customer type.",
+          "decide": true
+        },
+        {
+          "field": "customer_group",
+          "value": "Individual",
+          "text": "Customer group.",
+          "decide": true
+        },
+        {
+          "field": "territory",
+          "value": "India",
+          "text": "Territory.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "1a89b416-6b3d-5512-ad5b-de4affaec41b",
+      "expected": {
+        "customer_name": "Training Retail {{tag}}",
+        "customer_type": "Individual",
+        "customer_group": "Individual",
+        "territory": "India"
+      },
+      "explain": "Why did you choose that customer type and group for Asha, when the first customer was a Company and Commercial?",
+      "guidance": "none"
+    },
+    {
+      "id": "retail-order",
+      "title": "15. Challenge: take Asha\u2019s order",
+      "doctype": "Sales Order",
+      "scenario": "Asha wants your last 2 widgets at INR 160 each, delivered today. Record her order so it is confirmed.",
+      "why": "Independent challenge. Record a customer commitment.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Company."
+        },
+        {
+          "field": "customer",
+          "value": "Training Retail {{tag}}",
+          "text": "Customer.",
+          "decide": true
+        },
+        {
+          "field": "delivery_date",
+          "value": "{{today}}",
+          "text": "Delivery date."
+        },
+        {
+          "field": "items",
+          "value": [
+            {
+              "item_code": "TRAINING-WIDGET-{{tag}}",
+              "qty": 2,
+              "rate": 160,
+              "delivery_date": "{{today}}"
+            }
+          ],
+          "text": "Items.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "7a591717-6f9d-58fe-8823-7d266711aaf8",
+      "expected": {
+        "company": "{{company}}",
+        "customer": "Training Retail {{tag}}",
+        "docstatus": 1,
+        "items": [
+          {
+            "item_code": "TRAINING-WIDGET-{{tag}}",
+            "qty": 2,
+            "rate": 160
+          }
+        ]
+      },
+      "explain": "Asha pays INR 160 a widget; your first customer paid INR 150. Where in ERPNext does that difference show up, and why is the order the right place to set it?",
+      "guidance": "none"
+    },
+    {
+      "id": "retail-delivery",
+      "title": "16. Challenge: deliver to Asha",
+      "doctype": "Delivery Note",
+      "scenario": "Send Asha her 2 widgets from Stores today, against her order.",
+      "why": "Independent challenge. Move the goods and keep the documents linked.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Company."
+        },
+        {
+          "field": "customer",
+          "value": "Training Retail {{tag}}",
+          "text": "Customer."
+        },
+        {
+          "field": "items",
+          "value": [
+            {
+              "item_code": "TRAINING-WIDGET-{{tag}}",
+              "qty": 2,
+              "rate": 160,
+              "warehouse": "Stores - {{tag}}",
+              "against_sales_order": "{{ref:retail-order}}"
+            }
+          ],
+          "text": "Items.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "5fb438b7-8a87-5e9f-a17b-662ac6a9abae",
+      "expected": {
+        "company": "{{company}}",
+        "customer": "Training Retail {{tag}}",
+        "docstatus": 1,
+        "items": [
+          {
+            "item_code": "TRAINING-WIDGET-{{tag}}",
+            "qty": 2,
+            "warehouse": "Stores - {{tag}}",
+            "against_sales_order": "{{ref:retail-order}}"
+          }
+        ]
+      },
+      "explain": "How many widgets are in Stores now, and which of your documents explains each change since the start of the course?",
+      "source": {
+        "task": "retail-order",
+        "action": "Delivery Note"
+      },
+      "guidance": "none"
+    },
+    {
+      "id": "retail-invoice",
+      "title": "17. Challenge: bill Asha",
+      "doctype": "Sales Invoice",
+      "scenario": "Bill Asha for exactly what you delivered.",
+      "why": "Independent challenge. Record what the customer owes for what was delivered.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Company."
+        },
+        {
+          "field": "customer",
+          "value": "Training Retail {{tag}}",
+          "text": "Customer."
+        },
+        {
+          "field": "debit_to",
+          "value": "Debtors - {{tag}}",
+          "text": "Receivable account.",
+          "decide": true
+        },
+        {
+          "field": "items",
+          "value": [
+            {
+              "item_code": "TRAINING-WIDGET-{{tag}}",
+              "qty": 2,
+              "rate": 160,
+              "delivery_note": "{{ref:retail-delivery}}"
+            }
+          ],
+          "text": "Items.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "25593010-74f2-58da-bb3c-2629140d30fb",
+      "expected": {
+        "company": "{{company}}",
+        "customer": "Training Retail {{tag}}",
+        "debit_to": "Debtors - {{tag}}",
+        "docstatus": 1,
+        "items": [
+          {
+            "item_code": "TRAINING-WIDGET-{{tag}}",
+            "qty": 2,
+            "rate": 160,
+            "delivery_note": "{{ref:retail-delivery}}"
+          }
+        ]
+      },
+      "explain": "Read the accounting ledger for this invoice. What did it post, and how is it different from your first sales invoice?",
+      "source": {
+        "task": "retail-delivery",
+        "action": "Sales Invoice"
+      },
+      "guidance": "none"
+    },
+    {
+      "id": "retail-payment",
+      "title": "18. Challenge: collect from Asha",
+      "doctype": "Payment Entry",
+      "scenario": "Asha pays her invoice in full, in cash, today. Record it so nothing is left outstanding.",
+      "why": "Independent challenge. Settle the invoice.",
+      "steps": [
+        {
+          "field": "company",
+          "value": "{{company}}",
+          "text": "Company."
+        },
+        {
+          "field": "payment_type",
+          "value": "Receive",
+          "text": "Payment type.",
+          "decide": true
+        },
+        {
+          "field": "party",
+          "value": "Training Retail {{tag}}",
+          "text": "Party."
+        },
+        {
+          "field": "paid_to",
+          "value": "Cash - {{tag}}",
+          "text": "Account paid to.",
+          "decide": true
+        },
+        {
+          "field": "paid_amount",
+          "value": 320,
+          "text": "Amount.",
+          "decide": true
+        },
+        {
+          "field": "references",
+          "value": [
+            {
+              "reference_doctype": "Sales Invoice",
+              "reference_name": "{{ref:retail-invoice}}",
+              "allocated_amount": 320
+            }
+          ],
+          "text": "What it settles.",
+          "decide": true
+        }
+      ],
+      "instructorChapter": "c5bffb38-e1c2-5126-97f5-8897c560c016",
+      "expected": {
+        "company": "{{company}}",
+        "payment_type": "Receive",
+        "party": "Training Retail {{tag}}",
+        "paid_to": "Cash - {{tag}}",
+        "paid_amount": 320,
+        "docstatus": 1,
+        "references": [
+          {
+            "reference_doctype": "Sales Invoice",
+            "reference_name": "{{ref:retail-invoice}}",
+            "allocated_amount": 320
+          }
+        ]
+      },
+      "explain": "Trace Asha\u2019s sale through your records: which documents changed stock, which changed the ledger, and what is outstanding now?",
+      "source": {
+        "task": "retail-invoice",
+        "action": "Payment"
+      },
+      "guidance": "none",
+      "also": [
+        {
+          "doctype": "Sales Invoice",
+          "record": "{{ref:retail-invoice}}",
+          "expected": {
+            "outstanding_amount": 0
+          },
+          "text": "Asha\u2019s invoice shows nothing outstanding."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,357 @@
+{
+  "name": "dhimantai-learning",
+  "displayName": "dhimantAI Learning",
+  "description": "Learn in VS Code with Course Catalog, Instructor, Study, Doubt Solver, and coding practice. Write, debug, and test here; run projects and tests in the course container.",
+  "version": "0.39.17",
+  "publisher": "optficial",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "Education"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onUri",
+    "workspaceContains:.dhimantai.json",
+    "workspaceContains:.dhimantai-project.json",
+    "onNotebook:jupyter-notebook",
+    "onTerminalProfile:dhimantai.courseShell"
+  ],
+  "contributes": {
+    "terminal": {
+      "profiles": [
+        { "id": "dhimantai.courseShell", "title": "dhimantAI Course Container", "icon": "terminal" }
+      ]
+    },
+    "configurationDefaults": {
+      "chat.disableAIFeatures": true,
+      "editor.tabCompletion": "on",
+      "terminal.integrated.defaultProfile.windows": "dhimantAI Course Container",
+      "terminal.integrated.defaultProfile.osx": "dhimantAI Course Container",
+      "terminal.integrated.defaultProfile.linux": "dhimantAI Course Container"
+    },
+    "commands": [
+      { "command": "dhimantai.projectPreview", "title": "Preview Running Project", "category": "dhimantAI" },
+      { "command": "dhimantai.reviewReadiness", "title": "Review Assigned Readiness Assessments", "category": "dhimantAI" },
+      { "command": "dhimantai.openBrowserCourse", "title": "Open ERPNext Training", "category": "dhimantAI" },
+      { "command": "dhimantai.courseGrade", "title": "Course Grade & Certificate", "category": "dhimantAI", "icon": "$(mortar-board)" },
+      { "command": "dhimantai.searchCommands", "title": "Search Commands", "category": "dhimantAI" },
+      { "command": "dhimantai.gitHub", "title": "Git & GitHub", "category": "dhimantAI", "icon": "$(source-control)" },
+      { "command": "dhimantai.desktopWelcome", "title": "Open Desktop Welcome", "category": "dhimantAI" },
+      { "command": "dhimantai.openStudy", "title": "Open Study Reader", "category": "dhimantAI", "icon": "$(book)" },
+      { "command": "dhimantai.cellInput", "title": "Send input to running cell", "category": "dhimantAI" },
+      { "command": "dhimantai.practiceHistory", "title": "Saved Practice Notebooks", "category": "dhimantAI", "icon": "$(history)" },
+      { "command": "dhimantai.exportPracticeRecord", "title": "Export My Practice Record", "category": "dhimantAI" },
+      { "command": "dhimantai.startCapstone", "title": "Start a Course Project", "category": "dhimantAI" },
+      { "command": "dhimantai.openProjectCoach", "title": "Open Project Coach", "category": "dhimantAI" },
+      { "command": "dhimantai.pricing", "title": "Pricing & Purchases", "category": "dhimantAI", "icon": "$(credit-card)" },
+      { "command": "dhimantai.newNotebook", "title": "New Course Notebook", "category": "dhimantAI", "icon": "$(new-file)" },
+      { "command": "dhimantai.courseDockerfile", "title": "Open Course Dockerfile", "category": "dhimantAI" },
+      { "command": "dhimantai.courseTerminal", "title": "Open Course Terminal", "category": "dhimantAI" },
+      { "command": "dhimantai.openCopyInCourse", "title": "Open Copy in Course", "category": "dhimantAI" },
+      { "command": "dhimantai.openCourse", "title": "Open Course Runtime", "icon": "$(play)", "category": "dhimantAI" },
+      { "command": "dhimantai.openCourseColab", "title": "Open Course with Colab Runtime", "icon": "$(cloud)", "category": "dhimantAI" },
+      { "command": "dhimantai.useColabKernel", "title": "Use Colab Kernel", "icon": "$(cloud)", "category": "dhimantAI" },
+      { "command": "dhimantai.openDoubtSolver", "title": "Open Doubt Solver", "category": "dhimantAI", "icon": "$(question)" },
+      { "command": "dhimantai.openLearningRoom", "title": "Open Instructor Notebook", "category": "dhimantAI", "icon": "$(book)" },
+      { "command": "dhimantai.suggestNextLine", "title": "Suggest Next Line", "category": "dhimantAI" },
+      { "command": "dhimantai.acceptNextLine", "title": "Insert Suggested Line", "category": "dhimantAI", "enablement": "dhimantai.nextLineVisible" },
+      { "command": "dhimantai.dismissNextLine", "title": "Dismiss Suggested Line", "category": "dhimantAI", "enablement": "dhimantai.nextLineVisible" },
+      { "command": "dhimantai.browsePractice", "title": "Browse Practice Courses", "category": "dhimantAI" },
+      { "command": "dhimantai.courseCatalog", "title": "Open Course Catalog", "category": "dhimantAI", "icon": "$(library)" },
+      { "command": "dhimantai.generateExercise", "title": "Generate a Coding Exercise", "category": "dhimantAI", "icon": "$(add)" },
+      { "command": "dhimantai.refreshPractice", "title": "Refresh Practice", "category": "dhimantAI", "icon": "$(refresh)" },
+      { "command": "dhimantai.practice.stuck", "title": "Stuck? Get the next help step", "category": "dhimantAI", "icon": "$(question)" },
+      { "command": "dhimantai.practice.predict", "title": "Predict the output", "category": "dhimantAI", "icon": "$(eye)" },
+      { "command": "dhimantai.practice.check", "title": "Check sample tests", "category": "dhimantAI", "icon": "$(beaker)" },
+      { "command": "dhimantai.practice.grade", "title": "Submit for grading", "category": "dhimantAI", "icon": "$(verified)" },
+      { "command": "dhimantai.practice.smallerStep", "title": "Try a smaller step", "category": "dhimantAI", "icon": "$(debug-step-into)" },
+      { "command": "dhimantai.practice.reflect", "title": "Explain my solution", "category": "dhimantAI", "icon": "$(lightbulb)" },
+      { "command": "dhimantai.practice.ask", "title": "Ask Instructor", "category": "dhimantAI", "icon": "$(comment-discussion)" },
+      { "command": "dhimantai.practice.input", "title": "Choose Run arguments and input", "category": "dhimantAI", "icon": "$(terminal)" },
+      { "command": "dhimantai.practice.submit", "title": "Review my code", "category": "dhimantAI", "icon": "$(pass)" },
+      {
+        "command": "dhimantai.checkForUpdates",
+        "title": "Check for Extension Updates",
+        "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.installUpdate",
+        "title": "Install Extension Update",
+        "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.updateSettings",
+        "title": "Extension Update Settings",
+        "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.downloadUpdate",
+        "title": "Download Extension Update (VSIX)",
+        "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.signIn",
+        "title": "Sign In",
+        "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.signUp",
+        "title": "Sign Up",
+        "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.signOut",
+        "title": "Sign Out",
+        "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.openExercise",
+        "title": "Open Exercise",
+        "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.askCoach",
+        "title": "Ask about This Notebook",
+        "category": "dhimantAI",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "dhimantai.submitNotebook",
+        "title": "Legacy notebook transfer (retired)",
+        "category": "dhimantAI",
+        "enablement": "false",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "dhimantai.sendNotebookToSession",
+        "title": "Legacy notebook transfer (retired)",
+        "category": "dhimantAI",
+        "enablement": "false",
+        "icon": "$(send)"
+      },
+      {
+        "command": "dhimantai.toggleAI",
+        "title": "Toggle AI Assistance",
+        "category": "dhimantAI"
+      }
+    ],
+    "menus": {
+      "view/item/context": [
+        { "command": "dhimantai.openCourse", "when": "view == dhimantai.practice && viewItem =~ /^dhimantaiCourse/", "group": "inline" },
+        { "command": "dhimantai.openCourse", "when": "view == dhimantai.practice && viewItem =~ /^dhimantaiCourse/", "group": "navigation" },
+        { "command": "dhimantai.openCourseColab", "when": "view == dhimantai.practice && viewItem == dhimantaiCourseColab", "group": "inline" },
+        { "command": "dhimantai.openCourseColab", "when": "view == dhimantai.practice && viewItem == dhimantaiCourseColab", "group": "navigation" }
+      ],
+      "view/title": [
+        { "command": "dhimantai.openDoubtSolver", "when": "view == dhimantai.practice", "group": "learning@1" },
+        { "command": "dhimantai.practiceHistory", "when": "view == dhimantai.practice", "group": "navigation@3" },
+        { "command": "dhimantai.courseCatalog", "when": "view == dhimantai.practice", "group": "navigation@1" },
+        { "command": "dhimantai.openLearningRoom", "when": "view == dhimantai.practice", "group": "navigation@2" },
+        { "command": "dhimantai.refreshPractice", "when": "view == dhimantai.practice", "group": "navigation" }
+      ],
+      "editor/title": [
+      ],
+      "editor/context": [
+        { "command": "dhimantai.suggestNextLine", "when": "notebookCellType == code", "group": "dhimantai@1" }
+      ],
+      "commandPalette": [
+        { "command": "dhimantai.desktopWelcome", "when": "false" },
+        { "command": "dhimantai.openCopyInCourse", "when": "false" },
+        { "command": "dhimantai.openCourseColab", "when": "false" },
+        { "command": "dhimantai.useColabKernel", "when": "false" },
+        { "command": "dhimantai.suggestNextLine", "when": "false" },
+        { "command": "dhimantai.acceptNextLine", "when": "false" },
+        { "command": "dhimantai.dismissNextLine", "when": "false" },
+        { "command": "dhimantai.browsePractice", "when": "false" },
+        { "command": "dhimantai.generateExercise", "when": "false" },
+        { "command": "dhimantai.refreshPractice", "when": "false" },
+        { "command": "dhimantai.installUpdate", "when": "false" },
+        { "command": "dhimantai.updateSettings", "when": "false" },
+        { "command": "dhimantai.downloadUpdate", "when": "false" },
+        { "command": "dhimantai.openExercise", "when": "false" },
+        { "command": "dhimantai.askCoach", "when": "false" },
+        { "command": "dhimantai.submitNotebook", "when": "false" },
+        { "command": "dhimantai.sendNotebookToSession", "when": "false" },
+        { "command": "dhimantai.toggleAI", "when": "false" },
+        { "command": "dhimantai.pricing", "when": "false" },
+        { "command":"dhimantai.openCourse", "when":"false" },
+        { "command": "dhimantai.practice.stuck", "when": "dhimantai.practiceNotebook" },
+        { "command": "dhimantai.practice.predict", "when": "dhimantai.practiceNotebook" },
+        { "command": "dhimantai.practice.check", "when": "dhimantai.practiceNotebook" },
+        { "command": "dhimantai.practice.grade", "when": "dhimantai.practiceNotebook" },
+        { "command": "dhimantai.practice.smallerStep", "when": "dhimantai.practiceNotebook" },
+        { "command": "dhimantai.practice.reflect", "when": "dhimantai.practiceNotebook" },
+        { "command": "dhimantai.practice.ask", "when": "dhimantai.practiceNotebook" },
+        { "command": "dhimantai.practice.input", "when": "dhimantai.practiceNotebook" },
+        { "command": "dhimantai.practice.submit", "when": "dhimantai.practiceNotebook" }
+      ],
+      "notebook/toolbar": [
+        { "command": "dhimantai.practice.grade", "when": "notebookType == jupyter-notebook && dhimantai.practiceNotebook", "group": "navigation@1" },
+        { "command": "dhimantai.useColabKernel", "when": "notebookType == jupyter-notebook && !dhimantai.practiceNotebook", "group": "navigation" },
+        { "command": "dhimantai.openCopyInCourse", "when": "notebookType == jupyter-notebook && !dhimantai.practiceNotebook", "group": "navigation" },
+        {
+          "command": "dhimantai.askCoach",
+          "when": "notebookType == jupyter-notebook && !dhimantai.practiceNotebook",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      { "command": "dhimantai.acceptNextLine", "key": "tab", "when": "dhimantai.nextLineVisible && editorTextFocus && !editorTabMovesFocus" },
+      { "command": "dhimantai.dismissNextLine", "key": "escape", "when": "dhimantai.nextLineVisible && editorTextFocus" },
+      {
+        "command": "dhimantai.askCoach",
+        "key": "ctrl+alt+h",
+        "mac": "cmd+alt+h",
+        "when": "notebookType == jupyter-notebook"
+      }
+    ],
+    "configuration": {
+      "title": "dhimantAI",
+      "properties": {
+        "dhimantai.autoUpdate": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "markdownDescription": "Download, verify and install learning updates when the app starts. Updates activate on your next normal app restart without interrupting a lesson. Enabled by default in dhimantAI desktop; explicitly switch this off to opt out. Separate from Marketplace updates. A failed automatic installation can be retried with Install Extension Update."
+        },
+        "dhimantai.environment": {
+          "type": "string",
+          "enum": [
+            "production",
+            "staging",
+            "development",
+            "local"
+          ],
+          "default": "production",
+          "description": "Which dhimantAI service to use. Exercises and progress are shared with the app for the same environment."
+        },
+        "dhimantai.exercisesFolder": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Parent folder for local course files and exercises. Defaults to `~/dhimantAI`."
+        },
+        "dhimantai.practiceEditor": {
+          "type": "string",
+          "enum": ["notebook", "panel"],
+          "enumDescriptions": [
+            "A real Jupyter notebook. Official language extensions give completion and errors; help, sample tests and Instructor replies stay in the notebook.",
+            "Shared learning notebook with Instructor conversation, code, attachments and audio in one place."
+          ],
+          "default": "panel",
+          "scope": "window",
+          "markdownDescription": "Where Practice tasks open."
+        },
+        "dhimantai.aiAssistance": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "markdownDescription": "Enable AI assistance during practice. Off disables chat, hints, code suggestions, automatic nudges and debugger coaching. Workspace assessment policy always takes precedence."
+        }
+      }
+    },
+    "taskDefinitions": [
+      {
+        "type": "dhimantai",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "build"
+          }
+        }
+      }
+    ],
+    "viewsContainers": {
+      "secondarySidebar": [{"id":"dhimantai-coach","title":"dhimantAI Coach","icon":"media/icon.svg"}]
+    },
+    "views": {
+      "dhimantai-coach": [{"id":"dhimantai.coachView","name":"dhimantAI Coach","type":"webview","when":"dhimantai.nativeCoach && dhimantai.legacyCoachOpen && dhimantai.projectOpen"}],
+      "explorer": [
+        { "id": "dhimantai.learningNavigation", "name": "Learn", "when": "dhimantai.customDesktop", "visibility": "visible" },
+        {
+          "id": "dhimantai.practice",
+          "name": "DhimantAI Practice",
+          "icon": "media/icon.svg",
+          "visibility": "visible"
+        },
+        {
+          "id": "dhimantai.notebookSubmission",
+          "name": "DhimantAI Notebook",
+          "icon": "media/icon.svg",
+          "when": "dhimantai.linkedNotebook",
+          "order": 0,
+          "visibility": "visible"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "dhimantai.notebookSubmission",
+        "contents": "Run All uses your selected VS Code kernel. Save your notebook on this computer.\n\nNo open DhimantAI page is needed. Code, outputs and run history are not stored on the DhimantAI server.\n\nReturn to your DhimantAI question and attach the file for live feedback when ready. Local output is not a verified assessment."
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p . && tsc -p tsconfig.webview.json && node scripts/bundle-audio.mjs",
+    "watch": "node scripts/bundle-audio.mjs && tsc -w -p .",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "test:signup": "npm run compile && node out/test/integration/runTest.js suiteSignup",
+    "test:b2c": "npm run compile && node out/test/integration/runTest.js suiteB2c",
+    "test:colab": "npm run compile && node out/test/integration/runTest.js suiteColab",
+    "test:copilot": "npm run compile && node out/test/integration/runTest.js suiteCopilotPolicy",
+    "package": "npm run compile && npx --yes @vscode/vsce@3.2.1 package --no-dependencies --allow-missing-repository --baseContentUrl https://bitbucket.org/optficial/dhimantai/src/codex/question-bank-ux/dhimant-skilling/dhimantai-learning/",
+    "test:courses": "npm run compile && node out/test/integration/runTest.js suiteCourseRuntimes",
+    "test:vscode": "npm run compile && node out/test/integration/runTest.js suiteExternalProgramming",
+    "test:coach-chat": "npm run compile && node out/test/integration/runTest.js suiteNotebookCoachHistory",
+    "test:coach-history": "npm run compile && node out/test/integration/runTest.js suiteNotebookCoachHistory",
+    "test:projects": "npm run compile && node out/test/integration/runTest.js suiteProjectCoach"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-cpp": "^6.0.3",
+    "@codemirror/lang-java": "^6.0.2",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/lang-rust": "^6.0.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/legacy-modes": "^6.5.5",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "@lezer/highlight": "^1.2.5",
+    "@types/jsdom": "^21.1.7",
+    "@types/markdown-it": "14.1.2",
+    "@types/node": "^20.14.0",
+    "@types/vscode": "~1.93.0",
+    "@vscode/markdown-it-katex": "1.1.2",
+    "@vscode/test-electron": "^2.4.1",
+    "codemirror": "^6.0.2",
+    "esbuild": "0.28.2",
+    "jsdom": "^25.0.1",
+    "livekit-client": "2.23.0",
+    "markdown-it": "14.2.0",
+    "pdfjs-dist": "6.5.438",
+    "typescript": "~5.5.4"
+  },
+  "extensionPack": [
+    "mads-hartmann.bash-ide-vscode",
+    "ms-python.python",
+    "ms-toolsai.jupyter",
+    "ms-ossdata.vscode-pgsql",
+    "ms-python.debugpy",
+    "ms-vscode.cpptools",
+    "vadimcn.vscode-lldb",
+    "rust-lang.rust-analyzer",
+    "golang.go",
+    "redhat.java",
+    "vscjava.vscode-java-debug"
+  ]
+}

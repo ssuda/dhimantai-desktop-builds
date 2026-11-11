@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "course": "cyber-security",
+  "manifest_sha256": "900ce00048bfaa13c7ea05dbbd535826e43fb834f6423be29b0d369ba81183fe",
+  "scenarios": [
+    {
+      "id": "a39f573d-dcef-5f8f-b9f6-e72bf16c58ad",
+      "title": "Close the head-office share without breaking it",
+      "setup": "seclab setup share-permissions\n",
+      "setup_sha256": "2d57040177df15fd3ab292b37093727e485b5bb1bbf96998e8879aea5d766fa6"
+    },
+    {
+      "id": "67cb821d-952c-522d-9d93-137e1778b3b6",
+      "title": "Audit SSH keys against the approval register",
+      "setup": "seclab setup ssh-keys\n",
+      "setup_sha256": "2d65f8086df846c88d95993226879afe39f9282aa46a5590e25aacfb279d9d3c"
+    },
+    {
+      "id": "466c2c81-f929-53c0-9fbe-048b6bd7ecd1",
+      "title": "Review accounts against the leavers list",
+      "setup": "seclab setup leavers-accounts\n",
+      "setup_sha256": "fc358df97c12b020e1b53d60ce31d1e17bd906ce21e4c5d947de4943dd6c439c"
+    },
+    {
+      "id": "41e03bcb-16b9-5df7-83c9-a21bf8cf97aa",
+      "title": "Who brute-forced pos-01, and did anyone get in?",
+      "setup": "seclab setup ssh-bruteforce\n",
+      "setup_sha256": "b2aa89d6df4f57df024971adf2a4e82388a7c8f7230d38735a81a38f71dc07a6"
+    },
+    {
+      "id": "1c052743-f7e5-5a82-83cb-d1b5f4420a1a",
+      "title": "Detect encoded attacks on the web shop",
+      "setup": "seclab setup web-attacks\n",
+      "setup_sha256": "397fa25429df1444f431eca52944bc997daf3e01eaf89a3dc668b9c4c66f23f7"
+    },
+    {
+      "id": "7dd6ff1f-cfca-5048-be61-34d6c6915d46",
+      "title": "Build the timeline for SOC-4471",
+      "setup": "seclab setup intrusion-timeline\n",
+      "setup_sha256": "235da2892c4bd60eeddd185d5a2f012ba491772c01775cb5fc6fdefb4be16223"
+    },
+    {
+      "id": "f8770b76-59e4-5d5f-bae3-c0cec21c9e21",
+      "title": "Upgrade MD5 passwords without a reset",
+      "setup": "seclab setup password-storage\n",
+      "setup_sha256": "2cac6190940359d951f3e06478daf2091d2dde534b2fde304aae11b102259322"
+    },
+    {
+      "id": "5b283980-5701-5b2e-a735-4982bd16c732",
+      "title": "Revoke and purge a payment secret from git history",
+      "setup": "seclab setup git-leak\n",
+      "setup_sha256": "ca546272fd954b5c6c6ec49e459ea1aea3e080fc9c6babfe420980ee5b27d598"
+    },
+    {
+      "id": "639ddc69-41dd-5b7f-8af2-b39786e9073f",
+      "title": "Scan the Basket code for secrets",
+      "setup": "seclab setup secret-scan\n",
+      "setup_sha256": "4f23351ba3a824a501a544363ca45e9c06cfea82d8f6ec87a199d2fbc0aba9df"
+    },
+    {
+      "id": "8d1126fd-0b65-5ed8-8b0c-7915b542b0a9",
+      "title": "Stop SQL injection in login and search",
+      "setup": "seclab setup basket-sqli\n",
+      "setup_sha256": "ca09185ff6a72be47e115cf8c1a578463f48535a02c37b2525eb1a6927843e3c"
+    },
+    {
+      "id": "effb772a-8b54-5aea-a455-5c1da012df17",
+      "title": "Stop customers reading other people's orders",
+      "setup": "seclab setup basket-idor\n",
+      "setup_sha256": "dc2547f1367524deddad4515360a1d3a69b7313cb8c3c841b26fe2175d0608bb"
+    },
+    {
+      "id": "159ec9aa-c41f-507d-b254-130e2c1aebbe",
+      "title": "Remove the shell from invoice export",
+      "setup": "seclab setup basket-export\n",
+      "setup_sha256": "c80ca651e5a320e27afd550ffc3288237f1367b5467ebcb0a7ac3db270ef7bda"
+    },
+    {
+      "id": "27e7b046-c99f-573a-b56f-72a66696132c",
+      "title": "Neutralise stored XSS in product reviews",
+      "setup": "seclab setup xss-reviews\n",
+      "setup_sha256": "da3e5240f236d1a6ecf41222b39c67d4aee44f670667976ea9e2283029d358a3"
+    },
+    {
+      "id": "c797b209-248c-5fee-8de3-2efb3d4a48c5",
+      "title": "Lock invoice downloads to the invoices folder",
+      "setup": "seclab setup path-traversal\n",
+      "setup_sha256": "11e9b59e7b9befdd3d02c8b40ee538d7e19807e6b50a9af3068d5f0b9160abbd"
+    },
+    {
+      "id": "571ea7f8-ebb3-5c59-a64a-8635dfc474a3",
+      "title": "Replace the forgeable session cookie",
+      "setup": "seclab setup weak-sessions\n",
+      "setup_sha256": "409e2a731df1c26aec4cdcd9a51e67a84e6b0c5aa1d85391cb24064153b90ac3"
+    },
+    {
+      "id": "db00262f-4a83-5c98-ad1a-d9520d6ecc76",
+      "title": "Audit the branch and Basket certificates",
+      "setup": "seclab setup cert-audit\n",
+      "setup_sha256": "d68e81c5da71be446401390d4a11f9a4c6a0dc9d30e97b0283a036f8fb8863e1"
+    },
+    {
+      "id": "62af35ec-60ff-5bd3-b23d-deffce2b4f8c",
+      "title": "Issue a POS server certificate from the issuing CA",
+      "setup": "seclab setup issue-cert\n",
+      "setup_sha256": "231ca1f4e4427d7b0ab4b828cb7a88acad0f0e92f01d8d35912ba00a31d6b8c1"
+    },
+    {
+      "id": "8ee036f5-7c49-50fc-a414-4874a656d382",
+      "title": "Verify a signed POS update before it ships",
+      "setup": "seclab setup release-integrity\n",
+      "setup_sha256": "267f4ae104a57047a19ac1221850ecf76798f119d6705f7b8ce4dc05c267157d"
+    },
+    {
+      "id": "6839e644-0970-52a0-ab8c-9e24e8168e3b",
+      "title": "Triage the reported mailbox",
+      "setup": "seclab setup mail-triage\n",
+      "setup_sha256": "fa7612328bdcb309aafd7c6a76753648783cb6eb6b77e6e39430b72ef01bc1c3"
+    },
+    {
+      "id": "384c0d2e-2f0e-50ab-85a7-c87136827b2b",
+      "title": "Turn an advisory into indicators and hunt for them",
+      "setup": "seclab setup ioc-extract\n",
+      "setup_sha256": "5d87f19c7cdac142d316a5576ca1b7c1d197646434f1feeb9c0fb1b25de71420"
+    },
+    {
+      "id": "93020ba8-ddec-57ee-9fd5-a52eabea5bb5",
+      "title": "Find the beacon in the POS capture",
+      "setup": "seclab setup pcap-beacon\n",
+      "setup_sha256": "b6f39d572f803429bf9ff595543ede357ab0e6b43aa6c561b53d3efcbc93a16a"
+    },
+    {
+      "id": "9cf8f0d2-ff5e-5f00-8bfb-13bf95577406",
+      "title": "Contain the compromised web store",
+      "setup": "# dhimantai-compose-lab: incident-web\n",
+      "setup_sha256": "7b10829ffa4a0e27d7d68f7a964693ee95ba20e3e57ce29740070271565d9ef2"
+    },
+    {
+      "id": "808b4bb7-1337-5cb1-b815-93d965b33a99",
+      "title": "Find the lateral movement and contain the branch",
+      "setup": "# dhimantai-compose-lab: incident-branches\n",
+      "setup_sha256": "64a32e76ee9cb045d786d8fe98b3c4ec86c8674bba6978db39fb2888c65be128"
+    },
+    {
+      "id": "06be0b81-86e0-59c7-a472-4d3088d3f16e",
+      "title": "Report the incident to CERT-In",
+      "setup": "# dhimantai-compose-lab: incident-report\n",
+      "setup_sha256": "0927094cced2369fdec8044573561dd67adba046eb4490b14ff1fbaf37f3d97d"
+    }
+  ]
+}
