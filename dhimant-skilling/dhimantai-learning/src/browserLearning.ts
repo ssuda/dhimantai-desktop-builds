@@ -8,7 +8,7 @@ export const ERP_COURSE = 'ERPNext Essentials';
 export const ERP_TASK_TOTAL = 18;
 export interface BrowserTask {id:string; doctype:string; instructorChapter:string; steps:{field:string; value:unknown}[]}
 export interface BrowserObservation {
-  sequence:number; course:'erpnext-essentials'; task:string; step:number; training_tag:string;
+  sequence:number; course:string; task:string; step:number; training_tag:string;
   route:string; doctype:string; record:string; dirty:boolean; docstatus:number|null;
   fields:Record<string,unknown>; errors:string[];
   action:'view'|'edit'|'check'|'help'|'save'|'next'; result:'matched'|'mismatch'|'not_saved'|null;
@@ -17,6 +17,8 @@ export interface BrowserUpdate {account:string; environment:EnvironmentName; cha
 /** A task whose saved record matched; explained once the learner has also explained their decision. */
 export interface VerifiedTask {record:string; checkedAt:string; assisted:boolean; explained:boolean}
 interface Scope {origin:string; account:string; environment:EnvironmentName; learner:string; tasks:BrowserTask[]; current:()=>Promise<boolean>;
+  /** The practical course these tasks belong to; ERPNext Essentials when omitted. */
+  course?:{id:string; title:string};
   /** The learner's own training login, handed only to the launch page on the training origin. */
   signIn?:{usr:string; pwd:string};
   verified?:()=>Record<string,VerifiedTask>;
@@ -27,10 +29,10 @@ const text = (x:unknown,n:number):x is string => typeof x==='string' && x.length
 const scalar = (x:unknown) => x===null || typeof x==='boolean' || typeof x==='number' && Number.isFinite(x) || text(x,600);
 
 /** Only authored training fields can leave the ERPNext page; never arbitrary DOM, cookies or passwords. */
-export function browserObservation(raw:unknown,tasks:BrowserTask[]):BrowserObservation|undefined {
+export function browserObservation(raw:unknown,tasks:BrowserTask[],course='erpnext-essentials'):BrowserObservation|undefined {
   if(!object(raw) || Object.keys(raw).sort().join(',')!==['sequence','course','task','step','training_tag','route','doctype','record','dirty','docstatus','fields','errors','action','result'].sort().join(','))return;
   const task=tasks.find(t=>t.id===raw.task);
-  if(!task || raw.course!=='erpnext-essentials' || !Number.isSafeInteger(raw.sequence) || raw.sequence<1
+  if(!task || raw.course!==course || !Number.isSafeInteger(raw.sequence) || raw.sequence<1
       || !Number.isInteger(raw.step) || raw.step<0 || raw.step>=task.steps.length
       || !/^[a-f0-9]{10}$/.test(raw.training_tag) || !text(raw.route,300) || !text(raw.doctype,80) || !text(raw.record,160) || typeof raw.dirty!=='boolean'
       || ![null,0,1,2].includes(raw.docstatus) || !['view','edit','check','help','save','next'].includes(raw.action)
@@ -88,7 +90,7 @@ export class BrowserLearning {
     if(!req.headers.authorization?.startsWith('Bearer ') || !supplied || !/^[a-f0-9]{64}$/.test(supplied) || supplied.length!==this.token.length
         || !timingSafeEqual(Buffer.from(supplied),Buffer.from(this.token)))return reply(401);
     if(!await scope.current() || this.scope!==scope)return reply(410);
-    if(req.method==='GET' && req.url==='/course')return reply(200,{id:'erpnext-essentials',title:ERP_COURSE,
+    if(req.method==='GET' && req.url==='/course')return reply(200,{id:scope.course?.id??'erpnext-essentials',title:scope.course?.title??ERP_COURSE,
       version:createHash('sha256').update(JSON.stringify(scope.tasks)).digest('hex').slice(0,16),lessons:scope.tasks,verified:scope.verified?.()??{}});
     if(req.method==='POST' && req.url==='/signin')return scope.signIn?reply(200,scope.signIn):reply(404);
     if(req.method==='GET' && req.url==='/state')return reply(200,this.connection);
@@ -112,7 +114,7 @@ export class BrowserLearning {
     if(object(body) && Object.keys(body).sort().join(',')==='clear,sequence' && body.clear===true && Number.isSafeInteger(body.sequence) && body.sequence>this.sequence) {
       this.sequence=body.sequence;this.emit(null);return reply(200,{ok:true});
     }
-    const observation=browserObservation(body,scope.tasks);
+    const observation=browserObservation(body,scope.tasks,scope.course?.id);
     if(!observation || observation.training_tag!==scope.learner.slice(0,10))return reply(400);
     if(observation.sequence<=this.sequence)return reply(409);
     this.sequence=observation.sequence;this.emit(observation);return reply(200,{ok:true});

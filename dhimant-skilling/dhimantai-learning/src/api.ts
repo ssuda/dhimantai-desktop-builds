@@ -237,6 +237,12 @@ export function accessErrorMessage(status: number, path: string, message: string
 export class Api {
   constructor(private readonly auth: Auth, private readonly env: () => Environment, private readonly expectedAccount?: string) {}
 
+  /** Practical-course authoring: interview questions, then a draft validated against the discovered forms. */
+  appAuthoring<T>(body: {stage: 'interview' | 'draft'; goal: string; forms: unknown[]; answers?: {question: string; answer: string}[];
+      revise?: {course: unknown; problems: string[]}}) {
+    return this.request<T>('POST', '/instructor/app-authoring', body, false, undefined, 330_000);
+  }
+
   guidedErpForms() {
     return this.request<{id:string; title:string; version:string; lessons:import('./browserLearning').BrowserTask[]}>(
       'GET', '/learning/guided-forms/erpnext-essentials');

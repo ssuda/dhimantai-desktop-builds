@@ -7,9 +7,11 @@ import { erpServices, sandboxKey, sandboxPort, ERP_IMAGES } from '../src/browser
 import { machineSetup } from '../src/podman';
 
 const media=join(__dirname,'../../media/browser/erpnext');
-const source=readFileSync(join(media,'guide.js'),'utf8');
+const player=join(__dirname,'../../media/browser/player');
+// Pages load the application adapter first, then the app-neutral player.
+const source=readFileSync(join(__dirname,'../../media/browser/apps/frappe.js'),'utf8')+'\n'+readFileSync(join(player,'guide.js'),'utf8');
 const course=JSON.parse(readFileSync(join(media,'course.json'),'utf8'));
-const {equal,dependencies}=require(join(media,'guide.js'));
+const {equal,dependencies}=require(join(player,'guide.js'));
 test('ERPNext exposes only the frontend on loopback and preserves one shared stack with bounded services',()=>{
   const services=erpServices('localhost/training:version');
   assert.equal(services.length,8);
@@ -109,7 +111,7 @@ test('example help fills an ERPNext-prefilled matching item once and preserves u
     const f=fixture();await tick();const w=f.w,root=w.document.querySelector('#dhimantai-guide').shadowRoot;
     const row={doctype:'Purchase Order Item',name:'row-1',item_code:item,qty:1,rate:0};let writes=0;
     w.cur_frm={doctype:'Purchase Order',doc:{company:'Training 0123456789',supplier:'Training Supplier 0123456789',schedule_date:'2026-11-11',items:[row]},
-      is_new:()=>true,fields_dict:{},clear_table:()=>{throw new Error('Must preserve the existing row');},add_child:()=>{throw new Error('Must not duplicate the row');},refresh_field(){},dirty(){}};
+      is_new:()=>true,is_dirty:()=>true,fields_dict:{},clear_table:()=>{throw new Error('Must preserve the existing row');},add_child:()=>{throw new Error('Must not duplicate the row');},refresh_field(){},dirty(){}};
     w.frappe.model={set_value:async(_doctype:string,_name:string,field:string,value:any)=>{writes++;await tick();(row as any)[field]=value;}};
     root.querySelector('#lesson').value='4';root.querySelector('#lesson').dispatchEvent(new w.Event('change'));
     assert.equal(w.dhimantaiErpGuide.step(),3,'company, supplier and date already match, so the item rows are next');
@@ -217,7 +219,7 @@ test('a payment counts only when the invoice it settles is no longer outstanding
   outstanding=0;root.querySelector('#check').click();await tick();await tick();
   assert.match(root.querySelector('#status').textContent,/Saved work verified\. The supplier’s bill shows nothing outstanding\. Before explaining, make your prediction/);
   assert.equal(root.querySelector('#explain').hidden,true,'a skipped prediction comes before the explanation');
-  assert.match(root.querySelector('#predict-note').textContent,/submitted before predicting/);
+  assert.match(root.querySelector('#predict-note').textContent,/finished before predicting/);
   root.querySelector('input[name="prediction"][value="1"]').click();root.querySelector('#lock-prediction').click();await tick();await tick();
   assert.match(root.querySelector('#result').textContent,/Not what you predicted\. You predicted “Cash goes down; Creditors goes up” \(after submitting\)\. The answer is “Cash goes down; Creditors goes down”/);
   assert.equal(root.querySelector('#explain').hidden,false);
@@ -236,7 +238,7 @@ test('live observation sends current authored form fields, excludes passwords an
     if(url.endsWith('/state'))return {ok:true,json:async()=>({connected:true,detail:'Instructor is following this ERPNext task.'})};
     requests.push({url,body:options.body&&JSON.parse(options.body)});return {ok:true,json:async()=>({ok:true})};
   };
-  w.eval(readFileSync(join(media,'live.js'),'utf8'));await tick();
+  w.eval(readFileSync(join(player,'live.js'),'utf8'));await tick();
   assert.deepEqual(requests[0].body.fields,{default_currency:'INR',default_receivable_account:null,default_payable_account:null});
   assert.ok(!JSON.stringify(requests).includes('never send this'));
   w.cur_frm.doc.default_currency='USD';w.document.dispatchEvent(new w.Event('input'));
@@ -261,7 +263,7 @@ test('a failed check or ERPNext error offers help but never asks the Instructor 
     if(url.includes('/api/resource/'))return {ok:true,json:async()=>({data:{name:'Training 0123456789',default_currency:'USD'}})};
     requests.push({url,body:options?.body&&JSON.parse(options.body)});return {ok:true,json:async()=>({ok:true})};
   };
-  w.eval(readFileSync(join(media,'live.js'),'utf8'));await tick();
+  w.eval(readFileSync(join(player,'live.js'),'utf8'));await tick();
   callbacks.get(3000)!();await tick();
   root.querySelector('#check').click();await tick();await tick();
   const err=w.document.createElement('div');err.className='alert-danger';err.textContent='Customer Group is mandatory';

@@ -6,7 +6,9 @@ import { Environment, EnvironmentName } from './environments';
 import { ensurePodman } from './podman';
 import { ErpSandbox, sandboxKey } from './browserSandbox';
 import {BrowserLearning, BrowserTask, ERP_COURSE, VerifiedTask} from './browserLearning';
-import {ErpVerifier, VerifiableTask} from './erpVerifier';
+import {FrappeServer} from './apps/frappe';
+import {openInjectedTab, InjectedTab} from './apps/desktopBrowser';
+import {TaskVerifier, VerifiableTask} from './apps/verifier';
 import {learnerRpc,PublicCatalog} from './learnerCatalog';
 import {Api} from './api';
 
@@ -18,6 +20,7 @@ export const verifiedKey=(environment:EnvironmentName,account:string)=>`browser.
 /** One local ERPNext stack per service/profile, with separate ERPNext logins for dhimantAI accounts. */
 export class BrowserCourses {
   private runtime?: ErpSandbox;
+  private tab?: InjectedTab;
   private pending?: Promise<void>;
   private generation = 0;
   private scope?: {account:string; environment:EnvironmentName; learner:string};
@@ -96,7 +99,7 @@ export class BrowserCourses {
       if(!await current())return;
       if(!course.lessons.length)throw new Error('No guided tasks are published for your ERPNext course access.');
       const store=verifiedKey(environment,account);
-      const verifier=new ErpVerifier(url,admin,vscode.Uri.joinPath(this.context.extensionUri,'media','browser','erpnext').fsPath);
+      const verifier=new TaskVerifier(new FrappeServer(url,'Administrator',admin),vscode.Uri.joinPath(this.context.extensionUri,'media','browser','player').fsPath);
       fragment=await this.learning.start({origin:url,account,environment,learner:id,tasks:course.lessons,current,
         signIn:{usr:`learner-${id}@training.invalid`,pwd:password},
         verified:()=>this.context.globalState.get<Record<string,VerifiedTask>>(store)??{},
@@ -107,7 +110,7 @@ export class BrowserCourses {
           const definition=course.lessons.find(lesson=>lesson.id===task) as unknown as VerifiableTask|undefined;
           const earlier=Object.fromEntries(Object.entries(saved).map(([id,entry])=>[id,entry.record]));
           let verified=false;
-          try {verified=!!definition && await verifier.verify(definition,done.record,id,earlier);}
+          try {verified=!!definition && await verifier.verify(definition,done.record,`learner-${id}@training.invalid`,id.slice(0,10),earlier);}
           catch(error){this.output.appendLine('ERPNext progress check failed: '+(error instanceof Error?error.message:String(error)));}
           if(!verified || !await current())return false;
           await this.context.globalState.update(store,{...this.context.globalState.get<Record<string,VerifiedTask>>(store),[task]:done});
@@ -118,6 +121,16 @@ export class BrowserCourses {
       const verified=this.context.globalState.get<Record<string,VerifiedTask>>(store)??{};
       const resume=course.lessons.find(lesson=>!verified[lesson.id]?.explained)??course.lessons[0];
       await vscode.commands.executeCommand('dhimantai.openLearningRoom',ERP_COURSE,resume.instructorChapter);
+    }
+    // Preferred: the desktop browser signs the learner in and injects the player, so nothing depends on the app image.
+    if (this.learning) {
+      const bridge = new URLSearchParams(fragment), media = vscode.Uri.joinPath(this.context.extensionUri,'media','browser').fsPath;
+      const learnerServer = new FrappeServer(url, `learner-${id}@training.invalid`, password);
+      try {
+        await this.tab?.dispose();
+        this.tab = await openInjectedTab({url, home:'/desk', media, adapter:'frappe', learner:id, bridge, server:learnerServer});
+        if (this.tab) return;
+      } catch (error) { this.output.appendLine('Desktop browser injection unavailable: '+(error instanceof Error?error.message:String(error))); }
     }
     const destination = `${url}/assets/frappe/dhimantai/launch.html#${fragment}`;
     if ((await vscode.commands.getCommands(true)).includes('workbench.action.browser.open')) {
@@ -141,6 +154,7 @@ export class BrowserCourses {
   }
   stop() {
     this.generation++;
+    void this.tab?.dispose(); this.tab=undefined;
     void this.learning?.stop();
     const runtime=this.runtime, scope=this.scope, starting=this.starting;
     return this.stopping=this.stopping.then(async()=>{

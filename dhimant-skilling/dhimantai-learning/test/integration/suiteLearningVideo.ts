@@ -21,7 +21,6 @@ export async function run() {
   const ext = vscode.extensions.getExtension<{auth: Auth}>('optficial.dhimantai-learning')!;
   const {auth} = await ext.activate();
   await vscode.workspace.getConfiguration('dhimantai').update('environment', 'staging', vscode.ConfigurationTarget.Global);
-  await vscode.workspace.getConfiguration('dhimantai').update('courseContainers', false, vscode.ConfigurationTarget.Global);
   // Connect before installing fixtures so a connection failure leaves no mocks behind.
   const cdp = await connect();
   await cdp.evaluate(`globalThis.__videoTestErrors=[]; addEventListener('unhandledrejection', e=>__videoTestErrors.push(String(e.reason?.stack||e.reason)));`);

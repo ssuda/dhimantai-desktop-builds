@@ -1,6 +1,6 @@
 /** Curated application sandboxes. No notebook, web page or learner input can supply container commands. */
 import { createHash } from 'node:crypto';
-import { readdir, readFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { readdir, readFile, mkdtemp, writeFile, rm, copyFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { run, stream, stopCourseRuntime } from './podman';
@@ -38,18 +38,33 @@ export class ErpSandbox {
     if (!/^[a-f0-9]{20}$/.test(key)) throw new Error('Invalid sandbox identity.');
   }
   private get prefix() { return 'dhimantai-erp-' + this.key; }
+  /** Image build inputs: the ERPNext setup folder plus the shared player and Frappe adapter, by file name. */
+  private async buildFiles(): Promise<[string, string][]> {
+    const files: [string, string][] = [];
+    for (const name of (await readdir(this.media)).sort())
+      if ((await stat(join(this.media, name))).isFile()) files.push([name, join(this.media, name)]);
+    files.push(['guide.js', join(this.media, '..', 'player', 'guide.js')], ['live.js', join(this.media, '..', 'player', 'live.js')],
+      ['frappe.js', join(this.media, '..', 'apps', 'frappe.js')]);
+    return files.sort((a, b) => a[0].localeCompare(b[0]));
+  }
   async start(password: string, learner: {id:string; password:string}, report: (message: string) => void): Promise<string> {
     if (!/^[a-f0-9]{48}$/.test(password) || !/^[a-f0-9]{48}$/.test(learner.password) || !/^[a-f0-9]{20}$/.test(learner.id))
       throw new Error('Invalid sandbox credential.');
     const memory = Number(await run(this.bin,['info','--format','{{.Host.MemTotal}}']));
     if (memory < 6_000_000_000) throw new Error('ERPNext needs at least 6 GB allocated to the course runtime. Increase Podman machine memory, then retry.');
-    const hash = createHash('sha256').update('sandbox-v2');
-    for (const name of (await readdir(this.media)).sort()) { hash.update(name); hash.update(await readFile(join(this.media,name))); }
+    const files = await this.buildFiles();
+    const hash = createHash('sha256').update('sandbox-v3');
+    for (const [name, path] of files) { hash.update(name); hash.update(await readFile(path)); }
     const version = hash.digest('hex').slice(0,20), image = 'localhost/dhimantai-erpnext:' + version;
     const exists = async (kind: string, name: string) => run(this.bin,[kind,'exists',name]).then(() => true, () => false);
     if (!await exists('image',image)) {
       report('Preparing the ERPNext training image. The first download can take several minutes.');
-      await stream(this.bin,['build','--tag',image,this.media],this.log);
+      // The image bundles the shared task player and the Frappe page adapter with the ERPNext setup files.
+      const context = await mkdtemp(join(tmpdir(),'dhimantai-erp-build-'));
+      try {
+        for (const [name, path] of files) await copyFile(path, join(context, name));
+        await stream(this.bin,['build','--tag',image,context],this.log);
+      } finally { await rm(context,{recursive:true,force:true}); }
     }
     if (!await exists('network',this.prefix)) await run(this.bin,['network','create','--internal',this.prefix]);
     // The frontend needs a route back to the host's published port; the database and workers stay on the internal network.

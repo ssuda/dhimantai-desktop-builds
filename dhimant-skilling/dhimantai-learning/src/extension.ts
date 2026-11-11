@@ -3,6 +3,7 @@ import { registerCourseProjects } from './courseProjects';
 import { SkillingReviewView } from './skillingReview';
 import { CourseWorkspaces } from './courseWorkspace';
 import { BrowserCourses, verifiedKey } from './browserCourses';
+import { registerPracticalAuthoring } from './apps/authoring';
 import {BrowserLearning} from './browserLearning';
 import { registerCourseKernel } from './courseKernel';
 import * as vscode from 'vscode';
@@ -101,6 +102,7 @@ export async function activate(context: vscode.ExtensionContext) {
   await copilotPolicy.enforce();
   const browserLearning=new BrowserLearning();context.subscriptions.push(browserLearning);
   const browserCourses = new BrowserCourses(context, auth, envName, output,browserLearning,env);
+  context.subscriptions.push(registerPracticalAuthoring(context, auth, env, output));
   context.subscriptions.push(browserCourses);
   stopCourses = async () => { await browserCourses.shutdown(); await courses.stopAll(); };
   const coursework = new CourseworkOutbox(context.globalState);

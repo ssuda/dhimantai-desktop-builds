@@ -105,6 +105,9 @@ def customize(root):
     assert product['applicationName'] == 'dhimantai' and not product.get('electronArtifactFeed')
     # Build provenance is explicit; this capability does not silently turn on devices.
     product['dhimantaiDesktop'] = {'version': lock['release'], 'mediaCapture': True}
+    # The learning extension injects its task player into practical-course pages through the integrated
+    # browser's DevTools session. Only this extension receives the proposal.
+    product.setdefault('extensionEnabledApiProposals', {})['optficial.dhimantai-learning'] = ['browser']
     (root / 'product.json').write_text(json.dumps(product, indent=2) + '\n')
     # Keep upstream copyright attribution; brand the distribution's package author.
     package = json.loads((root / 'package.json').read_text())

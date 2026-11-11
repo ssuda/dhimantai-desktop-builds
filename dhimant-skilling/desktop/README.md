@@ -39,22 +39,82 @@ The desktop bundle receives only the same token-service URL, app name and client
 
 ## GitHub staging builds
 
-The private build repository is [ssuda/dhimantai-desktop-builds](https://github.com/ssuda/dhimantai-desktop-builds).
-Bitbucket remains the source of truth. After committing build changes, export
-only their required inputs into a new directory:
+The source checkout and the build checkout have separate Git remotes:
+
+| Location | Remote / destination | Contents |
+| --- | --- | --- |
+| Main `dhimantai` checkout | `origin`: `git@bitbucket.org:optficial/dhimantai.git` | Full project source and history. |
+| Separate build checkout | `origin`: `https://github.com/ssuda/dhimantai-desktop-builds.git` | Private, exported desktop build inputs only. |
+| Public downloads | [ssuda/dhimantai-downloads Releases](https://github.com/ssuda/dhimantai-downloads/releases) | Verified installer binaries and `SHA256SUMS`, uploaded with `gh`; no Git push from the main checkout. |
+
+The main checkout normally has **no GitHub remote**. Run the GitHub push from
+the separate build checkout. HTTPS authentication comes from the account already
+signed in through `gh`, using `gh auth git-credential` as the credential helper.
+No token is placed in the remote URL or source files, and no GitHub SSH key is
+required. Check access with `gh auth status --hostname github.com`; use
+`gh auth login --hostname github.com --git-protocol https` if sign-in is needed.
+
+Before exporting, commit the desktop changes and increment `appVersion` and
+`release` in `lock.json` for changed native payloads. Increment the extension's
+`package.json` and `package-lock.json` version when its payload changes. Published
+filenames and extension versions must keep their original bytes.
+
+From the main source checkout, export and push with these commands. The temporary
+directory creates a fresh build checkout, so the mirror copy cannot overwrite a
+developer's existing checkout:
 
 ```sh
-python3 dhimant-skilling/desktop/export_build_source.py --out /absolute/path/to/new-export
+desktop_stage=$(mktemp -d "${TMPDIR:-/tmp}/dhimantai-desktop-release.XXXXXX")
+desktop_export="$desktop_stage/source"
+desktop_build_repo="$desktop_stage/github"
+desktop_source_commit=$(git rev-parse HEAD)
+
+python3 dhimant-skilling/desktop/export_build_source.py --out "$desktop_export"
+git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+  clone https://github.com/ssuda/dhimantai-desktop-builds.git "$desktop_build_repo"
+test "$(git -C "$desktop_build_repo" remote get-url origin)" = \
+  https://github.com/ssuda/dhimantai-desktop-builds.git
+test -z "$(git -C "$desktop_build_repo" status --porcelain)"
+rsync -a --delete --exclude=.git/ "$desktop_export/" "$desktop_build_repo/"
+git -C "$desktop_build_repo" add -A
+git -C "$desktop_build_repo" commit -m "Build desktop from $desktop_source_commit"
+git -C "$desktop_build_repo" -c credential.helper= \
+  -c 'credential.helper=!gh auth git-credential' push origin main
 ```
 
-Copy that export into the private build repository checkout, commit, and push.
-It includes shared reader assets and packaged lesson data, but no backend or
+The export includes shared reader assets and packaged lesson data, but no backend or
 Flutter app code, credentials, or monorepo history. `build-source.json` records
 the originating commit and file hashes; builds verify those bytes before use.
 Receipts distinguish that source commit from the GitHub build commit.
 
 Run the manual **Custom desktop preview** workflow with `environment=staging`
-and `targets=windows-linux`, `all`, or one platform/processor pair. The staging
+and `targets=windows-linux`, `all`, or one platform/processor pair. For the five
+currently published website targets, dispatch each target separately so optional
+Windows ARM64 does not delay the release:
+
+```sh
+# This is the existing unnotarized staging preview channel.
+# Use developer-id instead after configuring the Apple signing secrets below.
+for desktop_target in windows-x64 linux-x64 linux-arm64 macos-x64 macos-arm64; do
+  gh workflow run desktop-preview.yml --repo ssuda/dhimantai-desktop-builds \
+    --ref main -f environment=staging -f targets="$desktop_target" -f macos_signing=ad-hoc
+done
+gh run list --repo ssuda/dhimantai-desktop-builds --workflow desktop-preview.yml \
+  --commit "$(git -C "$desktop_build_repo" rev-parse HEAD)" \
+  --json databaseId,status,conclusion,url
+```
+
+Save each returned run ID. Wait for successful completion and download its
+`desktop-*` artifact, including its JSON build receipt, before publishing. For example:
+
+```sh
+gh run download BUILD_RUN_ID --repo ssuda/dhimantai-desktop-builds \
+  --pattern 'desktop-*' --dir /absolute/path/to/artifacts/PLATFORM
+gh workflow run desktop-windows-acceptance.yml --repo ssuda/dhimantai-desktop-builds \
+  --ref main -f build_run=WINDOWS_BUILD_RUN_ID -f arch=x64
+```
+
+The staging
 Actions secret contains only the Flutter client's token URL and client HMAC
 key. The workflow refuses a public repository and never deploys a service.
 Linux runners use temporary swap; native compilation may take substantially
@@ -79,8 +139,8 @@ increment the desktop release when changing its payload.
 
 ## macOS Developer ID signing and notarization
 
-The next build is **1.143.10005-preview.5**, with new artifact filenames. Existing
-preview 4 downloads and their verification report remain unchanged. Both native
+The next preview build is **1.143.10006-preview.6**, with new artifact filenames.
+Published preview 3 and preview 5 downloads remain unchanged. Both native
 macOS runners use the same signing path. Select `macos_signing=developer-id`
 (the workflow default) for signed builds, or explicitly select `ad-hoc` for an
 internal preview that will still trigger Gatekeeper warnings.
@@ -170,6 +230,15 @@ Flutter rooms do not expose the extension-only automatic code-observation RPC. T
 
 Run `node --test dhimant-skilling/desktop/tests/*.test.mjs`, `python3 -m unittest discover -s dhimant-skilling/desktop/tests -p 'test_*.py'`, and, after extension compilation, `node --test dhimant-skilling/dhimantai-learning/out/test/desktopRoom.test.js`.
 
+Preview 5 updates the five existing website targets: Windows x64, macOS x64/ARM64,
+and Linux x64/ARM64. It bundles extension **0.39.17** and enables silent extension
+updates. Its release and acceptance checks are recorded in the
+[preview 5 release report](../../deploy/releases/2026-11-11-staging-desktop-preview5.json).
+Windows x64 passed native install, CLI startup, staging-default and uninstall checks.
+The macOS ARM64 DMG passed bundled-extension update/restart, real YouTube playback
+and synthetic microphone/camera checks. Physical-device consent and live Instructor
+responses were not certified by these tests.
+
 Preview 4's six native builds and eight artifact checksums are verified in the
 [build verification report](../../deploy/releases/2026-11-10-desktop-preview4-verification.json).
 Windows x64 and ARM64 passed native install, CLI startup, staging-default and
@@ -184,7 +253,7 @@ The local macOS ARM64 preview builds and signs successfully. Extension compilati
 
 The YouTube check may need an initial Play click in the real player. Cross-origin IFrame API calls do not reliably carry browser user activation; the test leaves autoplay restrictions enabled.
 
-Published preview 4 macOS packages are ad-hoc signed and unnotarized. The preview 5
+Preview 5 macOS packages are ad-hoc signed and unnotarized. The preview 5
 pipeline supports Developer ID signing/notarization, but no real signed build has
 been validated yet because the credentials are missing. Windows remains unsigned.
 Native playback, capture, install/uninstall and signed-in Instructor acceptance
@@ -202,7 +271,7 @@ opts out. Automatic installation makes one attempt per version; a failed attempt
 **dhimantAI: Install Extension Update**. App-owned device configuration and existing desktop preferences
 survive extension updates.
 
-Existing previews need a one-time desktop update: the app must allow `optficial.dhimantai-learning` in
+Preview 3 and preview 4 need a one-time update to preview 5: the app must allow `optficial.dhimantai-learning` in
 `builtInExtensionsEnabledWithAutoUpdates` and bundle extension 0.39.10 or newer. Publishing or manually
 installing a VSIX alone cannot enable this in older apps, which reject updates to bundled extensions.
 

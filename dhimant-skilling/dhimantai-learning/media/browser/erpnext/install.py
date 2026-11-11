@@ -8,9 +8,9 @@ text = template.read_text()
 assert text.count('</body>') == 1, 'ERPNext Desk template changed; review the guide integration'
 assets = bench / 'apps/frappe/frappe/public/dhimantai'
 assets.mkdir(exist_ok=True)
-for name in ('guide.js', 'live.js', 'course.json', 'launch.html', 'launch.js'):
+for name in ('frappe.js', 'guide.js', 'live.js', 'course.json', 'launch.html', 'launch.js'):
     shutil.copyfile(Path('/opt/dhimantai') / name, assets / name)
-template.write_text(text.replace('</body>', '<script defer src="/assets/frappe/dhimantai/guide.js"></script><script defer src="/assets/frappe/dhimantai/live.js"></script></body>'))
+template.write_text(text.replace('</body>', '<script defer src="/assets/frappe/dhimantai/frappe.js"></script><script defer src="/assets/frappe/dhimantai/guide.js"></script><script defer src="/assets/frappe/dhimantai/live.js"></script></body>'))
 # The local browser origin is 127.0.0.1, while the single Frappe site is named frontend.
 # Preserve the real Origin so Frappe's websocket origin check can compare it with Host.
 nginx = Path('/templates/nginx/frappe.conf.template')

@@ -2,10 +2,11 @@ import {test} from 'node:test';
 import * as assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {ErpVerifier} from '../src/erpVerifier';
+import {FrappeServer} from '../src/apps/frappe';
+import {TaskVerifier} from '../src/apps/verifier';
 
-const media=join(__dirname,'../../media/browser/erpnext');
-const course=JSON.parse(readFileSync(join(media,'course.json'),'utf8'));
+const media=join(__dirname,'../../media/browser/player');
+const course=JSON.parse(readFileSync(join(__dirname,'../../media/browser/erpnext/course.json'),'utf8'));
 const task=(id:string)=>course.lessons.find((l:any)=>l.id===id);
 const learner='0123456789abcdef0123', me=`learner-${learner}@training.invalid`;
 
@@ -29,26 +30,26 @@ const payment=(over:any={})=>({name:'ACC-PAY-1',owner:me,company:'Training 01234
 
 test('the desktop counts a task only when it re-reads the learner’s own matching record and its consequence',async()=>{
   const records:Record<string,any>={'Payment Entry/ACC-PAY-1':payment(),'Purchase Invoice/ACC-PINV-1':{name:'ACC-PINV-1',outstanding_amount:0}};
-  const fake=erpnext(records),verifier=new ErpVerifier('http://127.0.0.1:1',`admin-secret`,media,fake.request);
-  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-1',learner,{payables:'ACC-PINV-1'}),true);
+  const fake=erpnext(records),verifier=new TaskVerifier(new FrappeServer('http://127.0.0.1:1','Administrator','admin-secret',fake.request),media);
+  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-1',me,'0123456789',{payables:'ACC-PINV-1'}),true);
   records['Purchase Invoice/ACC-PINV-1'].outstanding_amount=400;
-  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-1',learner,{payables:'ACC-PINV-1'}),false,'an unsettled invoice fails the follow-up check');
+  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-1',me,'0123456789',{payables:'ACC-PINV-1'}),false,'an unsettled invoice fails the follow-up check');
   records['Purchase Invoice/ACC-PINV-1'].outstanding_amount=0;
   records['Payment Entry/ACC-PAY-1']=payment({owner:'learner-ffffffffffffffffffff@training.invalid'});
-  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-1',learner,{payables:'ACC-PINV-1'}),false,'another login’s record is not this learner’s work');
+  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-1',me,'0123456789',{payables:'ACC-PINV-1'}),false,'another login’s record is not this learner’s work');
   records['Payment Entry/ACC-PAY-1']=payment({paid_amount:300});
-  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-1',learner,{payables:'ACC-PINV-1'}),false);
-  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-404',learner,{payables:'ACC-PINV-1'}),false,'a claimed record must exist');
-  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-1',learner,{}),false,'a link to an unverified earlier task cannot pass');
+  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-1',me,'0123456789',{payables:'ACC-PINV-1'}),false);
+  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-404',me,'0123456789',{payables:'ACC-PINV-1'}),false,'a claimed record must exist');
+  assert.equal(await verifier.verify(task('pay-supplier'),'ACC-PAY-1',me,'0123456789',{}),false,'a link to an unverified earlier task cannot pass');
 });
 test('the read-only company task inspects the prepared record, and an expired admin session is renewed once',async()=>{
   const records={'Company/Training 0123456789':{name:'Training 0123456789',owner:'Administrator',default_currency:'INR',
     default_receivable_account:'Debtors - 0123456789',default_payable_account:'Creditors - 0123456789'}};
-  const fake=erpnext(records),verifier=new ErpVerifier('http://127.0.0.1:1','admin-secret',media,fake.request);
-  assert.equal(await verifier.verify(task('company'),'Training 0123456789',learner,{}),true);
+  const fake=erpnext(records),verifier=new TaskVerifier(new FrappeServer('http://127.0.0.1:1','Administrator','admin-secret',fake.request),media);
+  assert.equal(await verifier.verify(task('company'),'Training 0123456789',me,'0123456789',{}),true);
   fake.expire();
-  assert.equal(await verifier.verify(task('company'),'Training 0123456789',learner,{}),true);
+  assert.equal(await verifier.verify(task('company'),'Training 0123456789',me,'0123456789',{}),true);
   assert.equal(fake.sessions(),2);
-  const wrong=new ErpVerifier('http://127.0.0.1:1','not-the-password',media,erpnext(records).request);
-  await assert.rejects(wrong.verify(task('company'),'Training 0123456789',learner,{}),/administrator login/);
+  const wrong=new TaskVerifier(new FrappeServer('http://127.0.0.1:1','Administrator','not-the-password',erpnext(records).request),media);
+  await assert.rejects(wrong.verify(task('company'),'Training 0123456789',me,'0123456789',{}),/did not accept the login/);
 });

@@ -2,8 +2,9 @@
   "name": "dhimantai-learning",
   "displayName": "dhimantAI Learning",
   "description": "Learn in VS Code with Course Catalog, Instructor, Study, Doubt Solver, and coding practice. Write, debug, and test here; run projects and tests in the course container.",
-  "version": "0.39.17",
+  "version": "0.39.18",
   "publisher": "optficial",
+  "enabledApiProposals": ["browser"],
   "license": "UNLICENSED",
   "private": true,
   "engines": {
@@ -38,6 +39,7 @@
       { "command": "dhimantai.projectPreview", "title": "Preview Running Project", "category": "dhimantAI" },
       { "command": "dhimantai.reviewReadiness", "title": "Review Assigned Readiness Assessments", "category": "dhimantAI" },
       { "command": "dhimantai.openBrowserCourse", "title": "Open ERPNext Training", "category": "dhimantAI" },
+      { "command": "dhimantai.authorPracticalCourse", "title": "Author a Practical Course for a Business App", "category": "dhimantAI" },
       { "command": "dhimantai.courseGrade", "title": "Course Grade & Certificate", "category": "dhimantAI", "icon": "$(mortar-board)" },
       { "command": "dhimantai.searchCommands", "title": "Search Commands", "category": "dhimantAI" },
       { "command": "dhimantai.gitHub", "title": "Git & GitHub", "category": "dhimantAI", "icon": "$(source-control)" },

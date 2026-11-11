@@ -1,0 +1,104 @@
+{
+  "id": "odoo-sales-essentials",
+  "version": 1,
+  "title": "Odoo Sales Essentials",
+  "app": "odoo",
+  "lessons": [
+    {
+      "id": "customer",
+      "title": "1. Add a customer",
+      "form": "res.partner",
+      "identity": "name",
+      "scenario": "A shop, Training Retail {{tag}}, wants to buy from you. Add it as a company customer.",
+      "why": "A customer record holds the partner's details once; quotations, deliveries and invoices all point to it.",
+      "steps": [
+        {
+          "field": "name",
+          "value": "Training Retail {{tag}}",
+          "text": "Enter the customer's name."
+        },
+        {
+          "field": "company_type",
+          "value": "company",
+          "text": "This customer is a company, not an individual.",
+          "decide": true
+        }
+      ],
+      "expected": {
+        "name": "Training Retail {{tag}}",
+        "company_type": "company"
+      },
+      "explain": "Why is the shop set up as a company rather than an individual, and what does that change later?",
+      "instructorChapter": "00000000-0000-5000-8000-000000000001"
+    },
+    {
+      "id": "product",
+      "title": "2. Add a product",
+      "form": "product.template",
+      "identity": "name",
+      "scenario": "You sell Training Widgets for 150 each. Add the product so it can be quoted.",
+      "why": "A product carries its sales price and how it is tracked, so every order line starts from the same facts.",
+      "steps": [
+        {
+          "field": "name",
+          "value": "Training Widget {{tag}}",
+          "text": "Enter the product name."
+        },
+        {
+          "field": "list_price",
+          "value": 150,
+          "text": "Set the sales price.",
+          "decide": true
+        }
+      ],
+      "expected": {
+        "name": "Training Widget {{tag}}",
+        "list_price": 150
+      },
+      "explain": "Where will the 150 you entered appear next, and what happens if a quotation needs a different price?",
+      "instructorChapter": "00000000-0000-5000-8000-000000000002"
+    },
+    {
+      "id": "quotation",
+      "title": "3. Quote and confirm an order",
+      "form": "sale.order",
+      "final": true,
+      "finalAction": "Confirm",
+      "scenario": "Training Retail {{tag}} orders 2 widgets at the list price. Prepare the quotation, then confirm it as a sales order.",
+      "why": "A quotation becomes a sales order when the customer agrees; confirming it is the commitment that triggers delivery and invoicing.",
+      "steps": [
+        {
+          "field": "partner_id",
+          "value": "Training Retail {{tag}}",
+          "text": "Choose the customer."
+        },
+        {
+          "field": "order_line",
+          "value": [
+            {
+              "product_id": "Training Widget {{tag}}",
+              "product_uom_qty": 2,
+              "price_unit": 150
+            }
+          ],
+          "text": "Add 2 widgets at the list price.",
+          "decide": true
+        }
+      ],
+      "expected": {
+        "partner_id": "Training Retail {{tag}}",
+        "state": "sale",
+        "order_line": [
+          {
+            "product_id": "Training Widget {{tag}}",
+            "product_uom_qty": 2,
+            "price_unit": 150
+          }
+        ]
+      },
+      "explain": "What changed when you confirmed the quotation, and what can happen next because of it?",
+      "instructorChapter": "00000000-0000-5000-8000-000000000003",
+      "finalButton": "action_confirm"
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 /* Form observations go to the owning dhimantAI session on loopback, never to a third-party browser service. */
 (() => {
   'use strict';
+  if (window.__dhimantaiLive) return;
+  window.__dhimantaiLive = true;
   async function boot() {
     const guide=window.dhimantaiErpGuide;
     if(!guide)return setTimeout(boot,500);
@@ -18,31 +20,31 @@
       const response=await fetch(connection.origin+path,{method:body===undefined?'GET':'POST',
         headers:{Authorization:'Bearer '+connection.token,...(body===undefined?{}:{'Content-Type':'application/json'})},
         ...(body===undefined?{}:{body:JSON.stringify(body)}),cache:'no-store',signal:AbortSignal.timeout(9000)});
-      if(!response.ok)throw new Error(response.status===401 || response.status===410?'Reopen ERPNext from dhimantAI to reconnect.':'Instructor connection is unavailable.');
+      if(!response.ok)throw new Error(response.status===401 || response.status===410?'Reopen the course from dhimantAI to reconnect.':'Instructor connection is unavailable.');
       return response.json();
     };
     const scalar=v=>typeof v==='string'?v.slice(0,600):typeof v==='number'&&Number.isFinite(v)?v:typeof v==='boolean'?v:null;
     function snapshot() {
-      const task=guide.current(),frm=window.cur_frm,doc=frm?.doc,company='Training '+guide.tag;
-      const own=frm?.doctype===task.doctype && (frm.is_new()
+      const app=window.dhimantaiApp,task=guide.current(),open=app.current(),doc=open?.values,company='Training '+guide.tag;
+      const formName=task.form||task.doctype;
+      // Only the learner's own record for this task leaves the page; another company's or person's record never does.
+      const identity=task.identity||['customer_name','supplier_name','item_code'].find(k=>typeof task.expected[k]==='string');
+      const own=!!open && open.form===formName && (open.isNew
         ? !doc.company || doc.company===company
-        : task.doctype==='Company'?doc.name===company
-        : task.expected.company?doc.company===company
-        : task.doctype==='Customer'?doc.customer_name===task.expected.customer_name
-        : task.doctype==='Supplier'?doc.supplier_name===task.expected.supplier_name
-        : task.doctype==='Item'?doc.item_code===task.expected.item_code:false);
+        : task.readOnly && task.record ? open.id===task.record
+        : task.expected.company ? doc.company===company
+        : identity ? doc[identity]===task.expected[identity] : false);
       const fields={};
       if(own)for(const s of task.steps) {
         fields[s.field]=Array.isArray(s.value)?(Array.isArray(doc[s.field])?doc[s.field].slice(0,10).map(row=>
           Object.fromEntries([...new Set(s.value.flatMap(Object.keys))].map(k=>[k,scalar(row[k])]))):[]):scalar(doc[s.field]);
       }
-      const errors=own?[...document.querySelectorAll('.modal.show .msgprint, .alert-danger')].filter(e=>e.getClientRects().length)
-        .map(e=>e.textContent.trim().slice(0,500)).filter(Boolean).slice(0,2):[];
+      const errors=own?app.errors().slice(0,2):[];
       if(result==='mismatch'||result==='not_saved')errors.push(guide.status().slice(0,500));
-      return {course:'erpnext-essentials',task:task.id,step:guide.step(),training_tag:guide.tag,
-        route:(window.frappe.get_route?.()||[]).map(s=>String(s)).join('/').slice(0,300),
-        doctype:own?frm.doctype:'',record:own?String(doc.name||'').slice(0,160):'',dirty:own?!!frm.is_dirty():false,
-        docstatus:own&&[0,1,2].includes(doc.docstatus)?doc.docstatus:null,fields,errors,action,result};
+      return {course:guide.course,task:task.id,step:guide.step(),training_tag:guide.tag,
+        route:String(app.route()||'').slice(0,300),
+        doctype:own?formName:'',record:own?String(open.id||'').slice(0,160):'',dirty:own?!!open.dirty:false,
+        docstatus:own?(open.final?1:0):null,fields,errors,action,result};
     }
     function observe(force=false) {
       if(!enabled || closed)return Promise.resolve();
@@ -61,7 +63,8 @@
     }
     async function help() {
       if(!enabled || !connected || closed)return;
-      const message=problem?'ERPNext reported a problem with this step. What should I look at?':'Help me with this ERPNext step.';
+      const product=window.dhimantaiApp?.title||'The application';
+      const message=problem?`${product} reported a problem with this step. What should I look at?`:`Help me with this ${product} step.`;
       ask.disabled=true;
       try {
         await observe(true);
