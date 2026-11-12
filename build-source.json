@@ -1,5 +1,5 @@
 {
-  "sourceCommit": "a6f8a2a0e6b7917c9d3e6b291d068611984c533d",
+  "sourceCommit": "f8a122cc40b3051b329c442c69cf67f57c7f0651",
   "sourceRepository": "bitbucket.org/optficial/dhimantai",
   "files": {
     ".github/workflows/desktop-build.yml": "9265ebedd101841bea4649678e94572bb6db35fba3db54c742a64f36e2c145cc",
@@ -141,7 +141,7 @@
     "dhimant-skilling/dhimantai-learning/package-lock.json": "29586034535b9ac6269b833310164b594daf027165c3adfc655c87c86f0fe9a4",
     "dhimant-skilling/dhimantai-learning/package.json": "91267e9e7309918279ba397084d9763fb09aa7cb25ab0ff766f3017608e31db8",
     "dhimant-skilling/dhimantai-learning/scripts/bundle-audio.mjs": "4a17ab2f2f65957bf3b73cc7e0bb7cbf3096ed4a0cdd35977b37fc8b8fd05044",
-    "dhimant-skilling/dhimantai-learning/scripts/bundle-authoring.mjs": "ada02ea8734529b23be0090737a18e2504fd5edefa0f75f543654ac7254eb76e",
+    "dhimant-skilling/dhimantai-learning/scripts/bundle-authoring.mjs": "de016ba04f28e498f3ad2997c3659b6a247ac77adc0e85c2ab930e30d8acd440",
     "dhimant-skilling/dhimantai-learning/scripts/capstone/build_shelf.py": "b3dc9a3666cb04dda4953c88684bfeb11a55491b34781457852e521e6e9248b6",
     "dhimant-skilling/dhimantai-learning/scripts/check-colab-notebooks.py": "a62e8d9ced1b3ac12e1403bab91921e616d441e4e24d279b27eedb6f91c8efbf",
     "dhimant-skilling/dhimantai-learning/scripts/check-desktop-devices.cjs": "f90ff9e9accb363ec4752eedba72dc68d7460f953581a5e7f36f979a819aec1d",
