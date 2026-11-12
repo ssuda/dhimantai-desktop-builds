@@ -1,4 +1,4 @@
-# dhimantAI Learning 0.39.8
+# dhimantAI Learning 0.39.22
 
 Learn with **Instructor**, ask questions in **Doubt Solver**, and find your next course
 in **Course Catalog**, all inside VS Code. Write, save, debug, and test code in
@@ -8,6 +8,17 @@ VS Code remains your coding workspace.**
 
 The password eye buttons show or hide what you type in Sign in and Create account.
 Passwords start masked and are masked again when you submit or retry.
+
+**Forgot password?** on Sign in sends a reset link to the registered email.
+Open it on the same computer and desktop profile to choose a new password, then
+sign in. Requests use Supabase recovery with PKCE; the verifier is kept in
+SecretStorage, and a recovery session never replaces the saved login.
+Before releasing, allow `dhimantai://optficial.dhimantai-learning/password-reset**`
+in each deployed Supabase Auth redirect allowlist (`GOTRUE_URI_ALLOW_LIST` for
+self-hosted services). VS Code installations also need the equivalent `vscode://`
+or `vscode-insiders://` entry. These are included in the local Supabase config.
+Keep the recovery email template's Supabase confirmation link and verify actual
+email delivery and return to the installed desktop in each release environment.
 
 ## Learning roadmaps and job-readiness certificates
 
@@ -87,11 +98,10 @@ coverage means taught, while assessment and any Needs review notes remain separa
 Updated content is labelled Revisit, and unavailable progress is never shown as zero.
 This needs the matching backend version; older services show Progress unavailable.
 
-The catalog has three direct learning actions:
+The catalog has two direct learning actions:
 
 - **Instructor** opens its own notebook tab for guided explanations, questions,
   notes, code, and feedback.
-- **Study** opens the published PDF or EPUB for accessible course chapters. Markdown-only chapters are excluded.
 - **Doubt Solver** opens a separate notebook tab. Type your question
   or attach a photo or PDF, then work through it with the agent.
 
@@ -127,7 +137,13 @@ These learning actions stay available if the catalog cannot load; use
 **Refresh courses & purchases** to retry. Returning launches preserve your work
 without repeatedly opening the welcome page.
 
-## Read in Study mode
+## Study mode (temporarily disabled on desktop)
+
+Study is hidden from Learn, Course Catalog and the Command Palette. Saved command
+links report that it is temporarily unavailable without opening the reader or
+fetching its catalog. The reader implementation and its persistence tests remain
+for re-enabling after course selection and reading materials are validated.
+The following describes the retained implementation, not an available desktop action.
 
 Open **Course Catalog → Study**, or choose **Study** on a joined course that has
 an accessible PDF or EPUB. Only chapters with a published document appear in the
@@ -143,8 +159,8 @@ practice activities; they do not award completion or independent mastery.
 The course control opens VS Code's searchable picker. **Back to book** keeps the
 reading position. Summary sections can be folded, and quizzes show one question
 at a time with Previous/Next, answer feedback, a practice score, review, and retry.
-Study uses a compact composer that expands as you type: Enter adds
-a line, and Ctrl/Cmd+Enter sends. The arrow becomes a Stop button during a response.
+Study starts with a two-line composer; use its expand control for a longer draft.
+Enter adds a line; only the send button sends. The arrow becomes a Stop button during a response.
 Use **+** to attach photos or PDFs; the selected files accompany the question.
 Written responses clear the field and attachments; failed requests
 keep the draft. Unfinished drafts stay with their Study action until the chapter
@@ -199,7 +215,8 @@ Use the notebook's single **Runtime** dropdown for **Course container**,
 **Open course terminal**, and **Set up / rebuild course**. Notes,
 code, feedback, and questions stay in the notebook; a separate assistant panel does not
 open automatically. Use the separate **Ask Instructor** / **Answer Instructor** message bar below the learning
-notebook (or Ctrl/Cmd+Enter). Enter adds a new line. The message bar scrolls with the
+notebook. The input starts at two lines and can be expanded or collapsed without losing the draft.
+Enter adds a new line; only the send button sends. The message bar scrolls with the
 page and has no Run action or cell number. Native Jupyter notebooks still use their
 Ask Instructor popup; they do not yet have this message bar. The **⋯** menu holds save, open, restart, and observation options.
 Return to Course Catalog with the **dhimantAI** status-bar entry for courses,

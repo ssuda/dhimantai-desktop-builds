@@ -11,17 +11,18 @@ function fixture() {
   let authChanged:(s:any)=>void=()=>{}, focus:(s:any)=>void=()=>{}, owner:string|undefined='learner', renew=false;
   let html='',writes=0,reads=0,orders=0,joined=0,opened=true,paid=false,ready=true;
   let finish:undefined|(()=>void), delay=false, createFailure=false;
+  let catalogFailure=false, studyReads=0, projects:any[]=[];
   const messages:any[]=[],urls:string[]=[],checks:boolean[]=[];
   const panel={webview:{get html(){return html;},set html(value:string){html=value;writes++;},postMessage:async(m:any)=>{messages.push(m);},onDidReceiveMessage:()=>({dispose(){}})},
     reveal(){},onDidDispose:()=>({dispose(){}}),dispose(){}};
   const session=()=>owner?{user:{id:owner,email:owner+'@example.test'}}:undefined;
   const auth={session:async()=>session(),onDidChange:(cb:any)=>{authChanged=cb;return {dispose(){}};},
     accessToken:async()=>{if(renew)authChanged(session());return 'fixture-token';}};
-  const rpc=async()=>{reads++;return {individual:true,courses:[{id:'python',title:'Python',summary:'Learn Python',level:'Beginner',
+  const rpc=async()=>{reads++;if(catalogFailure)throw new Error('Catalog unavailable');return {individual:true,courses:[{id:'python',title:'Python',summary:'Learn Python',level:'Beginner',
     enrolled:true,unlocked:paid,can_join:true,chapters:[{id:'first',name:'Basics',free:true},{id:'next',name:'Lists',free:false}]}],
     offers:[{id:'python-once',title:'Python',amount:10000,currency:'INR',course_ids:['python'],owned:paid}]};};
   const api={learningPurchases:async(check=false)=>{checks.push(check);return {payments_ready:ready,purchases:orders?[{title:'Python',amount:10000,currency:'INR',status:paid?'paid':'created'}]:[]};},
-    studyCatalog:async()=>({courses:[]}),practiceCatalog:async()=>({courses:[]}),purchaseLearningOffer:async()=>{
+    studyCatalog:async()=>{studyReads++;return {courses:[]};},practiceCatalog:async()=>({courses:[]}),purchaseLearningOffer:async()=>{
       orders++;await auth.accessToken();if(delay)await new Promise<void>(done=>{finish=done;});
       if(createFailure)throw new Error('Purchase service unavailable.');
       return {checkout_url:'https://api.example.test/learning-billing/checkout#ticket=fixture'};
@@ -34,9 +35,10 @@ function fixture() {
   runInNewContext(readFileSync(file,'utf8'),{exports,AbortSignal,Error,fetch:async()=>({ok:true,json:async()=>({courses:{}})}),
     require:(id:string)=>id==='vscode'?vscode:id==='./api'?{Api:class{constructor(){return api;}}}
       :id==='./learnerCatalog'?{learnerRpc:rpc,accessPeriod:()=>''}:realRequire(id)});
-  const catalog=new exports.CourseCatalog(auth,()=> 'staging',()=>({apiUrl:'https://api.example.test'}),()=>{joined++;});
+  const catalog=new exports.CourseCatalog(auth,()=> 'staging',()=>({apiUrl:'https://api.example.test'}),()=>{joined++;},()=>false,[],{summaries:async()=>projects});
   return {catalog,panel,messages,urls,checks,focus:()=>focus({focused:true}),
-    get counts(){return {writes,reads,orders,joined};},
+    get counts(){return {writes,reads,orders,joined,studyReads};},
+    projectStatus:(status:string)=>{projects=[{projectId:'course-agent',status}];},failCatalog:()=>{catalogFailure=true;},
     renew:()=>{renew=true;authChanged(session());},delay:()=>{delay=true;},finish:()=>finish?.(),
     switchAccount:(value?:string)=>{owner=value;authChanged(session());},
     failBrowser:()=>{opened=false;},failCreate:()=>{createFailure=true;},pay:()=>{paid=true;},disablePayments:()=>{ready=false;}};
@@ -52,6 +54,19 @@ test('catalog focus, repeated open and token renewal preserve the displayed page
   assert.equal(f.checks.at(-1),true);assert.equal(f.counts.joined,1);
   assert.equal(f.catalog.selection.catalog.courses[0].unlocked,true);
   const after=f.counts;f.focus();await flush();assert.deepEqual(f.counts,after,'settled purchases stop triggering focus refreshes');
+});
+
+test('desktop catalog hides Study and preserves saved project results when the catalog service fails',async()=>{
+  for(const loaded of [false,true]){
+    const f=fixture();if(loaded)await f.catalog.open();
+    f.projectStatus('Completed locally · final checks passed');f.failCatalog();
+    if(loaded)await f.catalog.refresh();else await f.catalog.open();
+    assert.match(f.panel.webview.html,/Completed locally · final checks passed/);
+    assert.match(f.panel.webview.html,/Catalog unavailable/);
+    assert.doesNotMatch(f.panel.webview.html,/data-action="study"/);
+    assert.equal(f.counts.studyReads,0,'paused Study makes no catalog request');
+    if(loaded)assert.match(f.panel.webview.html,/Learn Python/,'existing courses remain visible');
+  }
 });
 
 test('checkout rejects duplicates, survives a queued refresh and never opens for a replaced account',async()=>{

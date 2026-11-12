@@ -1,0 +1,59 @@
+.dhimantai-app-controls {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	flex: 0 0 auto;
+}
+.dhimantai-app-controls button {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	height: var(--dhimantai-action-height, 36px);
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-activityBar-inactiveForeground);
+	cursor: pointer;
+}
+.dhimantai-app-controls button:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-activityBar-foreground);
+}
+.dhimantai-app-controls button:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -2px;
+}
+.dhimantai-app-controls .codicon { font-size: 19px; }
+.dhimantai-app-controls .dhimantai-avatar.signed-in {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 50%;
+	background: var(--vscode-activityBarBadge-background);
+	color: var(--vscode-activityBarBadge-foreground);
+	font-size: 10px;
+	font-weight: 600;
+}
+.dhimantai-update[data-status="available"],
+.dhimantai-update[data-status="ready"] { color: var(--vscode-activityBarBadge-background); }
+.dhimantai-update[data-status="available"]::after,
+.dhimantai-update[data-status="ready"]::after,
+.dhimantai-update[data-status="unavailable"]::after {
+	content: '';
+	position: absolute;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	right: 5px;
+	top: 3px;
+	background: var(--vscode-activityBarBadge-background);
+}
+.dhimantai-update[data-status="unavailable"]::after { background: var(--vscode-notificationsWarningIcon-foreground); }
+@media (prefers-reduced-motion: reduce) {
+	.dhimantai-app-controls .codicon-modifier-spin { animation: none; }
+}

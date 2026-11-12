@@ -72,8 +72,8 @@ main { display: flex; flex: 1; min-height: 0; }
 #help-status { color: var(--vscode-descriptionForeground); margin-bottom: 14px; }
 #ask { padding: 12px max(20px,calc((100% - 960px)/2)); border-top: 1px solid var(--vscode-panel-border); }
 #ask { flex-shrink: 0; }
-#ask .composer-box { display: flex; align-items: flex-end; gap: 4px; border-radius: 28px; }
-#ask .composer-box textarea { flex: 1; min-width: 0; min-height: 44px; height: 44px; max-height: min(160px,22vh); padding: 11px 6px; resize: none; }
+#ask .composer-box { display: flex; align-items: flex-end; gap: 4px; padding: 6px; border-radius: 28px; }
+#ask .composer-input { flex: 1; }
 #ask .composer-toolbar { flex: none; flex-wrap: nowrap; }
 #ask #composer-shortcut, #ask #send-label { display: none; }
 #ask #send { width: 44px; min-width: 44px; height: 44px; padding: 10px; border-radius: 50%; color: var(--vscode-editor-background); background: var(--vscode-foreground); }

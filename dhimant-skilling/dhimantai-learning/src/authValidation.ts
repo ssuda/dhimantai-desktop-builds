@@ -1,15 +1,17 @@
 /** Shared by the account form and its host; passwords are never trimmed. */
-export function authInputErrors(input: {name?: unknown; email?: unknown; password?: unknown; confirmation?: unknown}, signup: boolean): Record<string, string> {
+export function authInputErrors(input: {name?: unknown; email?: unknown; password?: unknown; confirmation?: unknown}, mode: boolean | 'forgotPassword' | 'resetPassword'): Record<string, string> {
+  const signup = mode === true, reset = mode === 'resetPassword';
   const errors: Record<string, string> = {};
   if (signup && (typeof input.name !== 'string' || input.name.trim().length < 2 || input.name.trim().length > 100))
     errors.name = 'Enter a name between 2 and 100 characters.';
-  if (typeof input.email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim()))
+  if (!reset && (typeof input.email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim())))
     errors.email = 'Enter a valid email address, such as name@example.com.';
+  if (mode === 'forgotPassword') return errors;
   if (typeof input.password !== 'string' || !input.password)
     errors.password = 'Enter your password.';
-  else if (signup && input.password.length < 8)
+  else if ((signup || reset) && input.password.length < 8)
     errors.password = 'Use at least 8 characters for your password.';
-  if (signup && (!input.confirmation || input.confirmation !== input.password))
+  if ((signup || reset) && (!input.confirmation || input.confirmation !== input.password))
     errors.confirmation = 'Enter the same password in both password fields.';
   return errors;
 }

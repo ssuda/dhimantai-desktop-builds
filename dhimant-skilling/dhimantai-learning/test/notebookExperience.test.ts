@@ -589,7 +589,8 @@ test('Doubt Solver uses shared Get Help with a per-doubt help ladder and names D
   assert.doesNotMatch(composer, /Instructor/);
   assert.match(composer, /id="practice-help"/);
   assert.match(composer, /notebook-help-actions/);
-  assert.match(composer, /aria-label="Ask Doubt Solver" aria-keyshortcuts="Control\+Enter Meta\+Enter"/);
+  assert.match(composer, /aria-label="Ask Doubt Solver"/);
+  assert.doesNotMatch(composer, /aria-keyshortcuts/);
   const performed: any[] = [];
   const agent = {identity:'worker', isAgent:true, trackPublications:new Map()};
   class Room {
@@ -1178,4 +1179,94 @@ for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}
     post({type:'codeSettings',aiEnabled:false});
     assert.ok(actions.every(button => button.disabled));
   } finally { await ui.close(); }
+});
+
+test('browser task questions use the Instructor composer and acknowledge progress only after delivery', async () => {
+  const messages:string[]=[],rpcs:any[]=[],tracks:any[]=[];
+  const agent={identity:'worker',isAgent:true,trackPublications:new Map()};let fail=false;
+  class Room {
+    remoteParticipants=new Map([['worker',agent]]);
+    localParticipant={registerRpcMethod(){},performRpc:async(request:any)=>{rpcs.push(request);return 'ok';},
+      sendText:async(text:string)=>{if(fail)throw new Error('offline');messages.push(text);},
+      publishTrack:async(track:any)=>{tracks.push(track);},unpublishTrack:async()=>{}};
+    on(){} async connect(){} async disconnect(){} async startAudio(){} registerTextStreamHandler(){}
+  }
+  const track={stop(){},mediaStreamTrack:{addEventListener(){}}};
+  const ui=surface({Room,RoomEvent:{},createLocalAudioTrack:async()=>track},
+    learningComposer('Instructor',false,'<button type="button" id="audio-microphone" disabled></button><button type="button" id="audio-camera" disabled></button><button type="button" id="sound"></button>'));
+  const {w,post,sent,click}=ui,wait=()=>new Promise(r=>setTimeout(r,10));
+  try {
+    post({type:'openTutor',mode:'tutor'});
+    post({type:'tutorLessons',attempt:sent.at(-1).attempt,courses:[{name:'ERPNext Essentials',chapters:[
+      {id:chapterId,name:'Company accounts'},{id:'next-chapter',name:'Customers'}]},
+      {name:'Python',chapters:[{id:'python-chapter',name:'Lists'}]}]});
+    w.document.querySelector<HTMLButtonElement>('#lesson-list button')!.click();const attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'browser',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media:true,browserCourse:true});await wait();
+    const mic=w.document.getElementById('audio-microphone') as HTMLButtonElement;
+    assert.equal(mic.disabled,false);click('audio-microphone');await wait();
+    assert.equal(mic.disabled,false,'capture finishes with the microphone still operable');
+    assert.equal(mic.getAttribute('aria-pressed'),'true');assert.equal(mic.title,'Stop microphone');assert.equal(tracks.length,1);
+    assert.ok(rpcs.some(r=>r.method==='toggle_audio'&&JSON.parse(r.payload).input_enabled===true));
+    click('audio-microphone');await wait();assert.equal(mic.getAttribute('aria-pressed'),'false');
+    const question={id:'company:check-1',task:'company',kind:'explanation',title:'Company accounts',
+      question:'What grows when you bill a customer?',context:'Saved record: Training company.',options:[],minLength:30,maxLength:500};
+    const update=(q:unknown)=>post({type:'browserObservation',attempt,chapter:chapterId,observation:{task:'company'},question:q});
+    update(question);update(question);
+    assert.equal(w.document.querySelectorAll('[data-browser-question-id]').length,1,'repeat observations do not duplicate the question');
+    assert.match(w.document.getElementById('feed')!.textContent!,/What grows when you bill a customer/);
+    assert.equal(w.document.querySelectorAll('#message-bar textarea').length,1);
+    const continueButton=w.document.querySelector<HTMLButtonElement>('[data-browser-continue]')!;
+    assert.equal(continueButton.textContent,'Answer question');
+    continueButton.click();
+    assert.equal(sent.some(m=>m.type==='browserContinue'),false,'Continue points at the unanswered Instructor question');
+    const field=w.document.getElementById('message') as HTMLTextAreaElement;
+    const shortcut=(target:Element,extra={})=>{
+      const event=new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true,...extra});
+      target.dispatchEvent(event);return event;
+    };
+    let forwarded=0;w.addEventListener('keydown',()=>{forwarded++;});
+    field.value='Short';field.dispatchEvent(new w.Event('input'));click('send');await wait();
+    assert.equal(field.value,'Short');assert.equal(messages.length,0);
+    assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/Write 30–500 characters/,'invalid answers explain why the button did not send');
+    (w.document.querySelector('.ask-instead') as HTMLButtonElement).click();
+    const attachment=w.document.querySelector<HTMLElement>('[aria-label="Add attachments"]')!;
+    attachment.focus();update(question);
+    assert.equal(w.document.activeElement,attachment,'background task updates do not steal focus');
+    post({type:'browserObservation',attempt,chapter:chapterId,observation:{task:'company'},question,focusQuestion:question.id});
+    assert.equal(w.document.activeElement,field);assert.equal(field.value,'Short','handoff preserves an existing draft');
+    assert.equal(field.placeholder,'Your answer and reasoning…','an explicit handoff restores answer mode');
+    field.value='Receivables increase because the customer now owes us for this invoice.';
+    field.dispatchEvent(new w.Event('input'));
+    assert.equal(shortcut(field,{isComposing:true}).defaultPrevented,false,'IME confirmation never submits');
+    assert.equal(shortcut(field,{shiftKey:true}).defaultPrevented,false,'Shift+Enter keeps a multiline draft');
+    const before=forwarded;
+    for (const extra of [{}, {ctrlKey:true}, {metaKey:true}, {repeat:true}]) {
+      assert.equal(shortcut(field,extra).defaultPrevented,false,'Enter keeps its normal editing behavior');
+    }
+    await wait();assert.equal(messages.length,0,'keyboard input never sends a draft');
+    fail=true;click('send');await wait();
+    assert.equal(sent.some(m=>m.type==='browserAnswer'),false);assert.ok(field.value);
+    fail=false;click('send');await wait();
+    assert.equal(forwarded,before,'editing keys never escape to the desktop workbench');
+    assert.match(messages.at(-1)!,/Question: What grows.*\nMy answer: Receivables/);
+    assert.equal(sent.filter(m=>m.type==='browserAnswer').length,1);assert.equal(field.value,'');
+    assert.equal(continueButton.textContent,'Continue task');
+    continueButton.click();
+    assert.equal(sent.filter(m=>m.type==='browserContinue').length,1,'Continue goes through the practical task player');
+    assert.equal(messages.length,1,'Continue does not send an unrelated generic lesson prompt');
+    update({...question,id:'company:prediction',kind:'prediction',options:['Cash grows','Receivables grow'],minLength:1});
+    const choices=w.document.querySelectorAll<HTMLButtonElement>('[data-browser-question="company:prediction"]');
+    choices[1].click();assert.equal(field.value,'Receivables grow');click('send');await wait();
+    assert.match(messages.at(-1)!,/without revealing the outcome/);
+    update(null);assert.equal(choices[0].disabled,true,'old questions cannot answer a later task');
+    const joins=sent.filter(m=>m.type==='join').length;
+    click('skip-chapter');
+    assert.equal(sent.at(-1).type,'browserChooseChapter');assert.equal(sent.at(-1).chapterId,'next-chapter');
+    assert.equal(sent.filter(m=>m.type==='join').length,joins,'browser courses move both panels together, after the unsaved-form check');
+    const coursePicker=w.document.getElementById('lesson-course') as HTMLSelectElement;
+    coursePicker.value='Python';coursePicker.dispatchEvent(new w.Event('change'));
+    w.document.querySelector<HTMLButtonElement>('#lesson-list button')!.click();
+    assert.equal(sent.at(-1).type,'join');assert.equal(sent.at(-1).chapterId,'python-chapter','changing courses leaves the browser course normally');
+  } finally {await ui.close();}
 });

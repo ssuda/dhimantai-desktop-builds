@@ -1,3 +1,5 @@
+import { mediaIcon } from '../src/mediaIcons';
+
 /** The app's split speaker control, shared by Instructor and the learning room. */
 export class SpeakerControl {
   private readonly group = document.createElement('div');
@@ -68,9 +70,9 @@ export class SpeakerControl {
     const label = action ?? (muted ? 'Unmute speaker' : 'Mute speaker');
     this.main.setAttribute('aria-label', label);
     this.main.title = label;
-    this.main.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
-      (icon === 'play' ? '<path d="m8 4 12 8-12 8Z"/>' : icon === 'pause' ? '<path d="M8 5v14M16 5v14"/>' :
-        '<path d="M11 4 6 8H3v8h3l5 4Z"/>' + (muted ? '<path d="m16 9 6 6m0-6-6 6"/>' : '<path d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>')) + '</svg>';
+    this.main.innerHTML = muted || icon === 'speaker' ? mediaIcon('speaker', !muted) :
+      '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      (icon === 'play' ? '<path d="m8 4 12 8-12 8Z"/>' : '<path d="M8 5v14M16 5v14"/>') + '</svg>';
     const text = document.createElement('span');
     text.className = 'audio-sr-only';
     text.textContent = action ?? (muted ? 'Unmute' : 'Mute');

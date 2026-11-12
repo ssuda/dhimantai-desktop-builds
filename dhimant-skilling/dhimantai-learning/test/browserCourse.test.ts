@@ -91,17 +91,24 @@ test('Next task appears only after the saved record is verified',async()=>{
   assert.match(root.querySelector('#status').textContent,/differs in: default currency/i);
   assert.equal(check.textContent,'Check saved work');
   f.setSaved(company);
-  check.click();await tick();
-  assert.equal(check.hidden,true,'a matching record is not the end: the learner explains it first');
-  const explain=root.querySelector('#explain'),box=root.querySelector('#explanation'),send=root.querySelector('#send-explanation');
-  assert.equal(explain.hidden,false);assert.match(root.querySelector('#question').textContent,/receivable and the payable/);
-  box.value='Too short';box.dispatchEvent(new f.w.Event('input'));assert.equal(send.disabled,true);
-  box.value='Receivable is money customers owe us; payable is what we owe suppliers. Billing a customer grows receivable.';
-  box.dispatchEvent(new f.w.Event('input'));assert.equal(send.disabled,false);
-  send.click();await tick();
-  assert.equal(explain.hidden,true);assert.equal(check.hidden,false);assert.equal(check.textContent,'Next task');
+  await f.w.dhimantaiErpGuide.continueTask('company');
+  assert.equal(check.hidden,false,'the next action stays visible after a check');
+  assert.equal(check.textContent,'Answer in Instructor','a matching record is not the end: the learner explains it first');
+  const guide=f.w.dhimantaiErpGuide,q=guide.question();
+  assert.equal(root.querySelector('#explain').hidden,true,'the answer box is never shown in the browser');
+  assert.match(q.question,/receivable and the payable/);
+  assert.match(await guide.continueTask('company'),/Answer the current question/);
+  assert.equal(root.querySelector('#lesson').value,'0','Continue cannot skip a pending question');
+  assert.equal(await guide.answerQuestion(q.id,'Too short'),false);
+  assert.equal(await guide.answerQuestion('old-task','A sufficiently long but stale explanation.'),false);
+  assert.equal(await guide.answerQuestion(q.id,'Receivable is money customers owe us; payable is what we owe suppliers. Billing a customer grows receivable.'),true);
+  assert.equal(guide.question(),null);assert.equal(check.hidden,false);assert.equal(check.textContent,'Next task');
   assert.equal(JSON.parse(f.w.localStorage.getItem(f.w.localStorage.key(0))).done.company.explained,true);
+  const opened:string[]=[];f.w.dhimantaiApp.openNew=async(name:string)=>{opened.push(name);};
   check.click();await tick();assert.equal(root.querySelector('#lesson').value,'1');
+  assert.deepEqual(opened,['Customer'],'Continue opens the next practical form');
+  assert.match(await guide.continueTask('company'),/task changed/);
+  assert.equal(root.querySelector('#lesson').value,'1','a stale Continue cannot skip another task');
   assert.equal(check.textContent,'Check saved work');
   assert.equal(JSON.parse(f.w.localStorage.getItem(f.w.localStorage.key(0))).done.company.record,'Training 0123456789');
   f.dom.window.close();
@@ -217,12 +224,14 @@ test('a payment counts only when the invoice it settles is no longer outstanding
   root.querySelector('#check').click();await tick();await tick();
   assert.match(root.querySelector('#status').textContent,/not true yet: The supplier’s bill shows nothing outstanding/);
   outstanding=0;root.querySelector('#check').click();await tick();await tick();
-  assert.match(root.querySelector('#status').textContent,/Saved work verified\. The supplier’s bill shows nothing outstanding\. Before explaining, make your prediction/);
+  assert.match(root.querySelector('#status').textContent,/Saved work verified\. The supplier’s bill shows nothing outstanding\./);
+  assert.equal(root.querySelector('#check').textContent,'Answer in Instructor');
   assert.equal(root.querySelector('#explain').hidden,true,'a skipped prediction comes before the explanation');
   assert.match(root.querySelector('#predict-note').textContent,/finished before predicting/);
   root.querySelector('input[name="prediction"][value="1"]').click();root.querySelector('#lock-prediction').click();await tick();await tick();
   assert.match(root.querySelector('#result').textContent,/Not what you predicted\. You predicted “Cash goes down; Creditors goes up” \(after submitting\)\. The answer is “Cash goes down; Creditors goes down”/);
-  assert.equal(root.querySelector('#explain').hidden,false);
+  assert.equal(root.querySelector('#explain').hidden,true);
+  assert.equal(x.dhimantaiErpGuide.question().kind,'explanation');
   dom.window.close();
 });
 test('live observation sends current authored form fields, excludes passwords and other companies, and supports pause',async(t)=>{
@@ -242,12 +251,12 @@ test('live observation sends current authored form fields, excludes passwords an
   assert.deepEqual(requests[0].body.fields,{default_currency:'INR',default_receivable_account:null,default_payable_account:null});
   assert.ok(!JSON.stringify(requests).includes('never send this'));
   w.cur_frm.doc.default_currency='USD';w.document.dispatchEvent(new w.Event('input'));
-  callbacks.get(900)!();await tick();assert.equal(requests.at(-1).body.fields.default_currency,'USD');
-  w.cur_frm.doc.name='Training someone-else';callbacks.get(900)!();await tick();assert.deepEqual(requests.at(-1).body.fields,{});
+  callbacks.get(900)!();await tick();assert.equal(requests.filter(r=>r.url.endsWith('/observe')).at(-1).body.fields.default_currency,'USD');
+  w.cur_frm.doc.name='Training someone-else';callbacks.get(900)!();await tick();assert.deepEqual(requests.filter(r=>r.url.endsWith('/observe')).at(-1).body.fields,{});
   const follow=root.querySelector('#follow-browser');follow.checked=false;follow.dispatchEvent(new w.Event('change'));await tick();
   assert.equal(requests.at(-1).body.clear,true);
   const count=requests.length;w.cur_frm.doc.default_currency='EUR';callbacks.get(900)!();await tick();assert.equal(requests.length,count);
-  assert.ok(requests.every(r=>r.url.endsWith('/observe')),'passive edits do not ask the Instructor or invoke a model');
+  assert.ok(requests.every(r=>r.url.endsWith('/observe')||r.url.endsWith('/question')),'passive edits do not ask the Instructor or invoke a model');
   f.dom.window.close();
 });
 test('a failed check or ERPNext error offers help but never asks the Instructor in the learner\'s name',async(t)=>{
@@ -336,10 +345,12 @@ test('with situation-only guidance the bar shows no fields, values, highlights o
   const f=lessonFixture(8,{doctype:'Sales Order',doc,fields_dict:{customer:{wrapper:null}},is_new:()=>true,is_dirty:()=>true});await tick();
   const root=f.root();
   assert.equal(root.querySelector('#steps').hidden,true);assert.equal(root.querySelector('#fill').hidden,true);
-  assert.equal(root.querySelector('#count').textContent,'Situation only');
+  assert.equal(root.querySelector('#count').textContent,'Task 9 of 18');
+  assert.equal(root.querySelector('#field-details').hidden,true);
   assert.match(root.querySelector('#now').textContent,/phones: they want 2 widgets.*Save and Submit when you think it is right/);
   assert.doesNotMatch(root.querySelector('#now').textContent,/Every field matches/);
-  assert.equal(root.querySelector('#predict').hidden,false,'the prediction is asked before Submit');
+  assert.equal(root.querySelector('#predict').hidden,true);
+  assert.equal(f.x.dhimantaiErpGuide.question().kind,'prediction','the prediction is ready in Instructor before Submit');
   f.dom.window.close();
 });
 test('a prediction locked in before Submit is shown next to ERPNext’s real stock after the check',async()=>{
@@ -348,24 +359,25 @@ test('a prediction locked in before Submit is shown next to ERPNext’s real sto
   let dirty=false;const asked:string[]=[];
   const f=lessonFixture(4,{doctype:'Purchase Order',doc,fields_dict:{},is_new:()=>false,is_dirty:()=>dirty},url=>{asked.push(decodeURIComponent(url));return url.includes('/Bin')?[{actual_qty:0}]:doc;});await tick();
   const root=f.root();
-  assert.equal(root.querySelector('#predict').hidden,false);assert.equal(root.querySelector('#predict-question').textContent,'After you submit this order, how many widgets will be in Stores?');
-  assert.equal(root.querySelector('#lock-prediction').disabled,true);
-  root.querySelector('input[name="prediction"][value="0"]').click();assert.equal(root.querySelector('#lock-prediction').disabled,false);
-  root.querySelector('#lock-prediction').click();await tick();
+  const guide=f.x.dhimantaiErpGuide,q=guide.question();
   assert.equal(root.querySelector('#predict').hidden,true);
+  assert.equal(q.question,'After you submit this order, how many widgets will be in Stores?');
+  assert.equal(await guide.answerQuestion(q.id,'not an option'),false);
+  assert.equal(await guide.answerQuestion(q.id,q.options[0]),true);
   assert.equal(JSON.parse(f.x.localStorage.getItem(f.key)).predictions.buying.early,true);
   doc.docstatus=1;root.querySelector('#check').click();await tick();await tick();await tick();
   assert.ok(asked.some(u=>u.includes('/api/resource/Bin')&&u.includes('Stores - 0123456789')));
   assert.match(root.querySelector('#result').textContent,/Your prediction was right\. You predicted “0”\. ERPNext shows: 0 in Stores - 0123456789\./);
-  assert.equal(root.querySelector('#explain').hidden,false);
+  assert.equal(root.querySelector('#explain').hidden,true);
+  assert.equal(f.x.dhimantaiErpGuide.question().kind,'explanation');
   f.dom.window.close();
 });
 test('the final challenge gives no field hints: a failed check says how many things differ, and naming them is recorded as help',async()=>{
   const doc:any={name:'CUST-9',customer_name:'Training Retail 0123456789',customer_type:'Company',customer_group:'Commercial',territory:'India'};
   const f=lessonFixture(13,{doctype:'Customer',doc,fields_dict:{},is_new:()=>false,is_dirty:()=>false},()=>doc);await tick();
   const root=f.root();
-  assert.equal(root.querySelector('#count').textContent,'Challenge · no hints');assert.equal(root.querySelector('#steps').hidden,true);
-  assert.equal(root.querySelector('#open').textContent,'Reopen task');
+  assert.equal(root.querySelector('#count').textContent,'Task 14 of 18');assert.equal(root.querySelector('#steps').hidden,true);
+  assert.equal(root.querySelector('#open').hidden,true,'the learner is already in the task');
   root.querySelector('#check').click();await tick();await tick();
   const status=root.querySelector('#status');
   assert.match(status.textContent,/does not meet the brief yet \(2 differences\)/);assert.doesNotMatch(status.textContent,/Customer group/i);
@@ -381,4 +393,138 @@ test('a challenge task created from an earlier record opens it without naming th
   assert.doesNotMatch(root.querySelector('#now').textContent,/Create →/);
   assert.match(root.querySelector('#now').textContent,/Send Asha her 2 widgets/);
   f.dom.window.close();
+});
+test('after the prediction, a submitted document shows the ledger and stock entries ERPNext posted for it, inside its document flow',async()=>{
+  const t='0123456789',doc:any={name:'MAT-PRE-1',company:'Training '+t,supplier:'Training Supplier '+t,docstatus:1,
+    items:[{item_code:'TRAINING-WIDGET-'+t,qty:4,rate:100,warehouse:'Stores - '+t,purchase_order:'PUR-ORD-1'}]};
+  const asked:string[]=[];
+  const f=lessonFixture(5,{doctype:'Purchase Receipt',doc,fields_dict:{},is_new:()=>false,is_dirty:()=>false},url=>{
+    const u=decodeURIComponent(url);asked.push(u);
+    if(u.includes('/GL Entry'))return[{account:'Stock In Hand - '+t,debit:400,credit:0},{account:'Stock Received But Not Billed - '+t,debit:0,credit:400}];
+    if(u.includes('/Stock Ledger Entry'))return[{item_code:'TRAINING-WIDGET-'+t,warehouse:'Stores - '+t,actual_qty:4,qty_after_transaction:4,stock_value_difference:400}];
+    if(u.includes('/Bin'))return[{actual_qty:4}];
+    return u.includes('Purchase Order')?{name:'PUR-ORD-1',per_received:80}:doc;
+  },{buying:'PUR-ORD-1'});await tick();
+  const root=f.root();
+  assert.match(root.querySelector('#trail').textContent,/Document flow: Purchase Order PUR-ORD-1 → Purchase Receipt \(this task\)/);
+  root.querySelector('#check').click();for(let i=0;i<6;i++)await tick();
+  assert.equal(root.querySelector('#posted').hidden,true,'what ERPNext posted is the answer: it waits for the prediction');
+  root.querySelector('input[name="prediction"][value="1"]').click();root.querySelector('#lock-prediction').click();for(let i=0;i<6;i++)await tick();
+  const posted=root.querySelector('#posted');
+  assert.equal(posted.hidden,false);
+  assert.ok(asked.some(u=>u.includes('["voucher_no","=","MAT-PRE-1"]')&&u.includes('["voucher_type","=","Purchase Receipt"]')));
+  assert.match(posted.textContent,/What ERPNext recorded for MAT-PRE-1/);
+  assert.match(posted.textContent,/Stock In Hand400/);assert.match(posted.textContent,/Total · balanced400400/);
+  assert.match(posted.textContent,/Stores \+4, now 4 \(stock value \+400\)/);
+  assert.match(posted.textContent,/Stock Received But Not Billed: a clearing account/);
+  assert.match(root.querySelector('#trail').textContent,/Purchase Receipt MAT-PRE-1/);
+  // The Instructor checks the explanation against these entries.
+  const sent:any[]=[];f.x.addEventListener('dhimantai-erp-explained',(e:any)=>sent.push(e.detail));
+  root.querySelector('#explanation').value='The receipt put 400 of stock on the shelf and owes it to a clearing account until the bill comes.';
+  root.querySelector('#explanation').dispatchEvent(new f.x.Event('input'));root.querySelector('#send-explanation').click();
+  assert.equal(sent[0].recorded,'Stock In Hand debit 400; Stock Received But Not Billed credit 400; stock TRAINING-WIDGET-0123456789 in Stores +4 (now 4)');
+  f.dom.window.close();
+});
+test('a commitment says that nothing was posted',async()=>{
+  const t='0123456789',doc:any={name:'PUR-ORD-1',company:'Training '+t,supplier:'Training Supplier '+t,schedule_date:'2026-11-11',docstatus:1,
+    items:[{item_code:'TRAINING-WIDGET-'+t,qty:5,rate:100,schedule_date:'2026-11-11'}]};
+  const f=lessonFixture(4,{doctype:'Purchase Order',doc,fields_dict:{},is_new:()=>false,is_dirty:()=>false},url=>/GL%20Entry|Stock%20Ledger|\/Bin/.test(url)?[]:doc);await tick();
+  const root=f.root();
+  root.querySelector('#check').click();for(let i=0;i<6;i++)await tick();
+  root.querySelector('input[name="prediction"][value="0"]').click();root.querySelector('#lock-prediction').click();for(let i=0;i<6;i++)await tick();
+  assert.match(root.querySelector('#posted').textContent,/Nothing was posted.*A submitted Purchase Order is a commitment/);
+  f.dom.window.close();
+});
+test('the finished course closes the books from the general ledger and asks the learner to explain profit and cash',async()=>{
+  const t='0123456789',done=Object.fromEntries(course.lessons.map((l:any)=>[l.id,'REC-'+l.id]));
+  const last=course.lessons.length-1, asked:string[]=[];
+  const f=lessonFixture(last,{doctype:'Payment Entry',doc:{name:'REC-retail-payment'},fields_dict:{},is_new:()=>false,is_dirty:()=>false},url=>{
+    const u=decodeURIComponent(url);asked.push(u);
+    if(u.includes('/api/resource/Account'))return[{name:'Sales - '+t,root_type:'Income'},{name:'Cost of Goods Sold - '+t,root_type:'Expense'},{name:'Cash - '+t,root_type:'Asset'},
+      {name:'Debtors - '+t,root_type:'Asset'},{name:'Creditors - '+t,root_type:'Liability'},{name:'Stock In Hand - '+t,root_type:'Asset'}];
+    if(u.includes('/GL Entry'))return[{account:'Sales - '+t,debit:0,credit:620},{account:'Debtors - '+t,debit:620,credit:300},{account:'Cost of Goods Sold - '+t,debit:400,credit:0},
+      {account:'Stock In Hand - '+t,debit:400,credit:400},{account:'Cash - '+t,debit:300,credit:400},{account:'Creditors - '+t,debit:400,credit:400}];
+    return {};
+  },done);for(let i=0;i<8;i++)await tick();
+  const root=f.root(),finale=root.querySelector('#finale');
+  assert.equal(finale.hidden,false);
+  assert.ok(asked.some(u=>u.includes('/GL Entry')&&u.includes('["company","=","Training 0123456789"]')));
+  assert.match(finale.textContent,/Profit: INR 220 = income 620 − expenses 400/);
+  assert.match(finale.textContent,/The books balance: assets 220 = liabilities 0 \+ equity 0 \+ profit 220/);
+  // Asha has not paid yet in this ledger: cash (-100) differs from profit by what she owes.
+  assert.match(finale.textContent,/Cash is INR -100 while profit is INR 220\. The difference sits in Debtors \(320\)/);
+  assert.deepEqual([...finale.querySelectorAll('#reports button')].map((b:any)=>b.textContent),['Open Profit and Loss in ERPNext','Open General Ledger in ERPNext']);
+  const sent:any[]=[];f.x.addEventListener('dhimantai-erp-explained',(e:any)=>sent.push(e.detail));
+  const guide=f.x.dhimantaiErpGuide,q=guide.question();
+  assert.equal(q.kind,'reflection');assert.match(q.context,/Sales \(income\) 620/);
+  assert.equal(root.querySelector('#reflection').parentElement.hidden,true);
+  assert.equal(await guide.answerQuestion(q.id,'Too short'),false);
+  assert.equal(await guide.answerQuestion(q.id,'We sold for 620 what cost us 400, so profit is 220, but Asha still owes 320, so cash is lower than profit.'),true);
+  assert.equal(guide.question(),null);
+  assert.equal(sent[0].task,'close-the-books');assert.match(sent[0].recorded,/Sales \(income\) 620/);assert.match(sent[0].recorded,/Debtors \(asset\) 320/);
+  f.dom.window.close();
+});
+
+test('Instructor answers and Continue complete the browser round trip without a second chat or a skipped task',async(t)=>{
+  const f=fixture(undefined,course);t.after(()=>f.dom.window.close());await tick();
+  const w=f.w,guide=w.dhimantaiErpGuide,callbacks=new Map<number,Function>(),requests:any[]=[];
+  Object.defineProperty(w.document,'hidden',{value:false});
+  w.setInterval=(fn:Function,ms:number)=>{callbacks.set(ms,fn);return ms;};
+  w.frappe.get_route=()=>['Form','Company',w.cur_frm.doc.name];
+  const company={name:'Training 0123456789',default_currency:'INR',default_receivable_account:'Debtors - 0123456789',default_payable_account:'Creditors - 0123456789'};
+  Object.assign(w.cur_frm.doc,company);f.setSaved(company);
+  const read=w.fetch;let state:any={connected:true,detail:'Connected'};
+  w.fetch=async(url:string,options:any)=>{
+    if(!url.startsWith('http://127.0.0.1:40000'))return read(url,options);
+    if(url.endsWith('/state'))return {ok:true,json:async()=>state};
+    requests.push({url,body:options.body&&JSON.parse(options.body)});return {ok:true,json:async()=>({ok:true})};
+  };
+  w.eval(readFileSync(join(player,'live.js'),'utf8'));await tick();
+  await guide.continueTask('company');callbacks.get(900)!();await tick();await tick();
+  const question=requests.find(r=>r.url.endsWith('/question')&&r.body.question)?.body.question;
+  assert.equal(question.kind,'explanation');
+  const root=guide.root;
+  assert.equal(root.querySelector('#check').textContent,'Answer in Instructor');
+  assert.equal(root.querySelector('#open').hidden,true);
+  root.querySelector('#check').click();await tick();await tick();
+  assert.equal(requests.filter(r=>r.url.endsWith('/focus')).length,1);
+  assert.equal(requests.find(r=>r.url.endsWith('/focus')).body.id,question.id);
+  assert.equal(requests.some(r=>r.url.endsWith('/help')),false,'opening the reply box never sends a generic help request');
+  const handoff=root.querySelector('#status').textContent;
+  await callbacks.get(3000)!();
+  assert.equal(root.querySelector('#status').textContent,handoff,'connection polling does not erase the next-step message');
+  assert.ok(root.querySelector('#follow-browser').closest('details'),'sharing settings stay under About this task');
+  state={...state,answer:{id:question.id,answer:'Receivables are what customers owe us; an invoice increases the amount owed.'}};
+  await callbacks.get(3000)!();await tick();
+  assert.equal(requests.filter(r=>r.url.endsWith('/progress')).length,1);
+  assert.equal(requests.some(r=>r.url.endsWith('/help')),false,'Instructor already received this answer through chat');
+  const opened:string[]=[];w.dhimantaiApp.openNew=async(name:string)=>{opened.push(name);};
+  state={...state,taskAction:{id:'continue-1',task:'company'}};
+  await callbacks.get(3000)!();await tick();
+  assert.deepEqual(opened,['Customer']);assert.equal(guide.current().id,'customer');
+  assert.ok(requests.some(r=>r.url.endsWith('/continue-result')&&r.body.id==='continue-1'));
+  await callbacks.get(3000)!();assert.deepEqual(opened,['Customer'],'a repeated command cannot advance twice');
+  const reopened:string[]=[];w.dhimantaiApp.openRecord=async(name:string)=>{reopened.push(name);};
+  state={connected:true,taskAction:{id:'choose-2',task:'company',kind:'open'}};
+  await callbacks.get(3000)!();await tick();
+  assert.equal(guide.current().id,'company');assert.deepEqual(reopened,['Company']);
+  assert.ok(requests.some(r=>r.url.endsWith('/continue-result') && r.body.id==='choose-2'));
+  await callbacks.get(3000)!();assert.deepEqual(reopened,['Company'],'a repeated navigation command does not reopen a task');
+});
+
+test('skipping a chapter preserves incomplete tasks, protects unsaved forms and explains dependencies',async(t)=>{
+  const f=fixture(undefined,course);t.after(()=>f.dom.window.close());await tick();
+  const guide=f.w.dhimantaiErpGuide,opened:string[]=[];
+  f.w.dhimantaiApp.openNew=async(name:string)=>{opened.push(name);};
+  f.setDirty(true);
+  assert.match(await guide.openTask('customer'),/Save or discard/);
+  assert.equal(guide.current().id,'company');assert.deepEqual(opened,[]);
+  f.setDirty(false);await guide.openTask('customer');
+  assert.equal(guide.current().id,'customer');assert.deepEqual(opened,['Customer']);
+  const state=JSON.parse(f.w.localStorage.getItem(f.w.localStorage.key(0)));
+  assert.deepEqual(state.done,{},'navigation never marks the skipped task complete');
+  assert.equal(state.lesson,1);
+  assert.match(await guide.openTask('stock'),/needs an earlier record/);
+  assert.match(guide.root.querySelector('#now').textContent,/Finish.*Order from your supplier.*first/);
+  assert.deepEqual(opened,['Customer'],'a missing prerequisite is not silently created');
 });

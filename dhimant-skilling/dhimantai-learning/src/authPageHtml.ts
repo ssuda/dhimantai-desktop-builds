@@ -1,13 +1,16 @@
 import { authInputErrors } from './authValidation';
-export type AuthPageMode = 'signIn' | 'signUp';
+export type AuthPageMode = 'signIn' | 'signUp' | 'forgotPassword' | 'resetPassword';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const revealButton = (id: string, label: string) => `<button class="reveal" type="button" data-label="${label}" aria-controls="${id}" aria-pressed="false" aria-label="Show ${label}" title="Show ${label}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="slash" d="m3 3 18 18"/></svg></button>`;
 
 /** Credentials stay in the form and are never saved in webview state or sent to a browser. */
 export function authPageHtml(mode: AuthPageMode, nonce: string, environment: string, notice = ''): string {
-  const signup = mode === 'signUp';
-  const title = signup ? 'Create your account' : 'Sign in';
+  const signup = mode === 'signUp', forgot = mode === 'forgotPassword', reset = mode === 'resetPassword';
+  const newPassword = signup || reset;
+  const title = signup ? 'Create your account' : forgot ? 'Forgot password' : reset ? 'Choose a new password' : 'Sign in';
+  const submit = signup ? 'Create account' : forgot ? 'Send reset link' : reset ? 'Update password' : 'Sign in';
+  const submitting = signup ? 'Creating account…' : forgot ? 'Sending reset link…' : reset ? 'Updating password…' : 'Signing in…';
   return `<!doctype html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; form-action 'none'; base-uri 'none'">
@@ -24,18 +27,19 @@ input:focus-visible,button:focus-visible{outline:2px solid var(--vscode-focusBor
 #status{margin:16px 0 0;overflow-wrap:anywhere}#status:empty{display:none}#status.error{color:var(--vscode-errorForeground)}
 </style></head><body><main>
 <header><div class="brand">dhimantAI${environment === 'production' ? '' : `<span class="service">${escape(environment)}</span>`}</div>
-<h1>${title}</h1><p>${signup ? 'Start learning with your own account.' : 'Continue learning with dhimantAI.'}</p></header>
+<h1>${title}</h1><p>${signup ? 'Start learning with your own account.' : forgot ? 'Enter your registered email address. We will send you a link to reset your password.' : reset ? 'Use at least 8 characters. Then sign in with your new password.' : 'Continue learning with dhimantAI.'}</p></header>
 <form id="auth-form" novalidate>
 ${signup ? '<label for="name">Name</label><input id="name" name="name" autocomplete="name" required minlength="2" maxlength="100">' : ''}
-<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" required aria-describedby="email-hint">
-<p class="hint" id="email-hint">${signup ? 'Use an email you can access, such as name@example.com. You may need to confirm it before signing in.' : 'Use the email address you registered with, such as name@example.com.'}</p>
-<label for="password">Password</label><div class="password-field"><input id="password" name="password" type="password" autocapitalize="none" spellcheck="false" autocomplete="${signup ? 'new-password' : 'current-password'}" required aria-describedby="password-hint"${signup ? ' minlength="8"' : ''}>${revealButton('password', 'password')}</div>
-${signup ? '' : '<p class="hint" id="password-hint">Enter your existing password exactly. Passwords are case-sensitive.</p>'}
-${signup ? '<p class="hint" id="password-hint">Use at least 8 characters.</p><label for="confirmation">Confirm password</label><div class="password-field"><input id="confirmation" name="confirmation" type="password" autocapitalize="none" spellcheck="false" autocomplete="new-password" required minlength="8">' + revealButton('confirmation', 'password confirmation') + '</div>' : ''}
+${reset ? '' : `<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" required aria-describedby="email-hint">
+<p class="hint" id="email-hint">${signup ? 'Use an email you can access, such as name@example.com. You may need to confirm it before signing in.' : 'Use the email address you registered with, such as name@example.com.'}</p>`}
+${forgot ? '' : `<label for="password">${reset ? 'New password' : 'Password'}</label><div class="password-field"><input id="password" name="password" type="password" autocapitalize="none" spellcheck="false" autocomplete="${newPassword ? 'new-password' : 'current-password'}" required aria-describedby="password-hint"${newPassword ? ' minlength="8"' : ''}>${revealButton('password', 'password')}</div>
+<p class="hint" id="password-hint">${newPassword ? 'Use at least 8 characters.' : 'Enter your existing password exactly. Passwords are case-sensitive.'}</p>`}
+${newPassword ? '<label for="confirmation">Confirm password</label><div class="password-field"><input id="confirmation" name="confirmation" type="password" autocapitalize="none" spellcheck="false" autocomplete="new-password" required minlength="8">' + revealButton('confirmation', 'password confirmation') + '</div>' : ''}
+${mode === 'signIn' ? '<p><button class="link" id="forgot" type="button">Forgot password?</button></p>' : ''}
 <p id="status" role="status" aria-live="polite">${escape(notice)}</p>
-<button class="submit" type="submit">${signup ? 'Create account' : 'Sign in'}</button>
+<button class="submit" type="submit">${submit}</button>
 </form>
-<p class="switch">${signup ? 'Already have an account?' : 'New to dhimantAI?'} <button class="link" id="switch" type="button">${signup ? 'Sign in' : 'Create an account'}</button></p>
+<p class="switch">${forgot || reset ? '' : signup ? 'Already have an account?' : 'New to dhimantAI?'} <button class="link" id="switch" type="button">${forgot || reset ? 'Back to sign in' : signup ? 'Sign in' : 'Create an account'}</button></p>
 </main><script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 const form = document.getElementById('auth-form');
@@ -62,11 +66,11 @@ function setBusy(value) {
   document.querySelectorAll('.reveal').forEach(button => setVisible(button, false));
   form.setAttribute('aria-busy', String(value));
   document.querySelectorAll('input,button').forEach(control => { control.disabled = value; });
-  form.querySelector('.submit').textContent = value ? '${signup ? 'Creating account…' : 'Signing in…'}' : '${signup ? 'Create account' : 'Sign in'}';
+  form.querySelector('.submit').textContent = value ? '${submitting}' : '${submit}';
 }
 const authInputErrors = ${authInputErrors.toString()};
 function validateFields() {
-  const errors = authInputErrors(Object.fromEntries(new FormData(form)), ${signup});
+  const errors = authInputErrors(Object.fromEntries(new FormData(form)), ${forgot || reset ? JSON.stringify(mode) : signup});
   form.querySelectorAll('input').forEach(input => {
     input.setCustomValidity(errors[input.name] || '');
     input.setAttribute('aria-invalid', String(!!errors[input.name]));
@@ -80,7 +84,7 @@ form.addEventListener('submit', event => {
   const errors = validateFields();
   if (Object.keys(errors).length) { status.textContent = Object.values(errors)[0]; status.className = 'error'; }
   if (!form.reportValidity()) return;
-  const message = { type: 'submit', mode: '${mode}', email: document.getElementById('email').value, password: password.value,
+  const message = { type: 'submit', mode: '${mode}', email: document.getElementById('email')?.value, password: password?.value,
     name: document.getElementById('name')?.value, confirmation: confirmation?.value };
   status.textContent = ''; status.className = '';
   setBusy(true);
@@ -89,15 +93,20 @@ form.addEventListener('submit', event => {
 document.getElementById('switch').addEventListener('click', () => {
   if (busy) return;
   setBusy(true);
-  vscode.postMessage({type:'navigate', mode:'${signup ? 'signIn' : 'signUp'}'});
+  vscode.postMessage({type:'navigate', mode:'${signup || forgot || reset ? 'signIn' : 'signUp'}'});
+});
+document.getElementById('forgot')?.addEventListener('click', () => {
+  if (busy) return;
+  setBusy(true);
+  vscode.postMessage({type:'navigate', mode:'forgotPassword'});
 });
 window.addEventListener('message', event => {
   if (event.data?.type !== 'error') return;
   setBusy(false);
-  password.value = ''; if (confirmation) { confirmation.value = ''; confirmation.setCustomValidity(''); }
+  if (password) password.value = ''; if (confirmation) { confirmation.value = ''; confirmation.setCustomValidity(''); }
   status.className = 'error'; status.textContent = event.data.message;
-  password.focus();
+  (password || document.getElementById('email')).focus();
 });
-document.getElementById('${signup ? 'name' : 'email'}').focus();
+document.getElementById('${signup ? 'name' : reset ? 'password' : 'email'}').focus();
 </script></body></html>`;
 }

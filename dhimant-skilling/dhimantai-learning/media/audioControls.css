@@ -16,7 +16,10 @@
 .audio-picker p { margin: 8px 0 0; font-size: .9em; color: var(--vscode-descriptionForeground); }
 .audio-picker p:empty { display: none; }
 .audio-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-#audio-microphone { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 8px; border: 0; background: transparent; color: var(--vscode-disabledForeground, #888); cursor: not-allowed; }
-#audio-microphone svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#audio-microphone, #audio-camera { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 8px; border: 0; border-radius: 50%; background: transparent; color: var(--vscode-foreground); cursor: pointer; }
+#audio-microphone:disabled, #audio-camera:disabled { color: var(--vscode-disabledForeground, #888); cursor: default; }
+#audio-microphone[aria-pressed=true], #audio-camera[aria-pressed=true] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+#audio-microphone:hover:not(:disabled):not([aria-pressed=true]), #audio-camera:hover:not(:disabled):not([aria-pressed=true]) { background: var(--vscode-toolbar-hoverBackground, var(--vscode-button-secondaryHoverBackground)); }
+#audio-microphone svg, #audio-camera svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .audio-actions { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-widget-border, #888); }
 @media (forced-colors: active) { .audio-split { border: 1px solid ButtonText; } .audio-split[data-muted=true] { border: 2px solid Highlight; } }

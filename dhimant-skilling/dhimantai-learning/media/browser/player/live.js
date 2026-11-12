@@ -11,10 +11,11 @@
     if(!connection || !/^http:\/\/127\.0\.0\.1:\d+$/.test(connection.origin)
         || !/^[a-f0-9]{64}$/.test(connection.token) || guide.user!==`learner-${connection.learner}@training.invalid`)return;
     const root=guide.root, area=guide.live||root.getElementById('body');
-    area.insertAdjacentHTML('beforeend','<button id="ask-instructor">Ask Instructor</button><label><input id="follow-browser" type="checkbox" checked> Instructor follows this form</label><small id="live-status" role="status">Connecting to Instructor…</small>');
+    area.insertAdjacentHTML('beforeend','<button id="ask-instructor" class="link" disabled>Ask Instructor</button><small id="live-status" role="status">Connecting to Instructor…</small>');
+    (root.getElementById('connection-options')||area).insertAdjacentHTML('beforeend','<label><input id="follow-browser" type="checkbox" checked> Share this task’s fields with Instructor</label>');
     const follow=root.getElementById('follow-browser'),status=root.getElementById('live-status'),ask=root.getElementById('ask-instructor');
     let enabled=true,connected=false,sequence=0,latestHash='',lastSent=0,lastError='',problem=false,action='view',result=null;
-    let pending=Promise.resolve(),closed=false;
+    let pending=Promise.resolve(),closed=false,questionHash='',questionSync=Promise.resolve(),lastTaskAction,readingState=false;
     const nextSequence=()=>{sequence=Math.max(sequence+1,Date.now()*1000);return sequence;};
     const request=async(path,body)=>{
       const response=await fetch(connection.origin+path,{method:body===undefined?'GET':'POST',
@@ -55,11 +56,21 @@
       void pending.catch(error=>{connected=false;status.textContent=error.message;});
       return pending;
     }
+    function publishQuestion() {
+      if(!enabled || closed || !guide.question)return Promise.resolve();
+      questionSync=questionSync.catch(()=>{}).then(async()=>{
+        await observe();
+        if(!enabled || closed)return;
+        const question=guide.question(),hash=JSON.stringify(question);
+        if(hash===questionHash)return;
+        await request('/question',{question});questionHash=hash;
+      });
+      return questionSync;
+    }
     /** Help is always the learner's choice. A problem only changes what the button offers. */
     function offer(active) {
       problem=active;
       ask.textContent=active?'Ask Instructor about this':'Ask Instructor';
-      ask.classList.toggle('primary',active);
     }
     async function help() {
       if(!enabled || !connected || closed)return;
@@ -70,12 +81,23 @@
         await observe(true);
         if(!enabled || closed)return;
         await request('/help',{message});
-        offer(false);status.textContent='Instructor is answering in the left pane.';
-      }catch(error){status.textContent=error.message;}finally{ask.disabled=!connected||!enabled;}
+        offer(false);guide.reportStatus('Instructor is answering in the Instructor panel.');
+      }catch(error){guide.reportStatus(error.message);}finally{ask.disabled=!connected||!enabled;}
     }
     ask.onclick=()=>{void help();};
+    window.addEventListener('dhimantai-erp-focus',event=>{
+      void (async()=>{
+        if(!enabled) {guide.reportStatus('Turn on “Share this task’s fields with Instructor” in About this task to continue.');return;}
+        try {
+          await publishQuestion();
+          if(guide.question()?.id!==event.detail.id)return;
+          await request('/focus',{id:event.detail.id});
+          guide.reportStatus('Answer in the Instructor message box. Your saved work stays here.');
+        }catch(error){guide.reportStatus(error.message);}
+      })();
+    });
     follow.onchange=()=>{
-      enabled=follow.checked;latestHash='';ask.disabled=!enabled||!connected;
+      enabled=follow.checked;latestHash='';questionHash='';ask.disabled=!enabled||!connected;
       if(enabled)void observe(true);
       else {
         status.textContent='Observation paused. No form updates are sent.';
@@ -95,22 +117,41 @@
     });
     // The learner's own explanation, in their words, for the Instructor to check: the course's teach-back.
     window.addEventListener('dhimantai-erp-explained',event=>{
-      const {title,question,text,prediction}=event.detail;
+      if(event.detail.fromInstructor)return; // The answer already went through the notebook's chat transport.
+      const {title,question,text,prediction,recorded}=event.detail;
       if(!enabled || !connected || closed)return;
-      void observe(true).then(()=>request('/help',{message:(`My explanation for “${title}”.\n${prediction?'Prediction: '+prediction.slice(0,500)+'\n':''}Question: ${question}\nMy answer: ${text}\n`
+      const product=window.dhimantaiApp?.title||'The application';
+      // What the application actually posted goes first, so the Instructor checks the reasoning against real entries.
+      void observe(true).then(()=>request('/help',{message:(`My explanation for “${title}”.\n${recorded?product+' recorded: '+String(recorded).slice(0,600)+'\n':''}${prediction?'Prediction: '+prediction.slice(0,400)+'\n':''}Question: ${question}\nMy answer: ${text.slice(0,800)}\n`
         +'Check my reasoning against my records: say what is right, correct one gap, and ask me one follow-up. Do not give me a model answer before I try again.').slice(0,1500)}))
         .then(()=>{status.textContent='Instructor is reading your explanation in the left pane.';}).catch(error=>{status.textContent=error.message;});
     });
     const observationTimer=setInterval(()=>{
       if(document.hidden || !enabled)return;
       void observe().catch(()=>{});
+      void publishQuestion().catch(error=>{status.textContent=error.message;});
       const error=snapshot().errors.filter(e=>e!==guide.status().slice(0,500)).join('\n');
       if(error && error!==lastError){lastError=error;offer(true);}else if(!error && lastError){lastError='';if(result!=='mismatch')offer(false);}
     },900);
     const stateTimer=setInterval(async()=>{
+      if(readingState || closed)return;readingState=true;
       try{const state=await request('/state');connected=state.connected===true;
-        if(enabled)status.textContent=typeof state.detail==='string'?state.detail:'Instructor connection changed.';
+        if(enabled && state.answer && guide.answerQuestion) {
+          await guide.answerQuestion(state.answer.id,state.answer.answer);
+          await publishQuestion();
+        }
+        if(enabled && state.taskAction && guide.continueTask) {
+          if(lastTaskAction?.id!==state.taskAction.id) {
+            const status=state.taskAction.kind==='open'
+              ? await guide.openTask(state.taskAction.task) : await guide.continueTask(state.taskAction.task);
+            lastTaskAction={id:state.taskAction.id,status};
+          }
+          await observe(true);await publishQuestion();
+          await request('/continue-result',lastTaskAction);
+        }
+        if(enabled)status.textContent=connected?'':typeof state.detail==='string'?state.detail:'Instructor connection changed.';
       }catch(error){connected=false;if(enabled)status.textContent=error.message;}
+      finally{readingState=false;}
       ask.disabled=!connected||!enabled;
     },3000);
     window.addEventListener('pagehide',()=>{

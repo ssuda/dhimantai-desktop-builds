@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { Environment, EnvironmentName } from './environments';
 import { openAuthPage } from './authPage';
 import { learnerRpc } from './learnerCatalog';
+import { createHash, randomBytes } from 'node:crypto';
+import { authInputErrors } from './authValidation';
 
 /** A Supabase GoTrue session, the same identity the Flutter app sends as a Bearer token. */
 export interface Session {
@@ -26,6 +28,7 @@ export function setAuthDiagnostics(output: Pick<vscode.OutputChannel, 'appendLin
 // Notebook helpers create their own Auth objects; share refreshes for the same stored session.
 const refreshes = new WeakMap<vscode.SecretStorage, Map<string, Promise<Session>>>();
 const sessionWrites = new WeakMap<vscode.SecretStorage, Promise<void>>();
+const passwordRecoveries = new WeakMap<vscode.SecretStorage, {session: Session; environment: EnvironmentName; service: Environment}>();
 const rejectedSessionCodes = new Set(['refresh_token_not_found', 'refresh_token_already_used',
   'session_not_found', 'session_expired', 'user_not_found', 'user_banned', 'invalid_grant']);
 
@@ -42,10 +45,12 @@ function refreshFailure(error: unknown): string {
   return 'invalid session response';
 }
 
-async function gotrue(env: Environment, path: string, body: unknown): Promise<any> {
+async function gotrue(env: Environment, path: string, body: unknown,
+    options: {method?: 'POST' | 'PUT'; token?: string} = {}): Promise<any> {
   const response = await fetch(`${env.supabaseUrl}/auth/v1/${path}`, {
-    method: 'POST',
-    headers: { apikey: env.supabaseAnonKey, 'Content-Type': 'application/json' },
+    method: options.method ?? 'POST',
+    headers: { apikey: env.supabaseAnonKey, 'Content-Type': 'application/json',
+      ...(options.token ? {Authorization: `Bearer ${options.token}`} : {}) },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(30_000),
   });
@@ -193,6 +198,69 @@ export class Auth {
     const environment = this.envName(), env = this.env();
     const data = await gotrue(env, 'token?grant_type=password', { email: email.trim(), password });
     return this.acceptSession(data, environment, env);
+  }
+
+  private recoveryKey(environment = this.envName(), env = this.env()) {
+    return 'dhimantai.passwordRecovery:' + environment + ':' + createHash('sha256').update(env.supabaseUrl).digest('hex');
+  }
+
+  /** PKCE binds the email link to this installation without putting session tokens in a URL. */
+  async requestPasswordReset(email: string): Promise<void> {
+    const errors = authInputErrors({email}, 'forgotPassword');
+    if (errors.email) throw new Error(errors.email);
+    const environment = this.envName(), env = this.env(), key = this.recoveryKey(environment, env);
+    const verifier = randomBytes(32).toString('base64url'), state = randomBytes(24).toString('hex');
+    const pending = JSON.stringify({verifier, state, email: email.trim().toLowerCase(), created: Date.now()});
+    const redirect = `${vscode.env.uriScheme}://optficial.dhimantai-learning/password-reset?environment=${environment}&state=${state}`;
+    this.clearPasswordRecovery();
+    await this.secrets.store(key, pending);
+    try {
+      await gotrue(env, 'recover?redirect_to=' + encodeURIComponent(redirect), {
+        email: email.trim(), code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 's256',
+      });
+    } catch (error) {
+      if (await this.secrets.get(key) === pending) await this.secrets.delete(key);
+      throw error;
+    }
+  }
+
+  async acceptPasswordRecovery(uri: vscode.Uri): Promise<void> {
+    const environment = this.envName(), env = this.env(), key = this.recoveryKey(environment, env);
+    const invalid = () => new Error('This reset link has expired or belongs to another app or service. Request a new link from Forgot password.');
+    const params = new URLSearchParams(uri.query);
+    if (uri.scheme !== vscode.env.uriScheme || uri.authority !== 'optficial.dhimantai-learning'
+        || uri.path !== '/password-reset' || params.get('environment') !== environment || !params.get('code')) throw invalid();
+    let pending: {verifier: string; state: string; email: string; created: number};
+    try { pending = JSON.parse(await this.secrets.get(key) ?? 'null'); } catch { throw invalid(); }
+    if (!pending || params.get('state') !== pending.state || typeof pending.verifier !== 'string'
+        || !Number.isFinite(pending.created) || Date.now() - pending.created > 60 * 60 * 1000) throw invalid();
+    // Consume once, before exchange. A failed exchange requires a fresh email link.
+    await this.secrets.delete(key);
+    const session = toSession(await gotrue(env, 'token?grant_type=pkce', {auth_code: params.get('code'), code_verifier: pending.verifier}));
+    if (environment !== this.envName() || env.supabaseUrl !== this.env().supabaseUrl
+        || session.user.email?.toLowerCase() !== pending.email) throw invalid();
+    passwordRecoveries.set(this.secrets, {session, environment, service: env});
+    void openAuthPage(this.secrets, this, this.envName, 'resetPassword');
+  }
+
+  clearPasswordRecovery() { passwordRecoveries.delete(this.secrets); }
+
+  async resetPassword(password: string, confirmation: string): Promise<void> {
+    const errors = authInputErrors({password, confirmation}, 'resetPassword');
+    if (Object.keys(errors).length) throw new Error(Object.values(errors)[0]);
+    const recovery = passwordRecoveries.get(this.secrets);
+    if (!recovery || recovery.environment !== this.envName() || recovery.service.supabaseUrl !== this.env().supabaseUrl
+        || recovery.session.expires_at <= Date.now() / 1000) {
+      this.clearPasswordRecovery();
+      throw new Error('Your reset link has expired. Request a new link from Forgot password.');
+    }
+    await gotrue(recovery.service, 'user', {password}, {method: 'PUT', token: recovery.session.access_token});
+    this.clearPasswordRecovery();
+    // Recovery never replaces the learner's saved sign-in session.
+    await fetch(`${recovery.service.supabaseUrl}/auth/v1/logout?scope=local`, {
+      method: 'POST', headers: {apikey: recovery.service.supabaseAnonKey, Authorization: `Bearer ${recovery.session.access_token}`},
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => undefined);
   }
 
   private async acceptSession(data: any, environment: EnvironmentName, env: Environment): Promise<Session> {

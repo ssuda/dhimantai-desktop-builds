@@ -113,7 +113,8 @@ def bundle_extension(app_resources, vsix, configs):
     metadata['contributes'].setdefault('configurationDefaults', {}).update({
         'workbench.startupEditor': 'none', 'dhimantai.autoUpdate': True,
         'workbench.colorTheme': 'Light Modern',
-        'workbench.activityBar.location': 'hidden',
+        'workbench.activityBar.location': 'default',
+        'workbench.activityBar.compact': True,
         'dhimantai.environment': 'production' if 'production' in client else 'staging'})
     (destination / 'package.json').write_text(json.dumps(metadata, indent=2) + '\n')
     return metadata['version']
@@ -126,8 +127,8 @@ def verify_copilot_optional(app_resources):
         raise RuntimeError('The desktop must retain the optional Copilot provider configuration')
     metadata = json.loads((app / 'extensions/optficial.dhimantai-learning/package.json').read_text())
     defaults = metadata['contributes']['configurationDefaults']
-    if defaults.get('chat.disableAIFeatures') is not True or defaults.get('workbench.activityBar.location') != 'hidden':
-        raise RuntimeError('Expected Copilot disabled and Activity Bar hidden defaults')
+    if defaults.get('chat.disableAIFeatures') is not True or defaults.get('workbench.activityBar.location') != 'default' or defaults.get('workbench.activityBar.compact') is not True:
+        raise RuntimeError('Expected Copilot disabled and compact Activity Bar defaults')
     return any(json.loads(path.read_text()).get('publisher', '').lower() == 'github'
         and json.loads(path.read_text()).get('name', '').lower() in ['copilot', 'copilot-chat', 'copilot-nightly']
         for path in (app / 'extensions').glob('*/package.json'))

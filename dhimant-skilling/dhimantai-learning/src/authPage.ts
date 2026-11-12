@@ -39,24 +39,27 @@ class AuthPage {
     });
     this.panel.onDidDispose(() => {
       this.closed = true;
+      this.auth.clearPasswordRecovery();
       received.dispose(); config.dispose(); onClose(); this.resolve(undefined);
     });
     this.render();
   }
 
   open(mode: AuthPageMode) {
-    if (!this.busy && mode !== this.mode) { this.mode = mode; this.render(); }
+    if ((!this.busy || mode === 'resetPassword') && mode !== this.mode) { this.mode = mode; this.render(); }
     this.panel.reveal();
   }
 
   private render(notice = '') {
-    this.panel.title = this.mode === 'signUp' ? 'dhimantAI · Sign up' : 'dhimantAI · Sign in';
+    this.panel.title = this.mode === 'signUp' ? 'dhimantAI · Sign up'
+      : this.mode === 'signIn' ? 'dhimantAI · Sign in' : 'dhimantAI · Reset password';
     this.panel.webview.html = authPageHtml(this.mode, randomBytes(18).toString('base64'), this.environment, notice);
   }
 
   private async handle(message: any) {
     if (this.closed || this.busy || !message || this.environment !== this.currentEnvironment()) return;
-    if (message.type === 'navigate' && (message.mode === 'signIn' || message.mode === 'signUp')) {
+    if (message.type === 'navigate' && ['signIn', 'signUp', 'forgotPassword'].includes(message.mode)) {
+      this.auth.clearPasswordRecovery();
       this.open(message.mode);
       return;
     }
@@ -64,8 +67,22 @@ class AuthPage {
     this.busy = true;
     try {
       const { email, password, name, confirmation } = message;
-      const errors = authInputErrors(message, this.mode === 'signUp');
+      const mode = this.mode;
+      const errors = authInputErrors(message, mode === 'forgotPassword' || mode === 'resetPassword' ? mode : mode === 'signUp');
       if (Object.keys(errors).length) throw new Error(Object.values(errors)[0]);
+      if (mode === 'forgotPassword') {
+        await this.auth.requestPasswordReset(email);
+        if (!this.closed && this.mode === mode) {
+          this.mode = 'signIn';
+          this.render('If an account uses that email, a reset link is on its way. Check your inbox and spam folder, then open the link on this computer to choose a new password.');
+        }
+        return;
+      }
+      if (mode === 'resetPassword') {
+        await this.auth.resetPassword(password, confirmation);
+        if (!this.closed) { this.mode = 'signIn'; this.render('Password updated. Sign in with your new password.'); }
+        return;
+      }
       let session: Session | undefined;
       if (this.mode === 'signUp') {
         if (typeof name !== 'string') throw new Error('Enter your name.');

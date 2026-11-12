@@ -68,6 +68,45 @@
         + encodeURIComponent(JSON.stringify([['voucher_no', '=', record], ['is_cancelled', '=', 0]])))).data || [];
       return rows.length ? rows.map(r => `${r.account} ${Number(r.debit) ? 'debit ' + Number(r.debit) : 'credit ' + Number(r.credit)}`).join(' · ') + '.' : 'no ledger entries.';
     },
+    /** What a submitted document posted: its general ledger and stock ledger entries, as ERPNext recorded them. */
+    async postings(form, record) {
+      const list = (doctype, fields) => get('/api/resource/' + encodeURIComponent(doctype) + '?limit_page_length=100&fields=' + encodeURIComponent(JSON.stringify(fields))
+        + '&filters=' + encodeURIComponent(JSON.stringify([['voucher_type', '=', form], ['voucher_no', '=', record], ['is_cancelled', '=', 0]]))).then(r => r.data || []);
+      const [gl, sle] = await Promise.all([list('GL Entry', ['account', 'debit', 'credit']),
+        list('Stock Ledger Entry', ['item_code', 'warehouse', 'actual_qty', 'qty_after_transaction', 'stock_value_difference'])]);
+      return {ledger: gl.map(r => ({account: r.account, debit: Number(r.debit) || 0, credit: Number(r.credit) || 0})),
+        stock: sle.map(r => ({item: r.item_code, warehouse: r.warehouse, change: Number(r.actual_qty) || 0,
+          balance: Number(r.qty_after_transaction) || 0, value: Number(r.stock_value_difference) || 0}))};
+    },
+    /** The company's account balances from its general ledger, each in its natural direction, with its kind. */
+    async books(company) {
+      const filters = JSON.stringify([['company', '=', company]]);
+      const [accounts, gl] = await Promise.all([
+        get('/api/resource/Account?limit_page_length=1000&fields=' + encodeURIComponent('["name","root_type"]') + '&filters=' + encodeURIComponent(filters)),
+        get('/api/resource/GL%20Entry?limit_page_length=5000&fields=' + encodeURIComponent('["account","debit","credit"]')
+          + '&filters=' + encodeURIComponent(JSON.stringify([['company', '=', company], ['is_cancelled', '=', 0]])))]);
+      const kind = Object.fromEntries((accounts.data || []).map(a => [a.name, String(a.root_type || '').toLowerCase()]));
+      const net = {};
+      for (const r of gl.data || []) net[r.account] = (net[r.account] || 0) + (Number(r.debit) || 0) - (Number(r.credit) || 0);
+      // Assets and expenses are debit balances; liabilities, equity and income are credit balances.
+      return Object.entries(net).map(([account, debit]) => ({account, kind: kind[account] || 'asset',
+        balance: ['asset', 'expense'].includes(kind[account] || 'asset') ? debit : -debit})).filter(l => Math.abs(l.balance) > 0.004);
+    },
+    /** What ERPNext's standard accounts are for, shown beside the entries that use them. */
+    accountNotes: {
+      'Stock In Hand': 'the value of goods on your shelves. Receipts add to it; deliveries take from it.',
+      'Stock Received But Not Billed': 'a clearing account. The receipt credits it for goods that arrived before their bill; the supplier’s bill debits it back to zero, so goods and bills can arrive in either order.',
+      'Creditors': 'what you owe suppliers. Bills add to it; payments reduce it.',
+      'Debtors': 'what customers owe you. Sales invoices add to it; payments received reduce it.',
+      'Cost of Goods Sold': 'what the goods you delivered cost you. With perpetual inventory ERPNext posts it when goods leave the warehouse, at their valuation rate, not when you bill.',
+      'Sales': 'income from what you sold, posted by the sales invoice.',
+      'Cash': 'money in hand. Payments received add to it; payments made reduce it.',
+    },
+    /** The application's own statements, opened for the learner's company. */
+    reports: [
+      {label: 'Profit and Loss', open: company => { frappe.route_options = {company}; return frappe.set_route('query-report', 'Profit and Loss Statement'); }},
+      {label: 'General Ledger', open: company => { frappe.route_options = {company}; return frappe.set_route('query-report', 'General Ledger'); }},
+    ],
     // Authoring replay: perform what a learner would, through the form's own controls.
     save: () => frm().save(),
     /** A final action; Frappe's is Submit. */

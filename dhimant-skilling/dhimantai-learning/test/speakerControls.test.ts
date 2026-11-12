@@ -63,19 +63,20 @@ test('learning room mutes locally, remembers each agent, and applies the chosen 
   const w = dom.window, sent: any[] = [], rooms: Room[] = [], rpcs: string[] = [];
   w.document.body.insertAdjacentHTML('afterbegin', lessonPicker);
   const peer = {identity: 'worker', isAgent: true, trackPublications: new Map()};
-  let rejectPlayback: ((error: Error) => void) | undefined;
+  let rejectPlayback: ((error: Error) => void) | undefined, pendingPlayback=false;
   class Room {
     listeners = new Map<string, Function>();
     remoteParticipants = new Map([['worker', peer]]);
     localParticipant = {registerRpcMethod() {}, performRpc: async ({method}: {method: string}) => { rpcs.push(method); return 'ok'; }};
     outputs: string[] = [];
+    canPlaybackAudio=true;
     constructor(readonly options: any) { rooms.push(this); }
     on(name: string, handler: Function) { this.listeners.set(name, handler); }
     async connect() {} async disconnect() {} registerTextStreamHandler() {}
     async switchActiveDevice(kind: string, id: string) { assert.equal(kind, 'audiooutput'); this.outputs.push(id); return true; }
-    async startAudio() { return new Promise<void>((_, reject) => { rejectPlayback = reject; }); }
+    async startAudio() { if(!pendingPlayback)return;return new Promise<void>((_, reject) => { rejectPlayback = reject; }); }
   }
-  const events = ['TrackPublished', 'TrackSubscribed', 'TrackUnsubscribed', 'DataReceived', 'ParticipantDisconnected', 'Disconnected', 'Reconnecting', 'Reconnected'];
+  const events = ['TrackPublished', 'TrackSubscribed', 'TrackUnsubscribed', 'DataReceived', 'ParticipantDisconnected', 'Disconnected', 'Reconnecting', 'Reconnected','AudioPlaybackStatusChanged'];
   w.LivekitClient = {Room, RoomEvent: Object.fromEntries(events.map(e => [e, e]))};
   w.acquireVsCodeApi = () => ({postMessage: (m: any) => sent.push(m)});
   Object.defineProperty(w.HTMLMediaElement.prototype, 'setSinkId', {value: async () => {}});
@@ -102,6 +103,11 @@ test('learning room mutes locally, remembers each agent, and applies the chosen 
     w.eval(asset('learning-room/room.js'));
     await join('tutor');
     const track = subscribe();
+    rooms[0].canPlaybackAudio=false;rooms[0].listeners.get('AudioPlaybackStatusChanged')!();
+    assert.equal(btn('sound').getAttribute('aria-label'),'Enable speaker','blocked browser playback cannot look enabled');
+    btn('sound').click();await tick();
+    assert.equal(btn('sound').getAttribute('aria-label'),'Mute speaker');
+    assert.equal(track.muted,false,'the recovery gesture enables playback without muting the learner');
     const visibility = (visible: boolean) => w.dispatchEvent(new w.MessageEvent('message', {
       origin:w.location.origin, data:{type:'visibility',visible},
     }));
@@ -128,7 +134,7 @@ test('learning room mutes locally, remembers each agent, and applies the chosen 
     assert.equal(subscribe().muted, false, 'Doubt Solver has its own mute choice');
     await join('tutor');
     assert.equal(subscribe().muted, true, 'Instructor restores its mute choice');
-    btn('sound').click(); // pending browser playback gesture
+    pendingPlayback=true;btn('sound').click(); // pending browser playback gesture
     await join('doubt_solver');
     rejectPlayback!(new Error('Old room could not play'));
     await tick();

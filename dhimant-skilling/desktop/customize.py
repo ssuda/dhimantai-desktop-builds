@@ -37,10 +37,12 @@ def customize(root):
         raise RuntimeError('Untested Electron version')
     customize_navigation(root)
     customize_appearance(root)
-    hide_activity_bar(root)
+    configure_app_bar(root)
     configure_course_copilot(root)
     configure_learning_updates(root)
-    for source in (ROOT / 'overlays').rglob('*.ts'):
+    for source in (ROOT / 'overlays').rglob('*'):
+        if not source.is_file():
+            continue
         target = root / source.relative_to(ROOT / 'overlays')
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
@@ -161,10 +163,10 @@ def customize_appearance(root):
         "export const COLOR_THEME_LIGHT = 'Light 2026';", "export const COLOR_THEME_LIGHT = 'Light Modern';")
 
 
-def hide_activity_bar(root):
-    replace(root, 'src/vs/workbench/browser/workbench.contribution.ts',
-        "'enum': ['default', 'top', 'bottom', 'hidden'],\n\t\t\t\t'default': 'default',",
-        "'enum': ['default', 'top', 'bottom', 'hidden'],\n\t\t\t\t'default': 'hidden',")
+def configure_app_bar(root):
+    replace(root, 'src/vs/workbench/browser/parts/activitybar/activitybarPart.ts',
+        "import { GlobalCompositeBar } from '../globalCompositeBar.js';",
+        "import { DhimantaiAppBar as GlobalCompositeBar } from '../dhimantaiAppBar.js';")
 
 
 def configure_course_copilot(root):

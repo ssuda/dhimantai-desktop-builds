@@ -11,6 +11,7 @@ import {openInjectedTab, InjectedTab} from './apps/desktopBrowser';
 import {TaskVerifier, VerifiableTask} from './apps/verifier';
 import {learnerRpc,PublicCatalog} from './learnerCatalog';
 import {Api} from './api';
+import {DemoLesson, DemoState, demoFinished, demoKey, demoTasks, ERP_DEMO, prepareDemo} from './erpDemo';
 
 /** Matches the training ERPNext pages on any loopback port, and nothing else served from loopback. */
 export const ERP_TAB_FILTER='http://127.0.0.1:*/{desk,desk/**,app/**,login,assets/frappe/dhimantai/**}';
@@ -36,11 +37,9 @@ export class BrowserCourses {
     this.subscriptions = [
       vscode.commands.registerCommand('dhimantai.openBrowserCourse', (id?:string) => {
         if (id && id !== 'erpnext-essentials') return;
-        return this.pending ??= this.open().catch(error => {
-          output.appendLine(String(error));
-          void vscode.window.showErrorMessage('ERPNext: ' + (error instanceof Error ? error.message : String(error)));
-        }).finally(() => { this.pending=undefined; });
+        return this.launch(false);
       }),
+      vscode.commands.registerCommand('dhimantai.openErpDemo', () => this.launch(true)),
       auth.onDidChange(session => { if(this.scope && session?.user.id !== this.scope.account) void this.stop(); }),
       vscode.workspace.onDidChangeConfiguration(e => { if(e.affectsConfiguration('dhimantai.environment')) void this.stop(); }),
     ];
@@ -50,7 +49,28 @@ export class BrowserCourses {
     if (!value) {value=randomBytes(24).toString('hex');await this.context.secrets.store(key,value);}
     return value;
   }
-  private async open() {
+  private launch(demo:boolean) {
+    return this.pending ??= this.open(demo).catch(error => {
+      this.output.appendLine(String(error));
+      void vscode.window.showErrorMessage('ERPNext: ' + (error instanceof Error ? error.message : String(error)));
+    }).finally(() => { this.pending=undefined; });
+  }
+  /** The demo learner: the current one to continue, or a new learner with a fresh company. Undefined when cancelled. */
+  private async demoLearner(environment:EnvironmentName, account:string, key:string) {
+    const stateKey=demoKey(environment,account), previous=this.context.globalState.get<DemoState>(stateKey);
+    if(previous) {
+      const choice=await vscode.window.showInformationMessage('ERPNext demo', {modal:true,
+        detail:demoFinished(previous)?'This demo is finished. Show its books again, or start over with a fresh company?':'Continue the demo where you left off, or start over with a fresh company?'},
+        demoFinished(previous)?'Show the finished demo':'Continue', 'Start fresh');
+      if(!choice)return undefined;
+      if(choice!=='Start fresh')return previous.learner;
+      await this.context.secrets.delete('browser.erpnext.learner.'+key+'.'+previous.learner);
+    }
+    const learner=sandboxKey(environment+':'+account+':demo:'+randomBytes(8).toString('hex'));
+    await this.context.globalState.update(stateKey,{learner,verified:{}} satisfies DemoState);
+    return learner;
+  }
+  private async open(demo=false) {
     await this.stopping;
     const account=(await this.auth.session())?.user.id, environment=this.environment(), generation=this.generation;
     if (!account) {
@@ -59,7 +79,9 @@ export class BrowserCourses {
       return;
     }
     const key=sandboxKey(this.context.globalStorageUri.fsPath + ':' + environment);
-    const id=sandboxKey(environment + ':' + account);
+    if(demo && !this.learning)throw new Error('The demo needs the Instructor connection.');
+    const id=demo ? await this.demoLearner(environment,account,key) : sandboxKey(environment + ':' + account);
+    if(!id)return;
     this.scope={account,environment,learner:id};
     const [admin,password]=await Promise.all([this.credential('browser.erpnext.admin.'+key),this.credential('browser.erpnext.learner.'+key+'.'+id)]);
     const current=async()=>generation===this.generation && environment===this.environment() && (await this.auth.session())?.user.id===account;
@@ -98,28 +120,43 @@ export class BrowserCourses {
         : JSON.parse(await readFile(vscode.Uri.joinPath(this.context.extensionUri,'media','browser','erpnext','course.json').fsPath,'utf8')) as {lessons:BrowserTask[]};
       if(!await current())return;
       if(!course.lessons.length)throw new Error('No guided tasks are published for your ERPNext course access.');
-      const store=verifiedKey(environment,account);
+      // The demo keeps its own progress with its own learner, so it never counts toward the account's course.
+      const store=demo?demoKey(environment,account):verifiedKey(environment,account);
+      const readVerified=()=>(demo?this.context.globalState.get<DemoState>(store)?.verified:this.context.globalState.get<Record<string,VerifiedTask>>(store))??{};
+      const writeVerified=(verified:Record<string,VerifiedTask>)=>this.context.globalState.update(store,demo?{learner:id,verified} satisfies DemoState:verified);
+      const lessons=demo?demoTasks(course.lessons as DemoLesson[]):course.lessons;
+      if(demo) {
+        const learnerServer=new FrappeServer(url,`learner-${id}@training.invalid`,password);
+        const today=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
+        await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'ERPNext demo',cancellable:false},async progress=>{
+          progress.report({message:'Preparing the customer, supplier, item and both orders'});
+          await prepareDemo(learnerServer,lessons as DemoLesson[],id.slice(0,10),today,readVerified(),
+            async(task,entry)=>{if(await current())await writeVerified({...readVerified(),[task]:entry});});
+        });
+        if(!await current())return;
+      }
       const verifier=new TaskVerifier(new FrappeServer(url,'Administrator',admin),vscode.Uri.joinPath(this.context.extensionUri,'media','browser','player').fsPath);
-      fragment=await this.learning.start({origin:url,account,environment,learner:id,tasks:course.lessons,current,
+      fragment=await this.learning.start({origin:url,account,environment,learner:id,tasks:lessons,current,
+        ...(demo?{course:{id:'erpnext-essentials',title:ERP_COURSE,finale:ERP_DEMO.finale}}:{}),
         signIn:{usr:`learner-${id}@training.invalid`,pwd:password},
-        verified:()=>this.context.globalState.get<Record<string,VerifiedTask>>(store)??{},
+        verified:readVerified,
         recordVerified:async(task,done)=>{
           if(!await current())return false;
           // Never trust the page: re-read the record as the sandbox administrator before counting it.
-          const saved=this.context.globalState.get<Record<string,VerifiedTask>>(store)??{};
-          const definition=course.lessons.find(lesson=>lesson.id===task) as unknown as VerifiableTask|undefined;
+          const saved=readVerified();
+          const definition=lessons.find(lesson=>lesson.id===task) as unknown as VerifiableTask|undefined;
           const earlier=Object.fromEntries(Object.entries(saved).map(([id,entry])=>[id,entry.record]));
           let verified=false;
           try {verified=!!definition && await verifier.verify(definition,done.record,`learner-${id}@training.invalid`,id.slice(0,10),earlier);}
           catch(error){this.output.appendLine('ERPNext progress check failed: '+(error instanceof Error?error.message:String(error)));}
           if(!verified || !await current())return false;
-          await this.context.globalState.update(store,{...this.context.globalState.get<Record<string,VerifiedTask>>(store),[task]:done});
+          await writeVerified({...readVerified(),[task]:done});
           this.verifiedChanged.fire();
           return true;
         }});
       // Resume the Instructor at the first task this account has not finished (checked and explained).
-      const verified=this.context.globalState.get<Record<string,VerifiedTask>>(store)??{};
-      const resume=course.lessons.find(lesson=>!verified[lesson.id]?.explained)??course.lessons[0];
+      const verified=readVerified();
+      const resume=lessons.find(lesson=>!verified[lesson.id]?.explained)??(demo?lessons[lessons.length-1]:lessons[0]);
       await vscode.commands.executeCommand('dhimantai.openLearningRoom',ERP_COURSE,resume.instructorChapter);
     }
     // Preferred: the desktop browser signs the learner in and injects the player, so nothing depends on the app image.

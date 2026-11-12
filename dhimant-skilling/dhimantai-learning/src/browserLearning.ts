@@ -1,3 +1,4 @@
+import {BrowserQuestion,validBrowserQuestion,validBrowserAnswer} from './browserQuestion';
 import {createServer, IncomingMessage, Server, ServerResponse} from 'node:http';
 import {createHash, randomBytes, timingSafeEqual} from 'node:crypto';
 import {EventEmitter} from 'node:events';
@@ -13,12 +14,12 @@ export interface BrowserObservation {
   fields:Record<string,unknown>; errors:string[];
   action:'view'|'edit'|'check'|'help'|'save'|'next'; result:'matched'|'mismatch'|'not_saved'|null;
 }
-export interface BrowserUpdate {account:string; environment:EnvironmentName; chapter:string; observation:BrowserObservation|null; help?:string}
+export interface BrowserUpdate {account:string; environment:EnvironmentName; chapter:string; observation:BrowserObservation|null; help?:string; question?:BrowserQuestion|null; taskStatus?:string; focusQuestion?:string}
 /** A task whose saved record matched; explained once the learner has also explained their decision. */
 export interface VerifiedTask {record:string; checkedAt:string; assisted:boolean; explained:boolean}
 interface Scope {origin:string; account:string; environment:EnvironmentName; learner:string; tasks:BrowserTask[]; current:()=>Promise<boolean>;
   /** The practical course these tasks belong to; ERPNext Essentials when omitted. */
-  course?:{id:string; title:string};
+  course?:{id:string; title:string; /** Replaces the closing statement's title; {{company}} is the learner's company. */ finale?:string};
   /** The learner's own training login, handed only to the launch page on the training origin. */
   signIn?:{usr:string; pwd:string};
   verified?:()=>Record<string,VerifiedTask>;
@@ -57,10 +58,36 @@ export class BrowserLearning {
   private port=0;
   private sequence=0;
   private update?:BrowserUpdate;
+  private question:BrowserQuestion|null=null;
+  private answer?:{id:string; answer:string};
+  private taskAction?:{id:string; task:string; kind?:'open'};
+  private taskStatus='';
   private connection={connected:false,detail:'Open Instructor to begin live help.'};
   private events=new EventEmitter();
   onUpdate(listener:(event:BrowserUpdate)=>void) {this.events.on('update',listener);return {dispose:()=>this.events.off('update',listener)};}
   latest(account:string,environment:EnvironmentName) {return this.update?.account===account && this.update.environment===environment?this.update:undefined;}
+  async answerQuestion(account:string,environment:EnvironmentName,id:string,answer:unknown) {
+    const scope=this.scope, question=this.question;
+    if(!scope || scope.account!==account || scope.environment!==environment || question?.id!==id
+      || !validBrowserAnswer(question,answer) || !await scope.current() || this.scope!==scope || this.question?.id!==id)return false;
+    // The webview calls this only after the existing Instructor transport accepts the learner's answer.
+    this.answer={id,answer};return true;
+  }
+  async continueTask(account:string,environment:EnvironmentName,task:string) {
+    const scope=this.scope;
+    if(!scope || scope.account!==account || scope.environment!==environment || this.update?.observation?.task!==task
+      || !await scope.current() || this.scope!==scope || this.update?.observation?.task!==task)return false;
+    if(!this.taskAction)this.taskAction={id:randomBytes(16).toString('hex'),task};
+    return this.taskAction.task===task;
+  }
+  async chooseChapter(account:string,environment:EnvironmentName,chapter:string) {
+    const scope=this.scope,task=scope?.tasks.find(t=>t.instructorChapter===chapter);
+    if(!scope || !task || scope.account!==account || scope.environment!==environment || this.taskAction
+        || !await scope.current() || this.scope!==scope || this.taskAction)return false;
+    // Navigation changes neither saved evidence nor completion. The player checks
+    // for unsaved work before moving both panels to the selected chapter.
+    this.taskAction={id:randomBytes(16).toString('hex'),task:task.id,kind:'open'};return true;
+  }
   setConnection(account:string,environment:EnvironmentName,connected:boolean,detail:string) {
     if(this.scope?.account===account && this.scope.environment===environment)this.connection={connected,detail:detail.slice(0,180)};
   }
@@ -77,7 +104,7 @@ export class BrowserLearning {
   private emit(observation:BrowserObservation|null,help?:string) {
     const scope=this.scope;if(!scope)return;
     const task=scope.tasks.find(t=>t.id===observation?.task);
-    this.update={account:scope.account,environment:scope.environment,chapter:task?.instructorChapter??this.update?.chapter??scope.tasks[0].instructorChapter,observation,...(help?{help}:{})};
+    this.update={account:scope.account,environment:scope.environment,chapter:task?.instructorChapter??this.update?.chapter??scope.tasks[0].instructorChapter,observation,question:this.question,taskStatus:this.taskStatus,...(help?{help}:{})};
     this.events.emit('update',this.update);
   }
   private async handle(req:IncomingMessage,res:ServerResponse) {
@@ -91,14 +118,33 @@ export class BrowserLearning {
         || !timingSafeEqual(Buffer.from(supplied),Buffer.from(this.token)))return reply(401);
     if(!await scope.current() || this.scope!==scope)return reply(410);
     if(req.method==='GET' && req.url==='/course')return reply(200,{id:scope.course?.id??'erpnext-essentials',title:scope.course?.title??ERP_COURSE,
-      version:createHash('sha256').update(JSON.stringify(scope.tasks)).digest('hex').slice(0,16),lessons:scope.tasks,verified:scope.verified?.()??{}});
+      version:createHash('sha256').update(JSON.stringify(scope.tasks)).digest('hex').slice(0,16),lessons:scope.tasks,verified:scope.verified?.()??{},
+      ...(scope.course?.finale?{finale:scope.course.finale}:{})});
     if(req.method==='POST' && req.url==='/signin')return scope.signIn?reply(200,scope.signIn):reply(404);
-    if(req.method==='GET' && req.url==='/state')return reply(200,this.connection);
-    if(req.method!=='POST' || !['/observe','/help','/progress'].includes(req.url??''))return reply(404);
+    if(req.method==='GET' && req.url==='/state')return reply(200,{...this.connection,...(this.answer?{answer:this.answer}:{}),...(this.taskAction?{taskAction:this.taskAction}:{})});
+    if(req.method!=='POST' || !['/observe','/help','/progress','/question','/focus','/continue-result'].includes(req.url??''))return reply(404);
     let size=0;const chunks:Buffer[]=[];
     for await(const chunk of req) {size+=chunk.length;if(size>16000)return reply(413);chunks.push(chunk);}
     let body;try{body=JSON.parse(Buffer.concat(chunks).toString());}catch{return reply(400);}
     if(!await scope.current() || this.scope!==scope)return reply(410);
+    if(req.url==='/focus') {
+      if(!object(body) || Object.keys(body).join()!=='id' || !this.question || body.id!==this.question.id
+          || !this.update?.observation || this.question.task!==this.update.observation.task)return reply(409);
+      // One explicit handoff, never replayed by latest() or a background update.
+      this.events.emit('update',{...this.update,focusQuestion:this.question.id});return reply(200,{ok:true});
+    }
+    if(req.url==='/continue-result') {
+      if(!object(body) || !this.taskAction || body.id!==this.taskAction.id || !text(body.status,600))return reply(409);
+      this.taskAction=undefined;this.taskStatus=body.status;this.emit(this.update?.observation??null);return reply(200,{ok:true});
+    }
+    if(req.url==='/question') {
+      if(!object(body) || Object.keys(body).join()!=='question' || (body.question!==null &&
+        (!validBrowserQuestion(body.question) || !scope.tasks.some(t=>t.id===body.question.task)
+          || this.update?.observation?.task!==body.question.task)))return reply(400);
+      if(this.question?.id!==body.question?.id)this.answer=undefined;
+      this.question=body.question;
+      this.emit(this.update?.observation??null);return reply(200,{ok:true});
+    }
     if(req.url==='/progress') {
       if(!object(body) || Object.keys(body).sort().join()!=='assisted,checkedAt,explained,record,task' || !scope.tasks.some(t=>t.id===body.task)
           || !text(body.record,160) || !body.record || !text(body.checkedAt,40) || Number.isNaN(Date.parse(body.checkedAt))
@@ -112,15 +158,16 @@ export class BrowserLearning {
       this.emit(this.update.observation,body.message.trim());return reply(200,{ok:true});
     }
     if(object(body) && Object.keys(body).sort().join(',')==='clear,sequence' && body.clear===true && Number.isSafeInteger(body.sequence) && body.sequence>this.sequence) {
-      this.sequence=body.sequence;this.emit(null);return reply(200,{ok:true});
+      this.sequence=body.sequence;this.question=null;this.answer=undefined;this.taskAction=undefined;this.taskStatus='';this.emit(null);return reply(200,{ok:true});
     }
     const observation=browserObservation(body,scope.tasks,scope.course?.id);
     if(!observation || observation.training_tag!==scope.learner.slice(0,10))return reply(400);
     if(observation.sequence<=this.sequence)return reply(409);
+    if(this.question?.task!==observation.task){this.question=null;this.answer=undefined;this.taskStatus='';}
     this.sequence=observation.sequence;this.emit(observation);return reply(200,{ok:true});
   }
   async stop() {
-    this.emit(null);this.scope=undefined;this.token='';this.update=undefined;
+    this.question=null;this.answer=undefined;this.taskAction=undefined;this.taskStatus='';this.emit(null);this.scope=undefined;this.token='';this.update=undefined;
     this.connection={connected:false,detail:'Instructor is not connected.'};
     const server=this.server;this.server=undefined;
     if(server)await new Promise<void>(resolve=>{server.close(()=>resolve());server.closeAllConnections();});

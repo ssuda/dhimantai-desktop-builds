@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
-import {CdpClient, injectPlayer} from './inject';
+import {CdpClient, CdpTransport, injectPlayer} from './inject';
 import {AppServer} from './types';
 
 /** The desktop's proposed integrated-browser API (vscode.proposed.browser.d.ts), used only when enabled. */
@@ -9,7 +9,7 @@ interface BrowserTab { readonly url: string; startCDPSession(): Thenable<Browser
 interface BrowserCDPSession { readonly onDidReceiveMessage: vscode.Event<unknown>; sendMessage(message: unknown): Thenable<void>; close(): Thenable<void> }
 type BrowserWindow = {openBrowserTab?: (url: string, options?: {viewColumn?: vscode.ViewColumn; preserveFocus?: boolean}) => Thenable<BrowserTab>};
 
-export interface InjectedTab { client: CdpClient; sessionId: string; dispose(): Promise<void> }
+export interface InjectedTab { client: CdpClient; sessionId: string; transport?: CdpTransport; dispose(): Promise<void>; close?(): Promise<void> }
 export interface TabRequest {
   url: string; home: string; media: string; adapter: string; learner?: string;
   /** learner, bridge and token from the loopback Instructor bridge; omitted for authoring replay (adapter only). */
@@ -31,13 +31,16 @@ export async function openInjectedTab(request: TabRequest): Promise<InjectedTab 
   const scripts = await Promise.all(files.map(path => readFile(join(request.media, path), 'utf8')));
   await request.server.login();
   const tab = await open(request.url + '/', {viewColumn: vscode.ViewColumn.Beside});
-  const session = await tab.startCDPSession();
-  const client = new CdpClient({send: message => session.sendMessage(message), onMessage: listener => session.onDidReceiveMessage(listener)});
+  let session: BrowserCDPSession;
+  try {session = await tab.startCDPSession();} catch (error) {await tab.close(); throw error;}
+  const transport = {send: (message: unknown) => session.sendMessage(message), onMessage: (listener: (message: unknown) => void) => session.onDidReceiveMessage(listener)};
+  const client = new CdpClient(transport);
   let sessionId: string;
   try {
     sessionId = await injectPlayer(client, {origin: request.url, scripts, home: request.home, cookie: request.server.sessionCookie(),
       session: request.bridge && request.learner ? {'dhimantai-erpnext-learner': request.learner, 'dhimantai-erpnext-instructor': JSON.stringify({
         origin: 'http://127.0.0.1:' + request.bridge.get('bridge'), token: request.bridge.get('token'), learner: request.learner})} : {}});
-  } catch (error) { client.dispose(); await session.close(); throw error; }
-  return {client, sessionId, async dispose() { client.dispose(); await session.close(); }};
+  } catch (error) { client.dispose(); await session.close(); await tab.close(); throw error; }
+  return {client, sessionId, transport, async dispose() { client.dispose(); await session.close(); },
+    async close() {client.dispose(); await session.close(); await tab.close();}};
 }

@@ -51,8 +51,9 @@ test('Study isolates drafts, clears accepted messages, retains failures and canc
     button('close-study').click();button('open-study').click();assert.equal(field.value,'unfinished question');assert.equal(el('response').textContent,'');
     button('clear-question').click();assert.equal(field.value,'');assert.equal(button('send').disabled,true);
     s.input('What is an operator?');const sent=s.sent.length;
-    field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,isComposing:true}));field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter'}));assert.equal(s.sent.length,sent);
-    field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',metaKey:true}));await s.grant();
+    for(const extra of [{}, {shiftKey:true}, {ctrlKey:true}, {metaKey:true}, {isComposing:true}]) field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',...extra}));
+    assert.equal(s.sent.length,sent);
+    button('send').click();await s.grant();
     assert.equal(field.value,'What is an operator?');assert.equal(field.disabled,true);assert.equal(el('response').querySelector('.study-question')!.textContent,'What is an operator?');
     publish({method:'display_on_screen',content:'',study_request_id:request()});assert.equal(field.value,'What is an operator?');
     publish({method:'display_on_screen',content:'An operator works on values.',study_request_id:request()});assert.equal(field.value,'');assert.equal(field.disabled,false);assert.equal(button('send').disabled,true);

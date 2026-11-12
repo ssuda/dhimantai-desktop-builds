@@ -352,7 +352,7 @@
           }
         ]
       },
-      "explain": "Submitting the bill changed your ledger. Which account went up, and why did the bill not change your stock?",
+      "explain": "Your receipt credited Stock Received But Not Billed and this bill debited it back. What is that account for, and why did the bill not change your stock?",
       "source": {
         "task": "stock",
         "action": "Purchase Invoice"
@@ -574,7 +574,7 @@
           }
         ]
       },
-      "explain": "Your stock went from 4 to 2. Which document caused that, and why has the customer not been billed yet?",
+      "explain": "Your stock went from 4 to 2 and ERPNext posted Cost of Goods Sold with no invoice yet. Why does the cost appear at delivery, and at what value per widget?",
       "source": {
         "task": "selling",
         "action": "Delivery Note"

@@ -1,10 +1,18 @@
-.composer-box { display: block; padding: 6px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 18px; background: var(--vscode-input-background); }
-.composer-box:focus-within { border-color: var(--vscode-focusBorder); }
-.composer-box textarea { display: block; width: 100%; min-height: 66px; max-height: min(240px,30vh); padding: 10px 12px; margin: 0; border: 0; border-radius: 12px; background: transparent; color: var(--vscode-input-foreground); font: inherit; line-height: 1.55; resize: vertical; box-shadow: none; }
+.composer-box { display: block; padding: 12px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 28px; background: var(--vscode-input-background); box-shadow: 0 2px 12px color-mix(in srgb, var(--vscode-foreground) 5%, transparent); }
+.composer-box:focus-within { border-color: color-mix(in srgb, var(--vscode-foreground) 28%, var(--vscode-input-background)); }
+.composer-input { position: relative; min-width: 0; padding: 8px 40px 8px 8px; }
+.composer-box textarea { display: block; box-sizing: border-box; width: 100%; height: 2lh; min-height: 2lh; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; color: var(--vscode-input-foreground); font: inherit; line-height: 1.55; resize: none; overflow-y: auto; box-shadow: none; appearance: none; }
+.composer-input[data-expanded="true"] textarea { height: min(8lh, 30vh); }
+.composer-box .composer-expand { position: absolute; top: 4px; right: 4px; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 5px; border: 0; border-radius: 6px; background: transparent; color: var(--vscode-descriptionForeground); cursor: pointer; }
+.composer-box .composer-expand:hover { background: var(--vscode-toolbar-hoverBackground, #8882); color: var(--vscode-foreground); }
+.composer-expand svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .composer-box textarea:focus { outline: none; }
 .composer-toolbar, .composer-controls { display: flex; align-items: center; gap: 6px; }
 .composer-toolbar { flex-wrap: wrap; }
 .composer-controls { margin-left: auto; flex: none; }
-#composer-shortcut { font-size: 10px; color: var(--vscode-descriptionForeground); }
-.composer-box #send { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: auto; min-width: 88px; height: 36px; padding: 6px 12px; border-radius: 18px; }
-.composer-box #send svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#composer-shortcut, .composer-box #send-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.composer-box #send { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 40px; min-width: 40px; height: 40px; padding: 8px; border-radius: 50%; }
+.composer-box #send svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.composer-box #send:disabled { opacity: 1; background: var(--vscode-button-secondaryBackground); color: var(--vscode-disabledForeground); }
+.composer-box :is(button, summary):focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
+@media (forced-colors: active) { .composer-box:focus-within { border-color: Highlight; } }

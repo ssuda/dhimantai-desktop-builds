@@ -62,6 +62,20 @@ test('lesson chooser handles empty/offline catalogs and isolates drafts, stale r
     await new Promise(resolve => setTimeout(resolve,300));
     assert.equal(sent.filter(message => message.type === 'notebookChanged').at(-1).documentKey,'doubt-key',
       'a previous autosave timer cannot write the new document');
+    post({type:'openTutor'});
+    const chapters=[{id:chapterId,name:'Lists'},{id:'locked-middle',name:'Locked',locked:true},{id:'next-open',name:'Dictionaries'}];
+    post({type:'tutorLessons',attempt:sent.at(-1).attempt,courses:[{name:'Python',chapters}]});
+    w.document.querySelector<HTMLButtonElement>('#lesson-list button')!.click();
+    post({type:'restoreNotebook',attempt:sent.at(-1).attempt,documentKey:'skip-draft',notebook:tutor});
+    field.value='I will come back to this question';field.dispatchEvent(new w.Event('input'));
+    assert.equal(button('skip-chapter').disabled,false);
+    button('skip-chapter').click();
+    assert.equal(sent.at(-1).type,'join');assert.equal(sent.at(-1).chapterId,'next-open','skip chooses the next accessible chapter');
+    const skipped=sent.filter(message=>message.type==='notebookChanged' && message.documentKey==='skip-draft').at(-1);
+    assert.equal(skipped.notebook.textDraft,'I will come back to this question');
+    assert.equal(button('skip-chapter').disabled,true,'the last available chapter has no next chapter');
+    assert.equal(chapters[0].name,'Lists');
+    assert.equal(skipped.notebook.cells[0].text,'Instructor-only note','skipping preserves unfinished work');
     post({type:'signedOut'});
     assert.equal(field.value,''); assert.equal(feed.textContent,'');
     assert.equal(w.document.querySelectorAll('#lesson-course option').length,0);

@@ -1,4 +1,5 @@
 import { createServer, IncomingMessage, Server, ServerResponse } from 'node:http';
+import { createHash, randomUUID } from 'node:crypto';
 
 /** Local auth/catalog contract. No real email is sent and no shared account is created. */
 export class B2cServer {
@@ -8,6 +9,7 @@ export class B2cServer {
   private tokens = new Map<string, string>();
   private settings = { confirmation: false, profileFailure: false, unavailable: false, institute: false };
   private signups = 0;
+  private recovery?: {email: string; challenge: string; code: string; link: string};
   async start() {
     this.server = createServer((request, response) => { void this.handle(request, response); });
     await new Promise<void>(resolve => this.server!.listen(0, '127.0.0.1', resolve));
@@ -19,7 +21,7 @@ export class B2cServer {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
-    const path = new URL(request.url!, this.url).pathname;
+    const url = new URL(request.url!, this.url), path = url.pathname;
     const send = (status: number, data: unknown) => { response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(data)); };
     const token = (request.headers.authorization ?? '').replace('Bearer ', '');
     const email = this.tokens.get(token), user = email ? this.users.get(email) : undefined;
@@ -32,6 +34,21 @@ export class B2cServer {
     if (path === '/__state') return send(200, { signups: this.signups, users: [...this.users].map(([email, u]) => ({ email, verified: u.verified, profile: u.profile, joined: u.joined })) });
     if (path === '/__settings') { Object.assign(this.settings, body); return send(200, {}); }
     if (path === '/__verify') { this.users.get(body.email)!.verified = true; return send(200, {}); }
+    if (path === '/__recovery') return send(200, {link: this.recovery?.link});
+    if (path === '/auth/v1/recover') {
+      if (request.headers.apikey !== 'test-anon-key' || body.code_challenge_method !== 's256') return send(400, {});
+      if (this.users.has(body.email)) {
+        const code = randomUUID(), link = new URL(url.searchParams.get('redirect_to')!);
+        link.searchParams.set('code', code);
+        this.recovery = {email: body.email, challenge: body.code_challenge, code, link: link.href};
+      }
+      return send(200, {});
+    }
+    if (path === '/auth/v1/user' && request.method === 'PUT') {
+      if (!user || typeof body.password !== 'string' || body.password.length < 8) return send(401, {});
+      user.password = body.password;
+      return send(200, {id: email, email});
+    }
     if (path === '/auth/v1/signup') {
       this.signups++;
       if (this.users.has(body.email)) return send(200, { user: { identities: [] } });
@@ -39,6 +56,13 @@ export class B2cServer {
       return send(200, this.settings.confirmation ? { user: { id: body.email } } : session(body.email));
     }
     if (path === '/auth/v1/token') {
+      if (url.searchParams.get('grant_type') === 'pkce') {
+        const recovery = this.recovery;
+        if (!recovery || body.auth_code !== recovery.code || typeof body.code_verifier !== 'string'
+            || createHash('sha256').update(body.code_verifier).digest('base64url') !== recovery.challenge) return send(400, {msg: 'Invalid recovery proof'});
+        this.recovery = undefined;
+        return send(200, session(recovery.email));
+      }
       const account = this.users.get(body.email);
       if (!account || account.password !== body.password) return send(400, { msg: 'Invalid login credentials' });
       if (!account.verified) return send(400, { msg: 'Email not confirmed' });

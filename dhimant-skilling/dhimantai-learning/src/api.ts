@@ -237,6 +237,13 @@ export function accessErrorMessage(status: number, path: string, message: string
 export class Api {
   constructor(private readonly auth: Auth, private readonly env: () => Environment, private readonly expectedAccount?: string) {}
 
+  /** Desktop studio shares the web instructor's assignment, saved-job and atomic publication APIs. */
+  courseAuthoring<T>(path = '', body?: unknown) {
+    if (path && !/^\/(?:courses|updates)\/[a-zA-Z0-9_-]+(?:\/(?:updates|apply|retry-index))?$/.test(path))
+      throw new Error('Invalid course authoring action.');
+    return this.request<T>(body === undefined ? 'GET' : 'POST', '/instructor/course-authoring' + path, body);
+  }
+
   /** Practical-course authoring: interview questions, then a draft validated against the discovered forms. */
   appAuthoring<T>(body: {stage: 'interview' | 'draft'; goal: string; forms: unknown[]; answers?: {question: string; answer: string}[];
       revise?: {course: unknown; problems: string[]}}) {

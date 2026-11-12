@@ -303,7 +303,6 @@ article > small { font-size: 11px; letter-spacing: .02em; }
 .practice-actions { gap: 6px; }
 .practice-actions button { font-size: 12px; }
 #composer { padding: 12px 28px 18px; border: 0; }
-#message { resize: none; min-height: 64px; max-height: 160px; margin: 0; padding: 13px 15px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 9px; }
 .composer-actions { justify-content: space-between; margin-top: 8px; }
 .composer-menu > summary { color: var(--vscode-descriptionForeground); font-size: 12px; padding-left: 0; }
 .composer-menu .menu-content { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; }
@@ -330,6 +329,8 @@ article > small { font-size: 11px; letter-spacing: .02em; }
 #message-bar #composer { padding: 18px 0 0; border-top: 1px solid var(--vscode-panel-border); }
 .composer-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 6px; }
 .composer-heading label { font-size: 13px; font-weight: 600; }
+#composer-mode-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+[data-lesson-action][hidden] { display: none; }
 #composer-context { display: block; color: var(--vscode-descriptionForeground); padding: 0 0 8px; overflow-wrap: anywhere; }
 #composer-context[hidden] { display: none; }
 .composer-menu > summary { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 8px; color: var(--vscode-foreground); }
@@ -343,7 +344,6 @@ article > small { font-size: 11px; letter-spacing: .02em; }
 .composer-audio .audio-chevron svg { width: 16px; }
 .composer-audio #audio-microphone { width: 36px; height: 36px; padding: 8px; }
 .composer-audio #audio-camera { width: 36px; height: 36px; padding: 8px; }
-.composer-audio button[aria-pressed="true"] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
 #camera-panel { position: fixed; right: 20px; bottom: 180px; z-index: 8; width: 160px; padding: 6px; border-radius: 8px; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); }
 #camera-panel[hidden] { display: none; }
 #camera-preview { width: 100%; max-height: 120px; object-fit: contain; }

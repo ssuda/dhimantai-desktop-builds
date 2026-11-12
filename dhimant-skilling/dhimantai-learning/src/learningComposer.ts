@@ -2,10 +2,11 @@
 export function messageComposer(assistant: string, inputId: string, maxlength: number,
     leading = '', audio = '', before = '', after = '') {
   return `<div class="composer-box">${before}
-<textarea id="${inputId}" rows="2" maxlength="${maxlength}" aria-describedby="composer-shortcut" placeholder="Ask ${assistant} or reply…"></textarea>
-<div class="composer-toolbar">${leading}<small id="composer-shortcut">Ctrl/Cmd+Enter to send</small>
+<div class="composer-input"><textarea id="${inputId}" rows="2" maxlength="${maxlength}" aria-describedby="composer-shortcut" placeholder="Ask ${assistant} or reply…"></textarea>
+<button type="button" class="composer-expand" aria-controls="${inputId}" aria-expanded="false" aria-label="Expand input" title="Expand input"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button></div>
+<div class="composer-toolbar">${leading}<small id="composer-shortcut">Enter for a new line. Use the send button to send.</small>
 <div class="composer-controls">${audio ? `<div class="composer-audio" role="group" aria-label="Reply audio">${audio}</div>` : ''}
-<button id="send" disabled title="Ask ${assistant} (Ctrl/Cmd+Enter)" aria-label="Ask ${assistant}" aria-keyshortcuts="Control+Enter Meta+Enter"><span id="send-label">Ask ${assistant}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v14"/></svg></button></div></div>${after}</div>`;
+<button id="send" disabled title="Ask ${assistant}" aria-label="Ask ${assistant}"><span id="send-label">Ask ${assistant}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v14"/></svg></button></div></div>${after}</div>`;
 }
 
 /** A message composer, outside the notebook's editable cells. Audio is supplied by its transport.

@@ -42,6 +42,8 @@ class ExtensionUpdateTests(unittest.TestCase):
             bundle=root/'resources/app/extensions/optficial.dhimantai-learning'
             manifest=json.loads((bundle/'package.json').read_text())
             self.assertIs(manifest['contributes']['configurationDefaults']['dhimantai.autoUpdate'],True)
+            self.assertEqual(manifest['contributes']['configurationDefaults']['workbench.activityBar.location'],'default')
+            self.assertIs(manifest['contributes']['configurationDefaults']['workbench.activityBar.compact'],True)
             self.assertEqual(manifest['contributes']['configurationDefaults']['dhimantai.environment'],'staging')
             self.assertEqual(json.loads((bundle/'desktop-client.json').read_text())['staging']['signingKey'],'fixture-only')
 

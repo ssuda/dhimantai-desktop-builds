@@ -70,7 +70,7 @@ async function main() {
         '--user-data-dir', userData,
         '--use-inmemory-secretstorage', ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : []),
         // The UX audit drives the real window and screenshots it through Chrome's debugging protocol.
-        ...(['suiteLearningVideo', 'suiteStudy', 'suiteStudyDocuments', 'suiteStudyRegressions', 'suiteStudyExperience', 'suiteStudyCrop', 'suiteStudyConversation', 'suitePracticeUx', 'suiteGeneratedPractice', 'suiteNotebookCoachHistory', 'suiteNotebookCoachChat', 'suiteProjectCoach', 'suiteProjectCompletion'].includes(process.argv[2]) ? ['--remote-debugging-port=' + (process.env.DHIMANTAI_CDP_PORT ?? '9339'), '--window-size=1440,900'] : [])],
+        ...(['suiteComposerShortcut', 'suiteLearningVideo', 'suiteStudy', 'suiteStudyDocuments', 'suiteStudyRegressions', 'suiteStudyExperience', 'suiteStudyCrop', 'suiteStudyConversation', 'suitePracticeUx', 'suiteGeneratedPractice', 'suiteNotebookCoachHistory', 'suiteNotebookCoachChat', 'suiteProjectCoach', 'suiteProjectCompletion'].includes(process.argv[2]) ? ['--remote-debugging-port=' + (process.env.DHIMANTAI_CDP_PORT ?? '9339'), '--window-size=1440,900'] : [])],
       extensionTestsEnv: {
         DHIMANTAI_TEST_ENVIRONMENT: JSON.stringify(process.argv[2] === 'suiteLearningVideo' ? ENVIRONMENTS.staging
           : { apiUrl: url, supabaseUrl: url, supabaseAnonKey: 'test-anon-key' }),

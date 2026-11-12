@@ -42,7 +42,8 @@ def main():
         defaults = package['contributes']['configurationDefaults']
         assert defaults['dhimantai.environment'] == 'staging'
         assert defaults['workbench.colorTheme'] == 'Light Modern'
-        assert defaults['workbench.activityBar.location'] == 'hidden'
+        assert defaults['workbench.activityBar.location'] == 'default'
+        assert defaults['workbench.activityBar.compact'] is True
         assert defaults['chat.disableAIFeatures'] is True
         client = json.loads((extension / 'desktop-client.json').read_text())
         assert set(client) == {'staging'}

@@ -27,7 +27,10 @@ export async function run(): Promise<void> {
       assert.equal(value?.workspaceValue, false);
       await until(() => setting().get('disableAIFeatures') === desktop);
       assert.equal(vscode.workspace.getConfiguration('editor').get('fontSize'), 17);
-      if (desktop) assert.equal(vscode.workspace.getConfiguration('workbench.activityBar').get('location'), 'hidden');
+      if (desktop) {
+        const appBar = (await vscode.commands.getCommands()).includes('_dhimantai.setAppBarState');
+        assert.equal(vscode.workspace.getConfiguration('workbench.activityBar').get('location'), appBar ? 'default' : 'hidden');
+      }
     });
     if (!desktop) return;
     const host = vscode.window.createWebviewPanel('dhimantai.copilotTest', 'Course policy test', vscode.ViewColumn.One, {});

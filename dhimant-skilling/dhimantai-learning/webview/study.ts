@@ -2,7 +2,7 @@ import { AgentRoom, AgentGrant } from './agentRoom';
 import { NotebookAttachments } from './notebookAttachments';
 import { diagram } from './diagram';
 import { StudyCropSelector, uploadStudyCrop, type CropImage } from './studyCrop';
-import { bindComposer, resizeComposer } from './composer';
+import { bindComposer } from './composer';
 import { showStudyQuiz } from './studyQuiz';
 import { showStudyResponse } from './studyResponse';
 import 'katex/dist/katex.min.css';
@@ -69,7 +69,7 @@ const agentRoom=new AgentRoom({
         exchange.append(card);
         if(studyDialog.open)card.querySelector('.study-your-turn')?.scrollIntoView({block:'start'});
       }
-      if(action==='ask'&&questionField.value===submittedDraft){questionField.value='';resizeComposer(questionField);attachments.clear();}
+      if(action==='ask'&&questionField.value===submittedDraft){questionField.value='';attachments.clear();}
       if(action!=='quiz')finishHelp();
     }else if(packet.method==='draw_svg'&&typeof packet.svg==='string'){
       exchange.insertAdjacentHTML('beforeend',diagram(packet.svg));
@@ -100,7 +100,7 @@ function openStudy(requestedAction?:StudyAction){
   el('help-title').textContent={explain:'Explain selection',summary:'Chapter summary',quiz:'Chapter quiz',ask:'Ask Study'}[screen];
   if(!studyDialog.open)studyDialog.showModal();
   el('study-content').scrollTop=screenScroll;
-  resizeComposer(questionField);controls();syncSound();
+  controls();syncSound();
 }
 // A clean, locally authored shell. Generated content never becomes a template.
 const contentTemplate = el('study-content').cloneNode(true) as HTMLElement;
@@ -141,7 +141,7 @@ function controls() {
   for (const name of ['summary','quiz']) btn(name).disabled = !source || !ai || busy;
   btn('send').disabled = !source || !ai || (!working&&!questionField.value.trim()&&!attachments.count);
   btn('send').dataset.working=String(working);
-  btn('send').title=working?'Stop response':'Send message (Ctrl/Cmd+Enter)';
+  btn('send').title=working?'Stop response':'Send message';
   btn('send').setAttribute('aria-label',working?'Stop response':'Send message');
   questionField.disabled = !source || !ai || busy;
   btn('clear-question').hidden = !questionField.value;
@@ -172,7 +172,7 @@ function clear() {
   disconnectAgent(); generation++; pdfReader?.destroy(); pdfReader=undefined; epubControls.destroy(); source = undefined; documentKey = ''; selected = ''; busy = false; atStart = atEnd = true;
   if(studyDialog.open)studyDialog.close();syncSound();
   el('selection').hidden = true; el('response').replaceChildren(); el('questions').replaceChildren();
-  el('help-status').textContent = ''; questionField.value = '';resizeComposer(questionField);
+  el('help-status').textContent = ''; questionField.value = '';
   el('viewer').replaceChildren(); el('title').textContent = ''; el('page').textContent = '';
   el('reading-links').replaceChildren(); el('loading').style.display = 'flex'; el('loading').style.opacity = '1';
   el('loading-text').textContent = 'Opening chapter…'; controls();
@@ -288,7 +288,7 @@ document.addEventListener('click',event=>{if(!attachmentMenu.contains(event.targ
 attachmentMenu.addEventListener('keydown',event=>{if(event.key==='Escape'){event.stopPropagation();attachmentMenu.open=false;attachmentMenu.querySelector('summary')!.focus();}});
 questionField.addEventListener('paste',event=>{const files=Array.from(event.clipboardData?.files??[]);if(files.length){event.preventDefault();attachments.add(files);}});
 questionField.oninput=controls;
-btn('clear-question').onclick=()=>{questionField.value='';resizeComposer(questionField);controls();questionField.focus();};
+btn('clear-question').onclick=()=>{questionField.value='';controls();questionField.focus();};
 function showReply(reply: StudyReply) {
   el('response').replaceChildren();
   showStudyQuiz(el('questions'),reply.questions,()=>{closeStudy();btn('quiz').focus();});

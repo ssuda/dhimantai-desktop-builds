@@ -125,12 +125,13 @@ test('Instructor teaches through open questions, struggle signals, Your turn cel
     assert.doesNotMatch($('#lesson-list').textContent!, /Example only/);
 
     publish('What does `xs[-1]` return?', {is_question_prompt:true, tutor_checkpoint_id:'q1'});
-    const labels = () => [...w.document.querySelectorAll('#feed article:last-child [data-lesson-actions] button')].map(b => b.textContent);
-    assert.deepEqual(labels(), ['Hint', 'I’m stuck'], 'an open question offers help to think, not Continue or a worked example');
+    const actions = () => [...w.document.querySelectorAll<HTMLButtonElement>('[data-lesson-action]')].filter(b => !b.hidden);
+    assert.deepEqual(actions(), [], 'an open question offers the existing help ladder, not Continue or a worked example');
+    assert.equal($<HTMLButtonElement>('#practice-help').disabled, false);
     publish('Not quite: negative indexes count from the end.', {tutor_feedback:true, tutor_checkpoint_id:'q1'});
     assert.equal(w.document.getElementById('smaller-step')?.hidden ?? true, true);
-    const question = [...w.document.querySelectorAll('#feed article')].at(-2)!;
-    assert.ok([...question.querySelectorAll('[data-lesson-actions] button')].some(b => b.textContent === 'Continue'), 'feedback closes the question');
+    assert.deepEqual(actions().map(b => b.textContent), ['Continue'], 'feedback restores the one current lesson control');
+    assert.equal($('#feed [data-lesson-action]'), null, 'saved cards never carry session actions');
     publish('Try again: what does `xs[-2]` return?', {is_question_prompt:true, tutor_checkpoint_id:'q2'});
     publish('Still not quite.', {tutor_feedback:true, tutor_checkpoint_id:'q2'});
     const chip = $<HTMLButtonElement>('#smaller-step');
@@ -157,6 +158,37 @@ test('Instructor teaches through open questions, struggle signals, Your turn cel
     assert.match(chats.at(-1)!, /keep practising: negative indexes/);
     next.click();
     assert.equal(sent.at(-1).type, 'join'); assert.equal(sent.at(-1).chapterId, 'c4');
+  } finally { await ui.close(); }
+});
+
+test('restored cards share one current lesson control and optional actions follow the latest response', async () => {
+  const ui = room('Instructor'), {w, sent, post, publish, chats, tick, $} = ui;
+  try {
+    post({type:'openTutor'});
+    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Python', chapters}]});
+    $<HTMLButtonElement>('#lesson-list button').click();
+    const attempt = sent.at(-1).attempt;
+    const saved = {...emptyNotebook(), cells:[0,1,2].map(index => ({id:'saved-'+index, kind:'board' as const,
+      text:'Explanation '+index, packet:{tutor_action_menu:{actions:['hint','workedExample','testMe']}}}))};
+    post({type:'restoreNotebook', attempt, documentKey:'lesson', notebook:saved});
+    post({type:'grant', attempt, url:'unused', token:'unused', chapterId:'c1'}); await tick();
+    assert.equal(w.document.querySelectorAll('#feed article').length, 3);
+    assert.equal($('#feed .lesson-actions'), null, 'history contains explanations without repeated session controls');
+    const current = $<HTMLButtonElement>('#composer-mode-actions [data-lesson-action="continueLesson"]');
+    assert.equal(current.hidden, false); assert.equal(current.type, 'button');
+    const options = () => [...w.document.querySelectorAll<HTMLButtonElement>('#notebook-help-actions [data-lesson-action]')].filter(b => !b.hidden);
+    assert.deepEqual(options().map(b => b.textContent), ['Worked example','Try on my own']);
+    assert.equal($<HTMLDetailsElement>('.more-asks').open, false);
+    const field = $<HTMLTextAreaElement>('#message'); field.value = 'My unsent answer';
+    options()[0].click(); await tick();
+    assert.match(chats.at(-1)!, /Show a worked example/);
+    assert.equal(field.value, 'My unsent answer', 'an optional action does not submit the draft');
+    publish('Here is the example.', {tutor_action_menu:{actions:['summarize']}});
+    assert.deepEqual(options().map(b => b.textContent), ['Recap'], 'older cards cannot keep stale choices active');
+    assert.equal(w.document.querySelectorAll('[data-lesson-action="continueLesson"]').length, 1);
+    assert.equal($('#composer-mode-actions [data-lesson-action="continueLesson"]'), current, 'typing and new replies preserve the control');
+    $<HTMLButtonElement>('#end').click(); await tick();
+    assert.equal(current.disabled, true); assert.ok(options().every(b => b.disabled));
   } finally { await ui.close(); }
 });
 

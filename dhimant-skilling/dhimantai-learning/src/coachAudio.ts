@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Api } from './api';
 import { Auth } from './auth';
 import { Environment, EnvironmentName } from './environments';
+import { mediaIcon } from './mediaIcons';
 
 export interface SpokenReply {
   id: string; text: string; account: string; environment: EnvironmentName; path: string;
@@ -25,7 +26,7 @@ export function trustedRoomUrl(environment: EnvironmentName, url: string) {
 }
 
 export const microphoneControl = '<button type="button" id="audio-microphone" disabled aria-label="Voice input is unavailable. Type your message." title="Voice input is unavailable. Type your message.">' +
-  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9v3a3 3 0 0 0 5 2M9 5a3 3 0 0 1 6 0v4M5 10v2a7 7 0 0 0 12 5M19 10v2M12 19v3M8 22h8M2 2l20 20"/></svg></button>';
+  mediaIcon('microphone', false) + '</button>';
 
 export function audioControls(webview: vscode.Webview, media: vscode.Uri, nonce: string) {
   const script = (file: string) => `<script nonce="${nonce}" src="${webview.asWebviewUri(vscode.Uri.joinPath(media, file))}"></script>`;

@@ -3,7 +3,22 @@ import * as assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {desktopExtensionPath,preserveDesktopDefaults} from '../src/desktopConfiguration';
+import {desktopExtensionPath,preserveDesktopDefaults,migrateDesktopAppBar} from '../src/desktopConfiguration';
+
+test('the old persisted hidden default migrates once; later and workspace layout choices survive', async () => {
+  const state = new Map<string, unknown>(), values = new Map<string, unknown>([['workbench.activityBar.location', 'hidden']]);
+  const store = {get: (key: string) => state.get(key), update: async (key: string, value: boolean) => { state.set(key, value); }};
+  const settings = {inspect: (key: string) => ({globalValue: values.get(key)}),
+    update: async (key: string, value: unknown) => { values.set(key, value); }};
+  await migrateDesktopAppBar(store, settings);
+  assert.equal(values.get('workbench.activityBar.location'), 'default');
+  values.set('workbench.activityBar.location', 'hidden');
+  await migrateDesktopAppBar(store, settings);
+  assert.equal(values.get('workbench.activityBar.location'), 'hidden');
+  state.clear();
+  await migrateDesktopAppBar(store, {...settings, inspect: () => ({globalValue: 'hidden', workspaceValue: 'hidden'})});
+  assert.equal(values.get('workbench.activityBar.location'), 'hidden');
+});
 
 test('an updated extension preserves desktop defaults without replacing explicit preferences',async()=>{
   const root=await mkdtemp(join(tmpdir(),'desktop-defaults-'));

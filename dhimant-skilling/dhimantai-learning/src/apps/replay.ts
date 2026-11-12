@@ -27,19 +27,24 @@ export class Replayer {
   private readonly equal: (actual: unknown, expected: unknown) => boolean;
   constructor(private readonly client: CdpClient, private readonly sessionId: string, private readonly server: AppServer,
       private readonly verifier: TaskVerifier, private readonly login: string, private readonly tag: string, playerDir: string,
-      private readonly wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))) {
+      private readonly wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms)),
+      private readonly evaluate?: <T>(expression: string) => Promise<T>, private readonly signal?: AbortSignal) {
     this.equal = createRequire(__filename)(join(playerDir, 'guide.js')).equal;
   }
   /** Runs a function in the page with JSON arguments and returns its JSON result. */
   private async page<T>(fn: string, ...args: unknown[]): Promise<T> {
+    this.signal?.throwIfAborted();
+    if (this.evaluate) return this.evaluate<T>(`(${fn})(...${JSON.stringify(args)})`);
     const reply = await this.client.call('Runtime.evaluate', {expression: `(${fn})(...${JSON.stringify(args)})`,
       awaitPromise: true, returnByValue: true}, this.sessionId, 60000) as {result?: {value?: T}; exceptionDetails?: {exception?: {description?: string}; text?: string}};
     if (reply.exceptionDetails) throw new Error(reply.exceptionDetails.exception?.description?.split('\n')[0] ?? reply.exceptionDetails.text ?? 'page error');
     return reply.result?.value as T;
   }
   private async until(fn: string, args: unknown[], what: string, timeoutMs = 30000) {
-    for (const started = Date.now(); Date.now() - started < timeoutMs; await this.wait(400))
+    for (const started = Date.now(); Date.now() - started < timeoutMs; await this.wait(400)) {
+      this.signal?.throwIfAborted();
       if (await this.page<boolean>(fn, ...args).catch(() => false)) return;
+    }
     throw new Error(`Timed out waiting for ${what}.`);
   }
   async run(lessons: ReplayTask[]): Promise<ReplayResult[]> {
@@ -62,6 +67,9 @@ export class Replayer {
         if (!task.readOnly) {
           for (const step of task.steps) await this.page('(field, value) => dhimantaiApp.setValue(field, value)', step.field, step.value);
           await this.page('() => dhimantaiApp.save()');
+          const errors = await this.page<string[]>('() => dhimantaiApp.errors?.() || []');
+          if (errors.length && await this.page<boolean>('() => !!dhimantaiApp.current()?.dirty'))
+            throw new Error('The application rejected this form: ' + errors.slice(0, 2).join(' ').slice(0, 600));
           await this.until('() => { const c = dhimantaiApp.current(); return !!c && !c.isNew && !c.dirty && !!c.id; }', [], 'the record to save');
           if (task.final || task.expected.docstatus === 1) {
             await this.page('name => dhimantaiApp.act(name)', task.finalButton ?? (task.expected.docstatus === 1 ? 'submit' : task.finalAction ?? 'Submit'));
@@ -73,6 +81,7 @@ export class Replayer {
         records[task.id] = record;
         results.push({task: task.id, ok: true, record, discriminates: await this.discriminates(task, form, record)});
       } catch (error) {
+        this.signal?.throwIfAborted();
         results.push({task: task.id, ok: false, reason: error instanceof Error ? error.message : String(error)});
       }
     }
@@ -89,6 +98,7 @@ export class Replayer {
   }
   /** Changes each decision value in the saved record and confirms the check would then fail. */
   private async discriminates(task: ReplayTask, form: string, record: string): Promise<boolean> {
+    if (task.steps.some(step => step.decide && !(step.field in task.expected))) return false;
     const decisions = task.steps.filter(step => step.decide && step.field in task.expected);
     if (!decisions.length) return true;
     const doc = await this.server.read(form, record, fieldsFor(task.expected));

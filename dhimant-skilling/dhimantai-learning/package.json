@@ -1,8 +1,8 @@
 {
   "name": "dhimantai-learning",
   "displayName": "dhimantAI Learning",
-  "description": "Learn in VS Code with Course Catalog, Instructor, Study, Doubt Solver, and coding practice. Write, debug, and test here; run projects and tests in the course container.",
-  "version": "0.39.18",
+  "description": "Learn in VS Code with Course Catalog, Instructor, Doubt Solver, and coding practice. Write, debug, and test here; run projects and tests in the course container.",
+  "version": "0.39.22",
   "publisher": "optficial",
   "enabledApiProposals": ["browser"],
   "license": "UNLICENSED",
@@ -36,15 +36,18 @@
       "terminal.integrated.defaultProfile.linux": "dhimantAI Course Container"
     },
     "commands": [
+      { "command": "dhimantai.showUpdates", "title": "App Updates", "category": "dhimantAI", "icon": "$(cloud-download)" },
+      { "command": "dhimantai.profile", "title": "Your Profile", "category": "dhimantAI", "icon": "$(account)" },
       { "command": "dhimantai.projectPreview", "title": "Preview Running Project", "category": "dhimantAI" },
       { "command": "dhimantai.reviewReadiness", "title": "Review Assigned Readiness Assessments", "category": "dhimantAI" },
       { "command": "dhimantai.openBrowserCourse", "title": "Open ERPNext Training", "category": "dhimantAI" },
-      { "command": "dhimantai.authorPracticalCourse", "title": "Author a Practical Course for a Business App", "category": "dhimantAI" },
+      { "command": "dhimantai.openErpDemo", "title": "Run ERPNext Demo (one chapter)", "category": "dhimantAI" },
+      { "command": "dhimantai.authorPracticalCourse", "title": "Open Course Authoring Studio", "category": "dhimantAI" },
       { "command": "dhimantai.courseGrade", "title": "Course Grade & Certificate", "category": "dhimantAI", "icon": "$(mortar-board)" },
       { "command": "dhimantai.searchCommands", "title": "Search Commands", "category": "dhimantAI" },
       { "command": "dhimantai.gitHub", "title": "Git & GitHub", "category": "dhimantAI", "icon": "$(source-control)" },
       { "command": "dhimantai.desktopWelcome", "title": "Open Desktop Welcome", "category": "dhimantAI" },
-      { "command": "dhimantai.openStudy", "title": "Open Study Reader", "category": "dhimantAI", "icon": "$(book)" },
+      { "command": "dhimantai.openStudy", "title": "Open Study Reader", "category": "dhimantAI", "icon": "$(book)", "enablement": "false" },
       { "command": "dhimantai.cellInput", "title": "Send input to running cell", "category": "dhimantAI" },
       { "command": "dhimantai.practiceHistory", "title": "Saved Practice Notebooks", "category": "dhimantAI", "icon": "$(history)" },
       { "command": "dhimantai.exportPracticeRecord", "title": "Export My Practice Record", "category": "dhimantAI" },
@@ -162,6 +165,9 @@
         { "command": "dhimantai.suggestNextLine", "when": "notebookCellType == code", "group": "dhimantai@1" }
       ],
       "commandPalette": [
+        { "command": "dhimantai.openStudy", "when": "false" },
+        { "command": "dhimantai.showUpdates", "when": "dhimantai.customDesktop" },
+        { "command": "dhimantai.profile", "when": "dhimantai.customDesktop" },
         { "command": "dhimantai.desktopWelcome", "when": "false" },
         { "command": "dhimantai.openCopyInCourse", "when": "false" },
         { "command": "dhimantai.openCourseColab", "when": "false" },
@@ -220,7 +226,7 @@
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "markdownDescription": "Download, verify and install learning updates when the app starts. Updates activate on your next normal app restart without interrupting a lesson. Enabled by default in dhimantAI desktop; explicitly switch this off to opt out. Separate from Marketplace updates. A failed automatic installation can be retried with Install Extension Update."
+          "markdownDescription": "Download and verify updates in the background. Learning updates install quietly and activate on your next normal restart. In dhimantAI desktop, native installers download automatically; open the installer from App Updates when you are ready. Checks run at startup and every six hours. Enabled by default in dhimantAI desktop; switch this off to download manually. Separate from Marketplace updates."
         },
         "dhimantai.environment": {
           "type": "string",
@@ -302,8 +308,8 @@
     ]
   },
   "scripts": {
-    "compile": "tsc -p . && tsc -p tsconfig.webview.json && node scripts/bundle-audio.mjs",
-    "watch": "node scripts/bundle-audio.mjs && tsc -w -p .",
+    "compile": "tsc -p . && tsc -p tsconfig.webview.json && node scripts/bundle-audio.mjs && node scripts/bundle-authoring.mjs",
+    "watch": "node scripts/bundle-audio.mjs && node scripts/bundle-authoring.mjs && tsc -w -p .",
     "test": "npm run compile && node --test out/test/*.test.js",
     "test:signup": "npm run compile && node out/test/integration/runTest.js suiteSignup",
     "test:b2c": "npm run compile && node out/test/integration/runTest.js suiteB2c",
@@ -317,6 +323,9 @@
     "test:projects": "npm run compile && node out/test/integration/runTest.js suiteProjectCoach"
   },
   "devDependencies": {
+    "playwright-core": "1.65.0",
+    "ws": "8.18.3",
+    "@types/ws": "8.18.1",
     "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-cpp": "^6.0.3",

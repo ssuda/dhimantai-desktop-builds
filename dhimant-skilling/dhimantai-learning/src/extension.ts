@@ -3,7 +3,7 @@ import { registerCourseProjects } from './courseProjects';
 import { SkillingReviewView } from './skillingReview';
 import { CourseWorkspaces } from './courseWorkspace';
 import { BrowserCourses, verifiedKey } from './browserCourses';
-import { registerPracticalAuthoring } from './apps/authoring';
+import { AuthoringStudio } from './apps/authoringStudio';
 import {BrowserLearning} from './browserLearning';
 import { registerCourseKernel } from './courseKernel';
 import * as vscode from 'vscode';
@@ -33,6 +33,7 @@ import { openLegacyExercise } from './legacyExercise';
 import { useColabForNotebook } from './colab';
 import { newNotebook } from './notebookRuntime';
 import { ExtensionUpdates, automaticUpdates } from './updates';
+import { DesktopAppControls } from './desktopAppControls';
 import { preserveDesktopDefaults } from './desktopConfiguration';
 import { registerNotebookSubmission } from './notebookCommands';
 import { registerLearningRoom } from './learningRoom';
@@ -102,7 +103,7 @@ export async function activate(context: vscode.ExtensionContext) {
   await copilotPolicy.enforce();
   const browserLearning=new BrowserLearning();context.subscriptions.push(browserLearning);
   const browserCourses = new BrowserCourses(context, auth, envName, output,browserLearning,env);
-  context.subscriptions.push(registerPracticalAuthoring(context, auth, env, output));
+  context.subscriptions.push(new AuthoringStudio(context, auth, envName, env));
   context.subscriptions.push(browserCourses);
   stopCourses = async () => { await browserCourses.shutdown(); await courses.stopAll(); };
   const coursework = new CourseworkOutbox(context.globalState);
@@ -168,7 +169,8 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(catalog);
   context.subscriptions.push(vscode.commands.registerCommand('dhimantai.pricing', () => catalog.open()));
   const installed = context.extension.packageJSON.version as string;
-  const updates = new ExtensionUpdates(envName, installed, () => {});
+  let appControls: DesktopAppControls | undefined;
+  const updates = new ExtensionUpdates(envName, installed, () => appControls?.refresh());
   const installPackage = async (bytes: Buffer, version: string) => {
     const directory = await mkdtemp(join(tmpdir(), 'dhimantai-update-'));
     try {
@@ -267,6 +269,10 @@ export async function activate(context: vscode.ExtensionContext) {
   status.text = '$(mortar-board) dhimantAI';
   status.tooltip = 'Open Course Catalog, Instructor, and Doubt Solver.';
   status.show();
+  if (desktop) {
+    appControls = new DesktopAppControls(context, auth, envName, updates, checkUpdates, installUpdate, testing, status);
+    context.subscriptions.push(appControls);
+  }
 
   const command = (id: string, label: string, action: (...args: any[]) => Promise<unknown>) =>
     vscode.commands.registerCommand(id, (...args: any[]) => task(label, async () => { await action(...args); }));
@@ -288,6 +294,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const uriHandler: vscode.UriHandler = {
     async handleUri(uri) {
+      if (uri.path === '/password-reset') {
+        try { await auth.acceptPasswordRecovery(uri); }
+        catch { void vscode.window.showErrorMessage('Could not open this password reset link. Use Forgot password in Sign in to request a new link for this app and service.'); }
+        return;
+      }
       if (uri.path === '/open-notebook') {
         await task('Opening Instructor notebook', () => openTutorNotebook(uri));
         return;

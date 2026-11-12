@@ -8,7 +8,9 @@ import { topicTeachBackRequest } from '../src/teachBack';
 import { PracticeCodeEditors, ToolReply } from './practiceCodeEditor';
 import type { CodeSnapshot, observedRun } from '../src/roomCode';
 import type {BrowserObservation} from '../src/browserLearning';
+import {BrowserQuestion,validBrowserQuestion,validBrowserAnswer,browserAnswerMessage} from '../src/browserQuestion';
 import { SpeakerControl } from './audioControls';
+import { mediaIcon } from '../src/mediaIcons';
 import { LearningDevices } from './learningDevices';
 import { AttachmentRole, NotebookAttachments } from './notebookAttachments';
 import { icon } from './icons';
@@ -62,6 +64,26 @@ function confirmRemoval(trigger: HTMLButtonElement, message: string, remove: () 
 let attempt = 0, mode: Mode = 'tutor', room: Room | undefined, agent: string | undefined;
 let ready = false, sending = false, coaching = false, voice = true, blockedAudio = false, visible = true;
 let browserCourse=false, browserSnapshot:BrowserObservation|null=null, browserSequence=0;
+let browserQuestion:BrowserQuestion|null=null, browserAnswered='', browserAskInstead='';
+function showBrowserQuestion(value:unknown) {
+  browserQuestion=validBrowserQuestion(value)?value:null;
+  if(!browserQuestion){controls();return;}
+  const question=browserQuestion;
+  if(!notebook.cells.some(cell=>cell.packet?.browser_question_id===question.id)) {
+    addCell('board','### '+question.title+'\n\n'+question.question,{browser_question_id:question.id,
+      browser_question:question});
+  }
+  controls();
+}
+function openBrowserQuestion() {
+  return browserCourse && browserQuestion && browserQuestion.id!==browserAnswered
+    && browserQuestion.id!==browserAskInstead ? browserQuestion : undefined;
+}
+function focusBrowserQuestion() {
+  browserAskInstead='';controls();
+  field.focus();messageBar?.scrollIntoView({block:'nearest'});
+  helpStatus('Answer the question below, then send your reply.');
+}
 let browserSync:Promise<void>=Promise.resolve();
 function syncBrowserObservation():Promise<void> {
   const live=room,dest=agent,id=attempt,observation=browserSnapshot;
@@ -95,6 +117,7 @@ const devices = new LearningDevices({
       const control = button(id);
       if (!control || !button('audio-camera')) continue;
       control.setAttribute('aria-pressed', String(active));
+      control.innerHTML = mediaIcon(name, active);
       control.title = (active ? 'Stop ' : 'Start ') + name;
       control.setAttribute('aria-label', control.title);
       control.disabled = mediaBusy || !ready || !visible || !mediaAllowed || mode !== 'tutor';
@@ -108,11 +131,22 @@ const devices = new LearningDevices({
   },
 });
 if (button('audio-camera')) {
-  button('audio-microphone').onclick = () => { void devices.toggle('microphone'); };
+  button('audio-microphone').onclick = () => { void resumeSpeaker(); void devices.toggle('microphone'); };
   button('audio-camera').onclick = () => { void devices.toggle('camera'); };
 }
 window.addEventListener('pagehide', () => devices.stop());
 const audio = new Set<HTMLMediaElement>();
+/** Retry browser playback during a learner gesture, without changing their mute preference. */
+async function resumeSpeaker() {
+  const live=room,id=attempt;
+  if(!live || !voice)return;
+  try {
+    await live.startAudio();
+    if(room!==live || attempt!==id || !voice)return;
+    await Promise.all([...audio].map(el=>el.play()));
+    if(room===live && attempt===id){blockedAudio=false;controls();}
+  } catch { if(room===live && attempt===id && voice){blockedAudio=true;controls();} }
+}
 const voiceByMode = new Map<Mode, boolean>();
 const speaker = button('sound') ? new SpeakerControl(button('sound'), {
   supported: () => 'setSinkId' in HTMLMediaElement.prototype,
@@ -146,6 +180,19 @@ const importedSets = new Map<string, CourseDataset>();
 let lessonCourses: Course[] = [], selectedLesson = '', preferredCourse = '', loadingLessons = false;
 /** A chapter the host asked to resume (Course Catalog's Continue learning); it starts once lessons load. */
 let preferredLesson = '';
+function followingChapter() {
+  const chapters=lessonCourses.find(course=>course.chapters.some(ch=>ch.id===selectedLesson))?.chapters ?? [];
+  const index=chapters.findIndex(ch=>ch.id===selectedLesson);
+  return index<0?undefined:chapters.slice(index+1).find(ch=>!ch.locked && !ch.expired);
+}
+function selectChapter(chapterId:string) {
+  if(chapterId===selectedLesson)return;
+  const course=lessonCourses.find(course=>course.chapters.some(ch=>ch.id===selectedLesson));
+  if(browserCourse && browserSnapshot && course?.chapters.some(ch=>ch.id===chapterId)) {
+    host.postMessage({type:'browserChooseChapter',attempt,chapterId});
+    helpStatus('Opening the selected chapter and its browser task. Your unfinished work stays saved.');
+  } else begin('tutor',chapterId);
+}
 function renderLessons() {
   const list = byId('lesson-list'), course = byId<HTMLSelectElement>('lesson-course');
   if (!list || !course) return;
@@ -172,7 +219,7 @@ function renderLessons() {
     } else {
       choice.textContent = label + (chapter.locked ? ' · Locked' : '');
       choice.disabled = !!chapter.locked;
-      choice.onclick = () => begin('tutor', chapter.id);
+      choice.onclick = () => selectChapter(chapter.id);
     }
     if (chapter.progress?.status === 'covered') {
       // A covered chapter is done, not cancelled: a check mark, never a strikethrough, and still revisitable.
@@ -560,6 +607,12 @@ function controls() {
   if (byId('notebook-mode')) byId('notebook-mode').textContent = 'DHIMANTAI · ' + (practiceMode ? 'PRACTICE NOTEBOOK' : mode === 'doubt_solver' ? 'DOUBT SOLVER' : 'INSTRUCTOR NOTEBOOK');
   if (byId('tutor-lessons')) byId('tutor-lessons').hidden = practiceMode || mode !== 'tutor';
   const choosing = !practiceMode && mode === 'tutor' && !selectedLesson;
+  const skip=button('skip-chapter'),next=followingChapter();
+  if(skip) {
+    skip.hidden=practiceMode || mode!=='tutor' || !selectedLesson;
+    skip.disabled=!next || sending;
+    skip.title=next?'Skip to '+(next.lesson||next.name)+'. This does not mark the current chapter complete.':'You are at the last available chapter.';
+  }
   if (messageBar) messageBar.hidden = choosing;
   const notebookTools = document.querySelector<HTMLElement>('.notebook-tools');
   if (notebookTools) notebookTools.hidden = choosing;
@@ -578,6 +631,7 @@ function controls() {
   for (const action of document.querySelectorAll<HTMLButtonElement>('[data-practice-strategy], #practice-help')) action.disabled = sending || !ready || !editors.aiEnabled;
   for (const action of feed.querySelectorAll<HTMLButtonElement>('[data-remove-conversation], [data-remove-cell], [data-confirm-delete]')) action.disabled = sending;
   composerMode();
+  updateLessonActions();
   dataControls();
   byId<HTMLInputElement>('follow-code').disabled = !ready || !editors.aiEnabled || !!practice;
   byId<HTMLInputElement>('stuck-hints').disabled = !ready || mode !== 'tutor' || !editors.aiEnabled || !editors.following || !!practice;
@@ -586,6 +640,8 @@ function controls() {
   for (const id of ['attach-images','attach-pdfs']) if (button(id)) button(id).disabled = !ready || sending || (!!practice && !editors.aiEnabled);
   button('video').disabled = !ready || sending || !!practice;
   button('teach-back').disabled = !ready || sending;
+  for(const action of feed.querySelectorAll<HTMLButtonElement>('[data-browser-question]'))
+    action.disabled=!ready || sending || action.dataset.browserQuestion!==browserQuestion?.id || action.dataset.browserQuestion===browserAnswered;
   speaker?.update(!voice || blockedAudio, false, blockedAudio ? 'Enable speaker' : undefined);
   if (button('audio-camera')) for (const id of ['audio-microphone', 'audio-camera']) {
     button(id).disabled = mediaBusy || !ready || !visible || !mediaAllowed || mode !== 'tutor';
@@ -604,22 +660,26 @@ function composerMode() {
   if (!askInstead) {
     askInstead = document.createElement('button');
     askInstead.type = 'button'; askInstead.className = 'quiet ask-instead'; askInstead.textContent = 'Ask a question instead';
-    askInstead.onclick = () => { const q = openQuestion(); if (q) askInsteadOf = String(q.packet!.tutor_checkpoint_id); controls(); field.focus(); };
+    askInstead.onclick = () => { const q = openQuestion(); if (q) askInsteadOf = String(q.packet!.tutor_checkpoint_id);
+      if(browserQuestion)browserAskInstead=browserQuestion.id;controls();field.focus(); };
     (byId('composer-mode-actions') ?? byId('composer')).prepend(askInstead);
   }
+  const browserPrompt=attachments.count?undefined:openBrowserQuestion();
   const question = attachments.count ? undefined : openQuestion(), label = document.querySelector('label[for="message"]');
+  const replying=!!browserPrompt || !!question;
   const assistant = names[mode];
-  if (label) label.textContent = question ? 'Your answer to Instructor' : 'Ask ' + assistant;
-  field.placeholder = question ? 'Your answer and reasoning…' : `Ask ${assistant} or reply…`;
-  const action = question ? 'Answer Instructor' : 'Ask ' + assistant;
-  button('send').title = action + ' (Ctrl/Cmd+Enter)'; button('send').setAttribute('aria-label', action);
+  if (label) label.textContent = replying ? 'Your answer to Instructor' : 'Ask ' + assistant;
+  field.placeholder = replying ? 'Your answer and reasoning…' : `Ask ${assistant} or reply…`;
+  const action = replying ? 'Answer Instructor' : 'Ask ' + assistant;
+  button('send').title = action; button('send').setAttribute('aria-label', action);
   if (byId('send-label')) byId('send-label').textContent = action;
   const context = byId('composer-context');
   if (context) {
-    context.hidden = !question;
-    context.textContent = question ? 'Replying to: ' + question.text.slice(0, 180) + (question.text.length > 180 ? '…' : '') : '';
+    const prompt=browserPrompt?.question??question?.text;
+    context.hidden = !prompt;
+    context.textContent = prompt ? 'Replying to: ' + prompt.slice(0, 180) + (prompt.length > 180 ? '…' : '') : '';
   }
-  askInstead.hidden = !question;
+  askInstead.hidden = !replying;
   if (!practiceMode && mode === 'tutor') watchIdle(question);
   doubtComposer();
   for (const hint of feed.querySelectorAll<HTMLElement>('[data-question-hint]'))
@@ -627,7 +687,29 @@ function composerMode() {
 }
 /** The message bar answers Instructor's open question, or asks one. Attachments go with a question. */
 async function submitField(): Promise<boolean> {
-  if (!ready || sending || (!field.value.trim() && !attachments.count)) return false;
+  if (!ready) { helpStatus('Instructor is not connected yet. Your draft is saved; send it when connected.'); return false; }
+  if (sending) { helpStatus('Sending your message…'); return false; }
+  if (!field.value.trim() && !attachments.count) { field.focus(); return false; }
+  const browserPrompt=attachments.count?undefined:openBrowserQuestion();
+  if(browserPrompt) {
+    const text=field.value.trim(),id=attempt;
+    if(!validBrowserAnswer(browserPrompt,text)) {
+      helpStatus(browserPrompt.options.length?'Choose one of the prediction options in Instructor.'
+        : `Write ${browserPrompt.minLength}–${browserPrompt.maxLength} characters in your own words.`);return false;
+    }
+    const ok=await send(browserAnswerMessage(browserPrompt,text),false,text);
+    if(ok && id===attempt) {
+      browserAnswered=browserPrompt.id;
+      host.postMessage({type:'browserAnswer',attempt,id:browserPrompt.id,answer:text});
+      if(field.value.trim()===text)field.value='';
+      const cell=notebook.cells.find(c=>c.packet?.browser_question_id===browserPrompt.id);
+      if(cell?.packet){cell.packet.student_answer=text;saveNotebook();}
+      helpStatus(browserPrompt.kind==='prediction'?'Prediction sent. Continue the practical step in the browser.'
+        :browserPrompt.kind==='reflection'?'Reflection sent. Read your feedback here.'
+        :'Answer sent. Read your feedback here, then choose Next task in the browser.');
+    }
+    controls();return ok;
+  }
   const question = attachments.count ? undefined : openQuestion();
   if (!question && dataRoute(field.value)) return sendData(field.value);
   if (!question && mode === 'doubt_solver' && !practiceMode) return sendDoubt();
@@ -636,7 +718,7 @@ async function submitField(): Promise<boolean> {
   if (!text.trim() || sending) return false;
   const ok = await send('TUTOR_NOTEBOOK_ANSWER\n' + JSON.stringify({checkpoint_id:packet.tutor_checkpoint_id, answer:text}), false, text);
   // Backend question identity remains authoritative; delivery alone does not assess it.
-  if (ok) { packet.student_answer = text; if (field.value === text) field.value = ''; refreshActions(question); saveNotebook(); }
+  if (ok) { packet.student_answer = text; if (field.value === text) field.value = ''; saveNotebook(); }
   controls();
   return ok;
 }
@@ -680,7 +762,7 @@ function focusView(active: boolean) {
 focusButton.onclick = () => focusView(!document.body.classList.contains('focus-view'));
 function close(message: string) {
   if(browserCourse)host.postMessage({type:'browserState',attempt,connected:false,detail:'Instructor disconnected. Reconnect to resume live help.'});
-  browserSnapshot=null;browserCourse=false;
+  browserSnapshot=null;browserCourse=false;browserQuestion=null;browserAnswered='';browserAskInstead='';
   devices.stop(); mediaAllowed = false;
   clearTimeout(saveTimer);
   const saved = snapshotNotebook();
@@ -811,7 +893,7 @@ function board(text: string, section?: unknown, packet: Record<string, unknown> 
     // Feedback closes its question: the full set of lesson moves comes back.
     const asked = [...notebook.cells].reverse().find(cell => cell.packet?.is_question_prompt
       && (!packet.tutor_checkpoint_id || cell.packet.tutor_checkpoint_id === packet.tutor_checkpoint_id));
-    if (asked?.packet && !asked.packet.feedback_received) { asked.packet.feedback_received = true; refreshActions(asked); }
+    if (asked?.packet && !asked.packet.feedback_received) asked.packet.feedback_received = true;
     const correct = [packet.correct, packet.is_correct, packet.answer_correct].includes(true);
     struggles = correct ? 0 : struggles + 1;
     smallerStep(struggles >= 2);
@@ -831,21 +913,51 @@ const learningActions: Record<string, [string, string]> = {
 };
 /** A question is open until the learner answers it or Instructor gives feedback on it. */
 const questionOpen = (packet: Record<string, unknown>) => !!packet.is_question_prompt && typeof packet.student_answer !== 'string' && !packet.feedback_received;
-function renderActions(body: HTMLElement, packet: Record<string, unknown>, bar: HTMLElement = document.createElement('div')) {
-  if (practice || packet.notebook_help || mode !== 'tutor' || (packet.tutor_practice_editor as {source?:string} | undefined)?.source === 'Practice exercise') return;
+/** Session actions belong to the current composer, not to saved explanation cards. */
+function updateLessonActions() {
+  const primary = byId('composer-mode-actions'), more = byId('notebook-help-actions');
+  if (!primary || !more) return;
+  const latest = [...notebook.cells].reverse().find(cell => cell.kind === 'board'
+    && !cell.packet?.notebook_help && !cell.packet?.data_part);
+  const packet = latest?.packet ?? {};
+  const available = !!latest && !practice && !practiceMode && mode === 'tutor' && !!selectedLesson
+    && (packet.tutor_practice_editor as {source?:string} | undefined)?.source !== 'Practice exercise';
   const menu = packet.tutor_action_menu as {actions?: unknown} | undefined;
-  // While a question is open, offer help to think, not moves that skip past the learner's own attempt.
-  const ids = questionOpen(packet) ? ['hint', 'stuck'] : ['continueLesson', 'hint', ...(Array.isArray(menu?.actions) ? menu!.actions : [])];
-  bar.className = 'lesson-actions'; bar.dataset.lessonActions = ''; bar.replaceChildren();
-  for (const id of [...new Set(ids)].filter(id => typeof id === 'string' && learningActions[id])) {
-    const [label, text] = learningActions[id], action = document.createElement('button');
-    action.textContent = label; action.onclick = () => { void send(text, false, label === 'I’m stuck' ? label : text, id === 'stuck' ? undefined : id); }; bar.append(action);
+  // The existing help ladder handles hints. An unanswered question must not offer a way to skip it.
+  const ids = available && !openQuestion() && !questionOpen(packet)
+    ? ['continueLesson', ...(Array.isArray(menu?.actions) ? menu.actions : [])] : [];
+  const visibleActions = new Set(ids.filter((id): id is string => typeof id === 'string'
+    && !!learningActions[id] && !['hint', 'stuck'].includes(id)));
+  for (const id of visibleActions) {
+    const [label, text] = learningActions[id];
+    let action = document.querySelector<HTMLButtonElement>(`[data-lesson-action="${id}"]`);
+    if (!action) {
+      action = document.createElement('button'); action.type = 'button'; action.dataset.lessonAction = id;
+      (id === 'continueLesson' ? primary : more).append(action);
+    }
+    action.textContent = browserCourse && id==='continueLesson'
+      ? browserQuestion && browserQuestion.id!==browserAnswered?'Answer question':'Continue task' : label;
+    if(browserCourse && id==='continueLesson')action.dataset.browserContinue='';
+    else delete action.dataset.browserContinue;
+    action.onclick = () => {
+      if (!ready || sending || !editors.aiEnabled) return;
+      if(id==='continueLesson' && browserCourse) {
+        if(browserQuestion && browserQuestion.id!==browserAnswered) {
+          focusBrowserQuestion();
+        } else if(ready && browserSnapshot && !sending) {
+          host.postMessage({type:'browserContinue',attempt,task:browserSnapshot.task});
+          helpStatus('Checking your ERPNext task…');
+        } else helpStatus('Open the current ERPNext task and reconnect to continue.');
+        return;
+      }
+      void send(text, false, label === 'I’m stuck' ? label : text, id === 'stuck' ? undefined : id);
+    };
   }
-  if (!bar.isConnected) body.append(bar);
-}
-function refreshActions(cell: NotebookCell) {
-  const row = feed.querySelector<HTMLElement>(`[data-cell-id="${cell.id}"]`), bar = row?.querySelector<HTMLElement>('[data-lesson-actions]');
-  if (row && bar) renderActions(bar.parentElement!, cell.packet ?? {}, bar);
+  for (const action of document.querySelectorAll<HTMLButtonElement>('[data-lesson-action]')) {
+    action.hidden = !visibleActions.has(action.dataset.lessonAction!);
+    action.disabled = action.hidden || !ready || sending || !editors.aiEnabled;
+    if (action.hidden) delete action.dataset.browserContinue;
+  }
 }
 /** Struggle signal: two answers that were not accepted, or a long pause on an open question. */
 function smallerStep(show: boolean) {
@@ -908,6 +1020,22 @@ function renderTeaching(cell: NotebookCell) {
       body.append(box);
     }
     prepareVisuals(body);
+    if(validBrowserQuestion(packet.browser_question)) {
+      const question=packet.browser_question,actions=document.createElement('div');actions.className='lesson-actions';
+      body.parentElement?.setAttribute('data-browser-question-id',question.id);
+      for(const option of question.options) {
+        const answer=document.createElement('button');answer.type='button';answer.textContent=option;answer.dataset.browserQuestion=question.id;
+        answer.disabled=!ready || browserQuestion?.id!==question.id || browserAnswered===question.id;
+        answer.onclick=()=>{
+          if(browserQuestion?.id!==question.id || browserAnswered===question.id)return;
+          browserAskInstead='';
+          field.value=option;
+          controls();field.focus();messageBar?.scrollIntoView({block:'nearest'});
+        };
+        actions.append(answer);
+      }
+      if(actions.children.length)body.append(actions);
+    }
     // Coach replies are explanations, never new executable solution cells.
     if (!packet.notebook_help && (!practiceMode || !conversationCell(cell))) editors.mount(body, text, packet.tutor_practice_editor, cell.id);
     if (packet.is_question_prompt && typeof packet.tutor_checkpoint_id === 'string' && !packet.tutor_practice_editor) {
@@ -917,7 +1045,6 @@ function renderTeaching(cell: NotebookCell) {
       hint.hidden = openQuestion()?.packet?.tutor_checkpoint_id !== packet.tutor_checkpoint_id;
       body.append(hint);
     }
-    renderActions(body, packet);
     conversationControls(body, cell);
     // Instructor sends the course section first, then the concept taught this turn.
     const heading = body.firstElementChild;
@@ -961,6 +1088,9 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
     if (voice) void el.play().catch(() => { if (current()) { blockedAudio = true; controls(); } });
   });
   live.on(RoomEvent.TrackUnsubscribed, track => { for (const el of track.detach()) { audio.delete(el); el.remove(); } });
+  live.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+    if(current() && voice){blockedAudio=!live.canPlaybackAudio;controls();}
+  });
   live.on(RoomEvent.DataReceived, (bytes, peer) => {
     if (!isAgent(peer) || bytes.length > 320000) return;
     let data;
@@ -1185,12 +1315,22 @@ async function send(text: string, fromField: boolean, display = text, action?: s
 window.addEventListener('message', e => {
   const d = e.data;
   if(d?.type==='browserObservation') {
-    if(d.attempt!==attempt || d.chapter!==selectedLesson)return;
+    if(e.origin!==window.location.origin || d.attempt!==attempt || d.chapter!==selectedLesson)return;
     browserSnapshot=d.observation;
+    showBrowserQuestion(d.question);
+    if(typeof d.taskStatus==='string' && d.taskStatus)helpStatus(d.taskStatus);
+    if(d.focusQuestion && d.focusQuestion===browserQuestion?.id)focusBrowserQuestion();
     if(ready && browserCourse)void syncBrowserObservation().then(()=>{
       if(d.attempt===attempt && d.chapter===selectedLesson && d.help && typeof d.help==='string' && d.help.length<=1500)return send(d.help,false);
     }).catch(error=>{status.textContent=error.message;});
     return;
+  }
+  if(e.origin===window.location.origin && d?.type==='browserAnswerRejected' && d.attempt===attempt) {
+    if(browserAnswered===d.id){browserAnswered='';controls();}
+    helpStatus('The browser task changed. Your answer is in Instructor; check the current task before continuing.');return;
+  }
+  if(e.origin===window.location.origin && d?.type==='browserTaskStatus' && d.attempt===attempt && typeof d.status==='string') {
+    helpStatus(d.status);return;
   }
   if (d?.type === 'lessonPlayback') {
     const v = videos.get(d.id);
@@ -1370,20 +1510,20 @@ window.addEventListener('message', e => {
   }
 });
 button('tutor').onclick = () => begin(mode, selectedLesson);
+if(button('skip-chapter'))button('skip-chapter').onclick=()=>{const next=followingChapter();if(next)selectChapter(next.id);};
 if (byId('lesson-course')) byId('lesson-course').onchange = () => { preferredCourse = byId<HTMLSelectElement>('lesson-course').value; renderLessons(); };
 if (button('lesson-catalog')) button('lesson-catalog').onclick = () => host.postMessage({type:'courseCatalog'});
 // The other mode opens in its own tab, so this lesson and its session stay as they are.
 button('doubt_solver').onclick = () => host.postMessage({type:'openOtherMode'});
 button('end').onclick = () => close('Session ended. Choose an agent to start again.');
 if (button('sound')) button('sound').onclick = async () => {
-  const live = room, id = attempt;
   voice = blockedAudio || !voice; blockedAudio = false;
   voiceByMode.set(mode, voice);
   for (const el of audio) el.muted = !visible || !voice || !!activeVideo;
   controls();
-  try { if (voice && live) { await live.startAudio(); if (room === live && attempt === id && voice) await Promise.all([...audio].map(el => el.play())); } }
-  catch { if (room === live && attempt === id && voice) { blockedAudio = true; controls(); } }
+  await resumeSpeaker();
 };
+field.addEventListener('pointerdown',()=>{if(blockedAudio)void resumeSpeaker();});
 if (button('attach-images')) button('attach-images').onclick = () => attachments.choose(false);
 if (button('attach-pdfs')) button('attach-pdfs').onclick = () => attachments.choose(true);
 if (button('import-data')) button('import-data').onclick = () => { if (ready && dataState === 'ready') host.postMessage({type:'dataImport', attempt}); };

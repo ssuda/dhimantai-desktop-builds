@@ -14,6 +14,7 @@ import { ProjectResults, ProjectSummary } from './projectResults';
 import { courseCoverage, coverageLabel, coverageNote, nextChapter, topicCoverageHtml } from './courseProgress';
 import { progressBar, UI_TOKENS } from './uiTheme';
 import { ERP_TASK_TOTAL } from './browserLearning';
+import { STUDY_ENABLED } from './desktopFeatures';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
@@ -170,6 +171,9 @@ export class CourseCatalog implements vscode.Disposable {
       if (this.selection) this.status(checkPayments ? 'Checking purchases…' : 'Refreshing courses…');
       else this.render(undefined, 'Loading courses…', true);
       const projects = await this.results?.summaries(this.media, environment, account ?? 'local') ?? [];
+      if (sequence !== this.sequence || environment !== this.environment()) return;
+      // Saved project evidence is local and remains useful when the catalog service is offline.
+      this.projects = projects;
       const token = account ? await this.auth.accessToken() : undefined;
       if (sequence !== this.sequence || environment !== this.environment()) return;
       let billing: LearningPurchases | undefined;
@@ -180,7 +184,7 @@ export class CourseCatalog implements vscode.Disposable {
       }
       const [catalog, books, progress, pathways] = await Promise.all([
         learnerRpc<PublicCatalog>(env, 'public_learning_catalog', {}, token),
-        account ? new Api(this.auth, () => env, account).studyCatalog().catch(() => ({courses:[]})) : Promise.resolve({courses:[]}),
+        STUDY_ENABLED && account ? new Api(this.auth, () => env, account).studyCatalog().catch(() => ({courses:[]})) : Promise.resolve({courses:[]}),
         account ? new Api(this.auth, () => env, account).practiceCatalog().catch(() => undefined) : undefined,
         fetch(env.apiUrl.replace(/\/+$/,'')+'/skilling/catalog',{signal:AbortSignal.timeout(10000)}).then(async r=>r.ok?(await r.json()).courses:{}).catch(()=>({})),
       ]);
@@ -198,14 +202,14 @@ export class CourseCatalog implements vscode.Disposable {
     } catch (error) {
       if (sequence !== this.sequence) return;
       const message = error instanceof Error ? error.message : 'Could not load courses. Retry.';
-      if (this.selection) this.status(message);
-      else this.render(undefined, message);
+      this.render(this.selection?.catalog, message);
     }
   }
   private projectAccessEnded(id: string) { return projectAccessEnded(id, this.selection?.catalog.courses); }
   private async handle(message: any) {
     if (message?.type === 'browserCourse' && message.id === 'erpnext-essentials')
       return vscode.commands.executeCommand('dhimantai.openBrowserCourse', message.id);
+    if (message?.type === 'browserDemo') return vscode.commands.executeCommand('dhimantai.openErpDemo');
     // Navigation and sign-in must also work while loading or when the catalog is offline.
     if (message?.type === 'signOut') return vscode.commands.executeCommand('dhimantai.signOut');
     if (message?.type === 'commands') return vscode.commands.executeCommand('dhimantai.searchCommands');
@@ -340,13 +344,13 @@ export class CourseCatalog implements vscode.Disposable {
       if (isEssential(course)) return `<article class="course compact" data-course="${escape(course.id)}"><span class="meta muted small">${course.chapters.length} chapters · ${course.expired ? 'Access ended' : course.is_free ? 'Free' : course.unlocked ? 'Unlocked' : 'First chapter free'}${course.enrolled ? ' <span class="dh-chip accent">Joined</span>' : ''}</span>
         <h4>${escape(course.title)}</h4><p class="small">${escape(course.summary)}</p>${progress}${readiness}
         <details><summary>Outline and preparation</summary>${outline}<p class="muted small">${escape(course.prerequisites || '')}</p></details>
-        ${period ? `<p class="muted small">${escape(period)}</p>` : ''}<div class="actions">${primary}${unlock}${course.enrolled && this.studyCourses.has(course.title) ? button('Study', 'study', course.id, false, true) : ''}${course.id === 'engineering-code-reading' && !course.expired ? button('Read a project', 'capstone', course.id, false, true) : ''}</div></article>`;
+        ${period ? `<p class="muted small">${escape(period)}</p>` : ''}<div class="actions">${primary}${unlock}${STUDY_ENABLED && course.enrolled && this.studyCourses.has(course.title) ? button('Study', 'study', course.id, false, true) : ''}${course.id === 'engineering-code-reading' && !course.expired ? button('Read a project', 'capstone', course.id, false, true) : ''}</div></article>`;
       return `<article class="course" data-course="${escape(course.id)}"><span class="meta muted small">${escape(course.level)} · ${course.chapters.length} chapters${course.enrolled ? ' <span class="dh-chip accent">Joined</span>' : ''}</span>
         <h3>${escape(course.title)}</h3><p>${escape(course.summary)}</p>${progress}${readiness}
         <p class="muted small">Before you start: ${escape(course.prerequisites || 'See the course outline.')}</p>
         <details><summary>Course outline</summary>${outline}</details>
         <p class="access">${course.expired ? escape(period) : course.is_free ? 'Free course · All chapters included' : course.unlocked ? 'All chapters unlocked' : 'First chapter free'}${course.is_free || course.unlocked || offer ? '' : bundles.some(b => b.course_ids.includes(course.id)) ? ' · Unlock with a bundle below' : ' · Full-course price coming soon'}</p>
-        ${period && !course.expired ? `<p class="muted small">${escape(period)}</p>` : ''}<div class="actions">${primary}${unlock}${course.enrolled && this.studyCourses.has(course.title) ? button('Study', 'study', course.id, false, true) : ''}</div></article>`;
+        ${period && !course.expired ? `<p class="muted small">${escape(period)}</p>` : ''}<div class="actions">${primary}${unlock}${STUDY_ENABLED && course.enrolled && this.studyCourses.has(course.title) ? button('Study', 'study', course.id, false, true) : ''}</div></article>`;
     };
     const bundleCard = (offer: LearningOffer) => {
       const titles = offer.course_ids.map(id => courses.find(c => c.id === id)?.title ?? id);
@@ -426,7 +430,7 @@ export class CourseCatalog implements vscode.Disposable {
       footer{margin-top:28px;font-size:.92em}ul{padding-left:20px}
       </style></head><body>
       <header class="top"><div><p class="dh-eyebrow">Welcome to dhimantAI</p><h1>Course Catalog</h1>${environment === 'production' ? '' : `<p class="muted small">${escape(environment)} service</p>`}</div>
-      <nav aria-label="Learning">${button('Instructor', 'tutor', '', false, true)}${button('Study', 'study', '', false, true)}${button('Doubt Solver', 'doubtSolver', '', false, true)}${account ? button('My courses', 'practice', '', false, true) : button('Sign in', 'signIn', '', false, true)}</nav>
+      <nav aria-label="Learning">${button('Instructor', 'tutor', '', false, true)}${STUDY_ENABLED ? button('Study', 'study', '', false, true) : ''}${button('Doubt Solver', 'doubtSolver', '', false, true)}${account ? button('My courses', 'practice', '', false, true) : button('Sign in', 'signIn', '', false, true)}</nav>
       ${account ? `<div class="actions" aria-label="Account"><span class="small">Signed in${(this.scope?.accountLabel ?? this.selection?.accountLabel) ? ' as ' + escape((this.scope?.accountLabel ?? this.selection?.accountLabel)!) : ''}</span>${button('Sign out', 'signOut', '', false, true)}</div>` : ''}</header>
       <main>${hero}
       ${catalog && account && !individual ? '<p class="notice">You are signed in with an institute account. Public courses use a separate individual learner account. Choose <strong>Use individual account</strong> to sign in with email or create an individual account. Join a course there to see it in Practice. <strong>My courses</strong> opens your institute learning.</p>' : ''}
@@ -440,9 +444,10 @@ export class CourseCatalog implements vscode.Disposable {
           <details><summary>Course outline and preparation</summary><ol><li>Your company’s accounts</li><li>Customers</li><li>Suppliers</li><li>Stock items</li><li>Purchase orders</li><li>Receiving goods</li><li>Supplier bills</li><li>Paying suppliers</li><li>Sales orders</li><li>Deliveries</li><li>Sales invoices</li><li>Collecting payment</li><li>Bills of materials</li><li>Final challenge: a new customer, start to finish, without hints</li></ol>
           <p>The sandbox runs on your computer. Accounts share one ERPNext instance with separate logins and training companies. First setup downloads the application image and requires 6 GB of runtime memory. HR and payroll are not included in this course.</p></details>
           ${erpChecked ? `${progressBar(erpChecked, ERP_TASK_TOTAL, `${erpChecked} of ${ERP_TASK_TOTAL} tasks done`)}<p class="small muted">${erpChecked} of ${ERP_TASK_TOTAL} tasks done: saved work checked in ERPNext and explained</p>` : ''}
-          <div class="actions">${button(erpChecked ? 'Continue course' : 'Open course', 'browserCourse', 'erpnext-essentials')}</div></article></div></section>
+          <p class="small muted">Demo, one chapter, about 7 minutes: a fresh company with the parties and orders prepared. Receive, bill, deliver and invoice, then close the books. Separate from your course progress.</p>
+          <div class="actions">${button(erpChecked ? 'Continue course' : 'Open course', 'browserCourse', 'erpnext-essentials')}${button('Run the demo', 'browserDemo', 'erpnext-essentials', false, true)}</div></article></div></section>
       ${projects}
-      ${this.companions.length ? `<section aria-labelledby="book-companions"><h2 id="book-companions">Programming book companions</h2><p class="muted">Original lessons, worked examples and practice activities with links to seven influential books. Included with the extension; reading works offline. Sign in for Study help.</p><div class="courses">${this.companions.map(c => `<article class="course" data-course="${escape(c.id)}"><span class="muted small">${c.chapters.length} chapters · Free companion</span><h3>${escape(c.title)}</h3><p class="muted small">Book by ${escape(c.author)}</p><p>${escape(c.summary)}</p><details><summary>Outline and preparation</summary><ol>${c.chapters.map(ch => `<li>${escape(ch.title)}</li>`).join('')}</ol><p>${escape(c.preparation)}</p></details><div class="actions">${button('Study', 'study', c.id)}</div></article>`).join('')}</div></section>` : ''}</div>
+      ${STUDY_ENABLED && this.companions.length ? `<section aria-labelledby="book-companions"><h2 id="book-companions">Programming book companions</h2><p class="muted">Original lessons, worked examples and practice activities with links to seven influential books. Included with the extension; reading works offline. Sign in for Study help.</p><div class="courses">${this.companions.map(c => `<article class="course" data-course="${escape(c.id)}"><span class="muted small">${c.chapters.length} chapters · Free companion</span><h3>${escape(c.title)}</h3><p class="muted small">Book by ${escape(c.author)}</p><p>${escape(c.summary)}</p><details><summary>Outline and preparation</summary><ol>${c.chapters.map(ch => `<li>${escape(ch.title)}</li>`).join('')}</ol><p>${escape(c.preparation)}</p></details><div class="actions">${button('Study', 'study', c.id)}</div></article>`).join('')}</div></section>` : ''}</div>
       <p id="empty" hidden>No matching courses or projects. Try another search.</p>
       ${bundles.length ? `<section aria-labelledby="pricing"><h2 id="pricing">Bundles</h2><div class="courses">${bundles.map(bundleCard).join('')}</div></section>` : ''}
       ${billing?.purchases.length ? `<h2>Your purchases</h2><ul>${billing.purchases.map(p => `<li>${escape(p.title)} · ${escape(priceLabel(p.amount, p.currency))} · ${escape(statusText[p.status] ?? p.status)}</li>`).join('')}</ul>` : ''}

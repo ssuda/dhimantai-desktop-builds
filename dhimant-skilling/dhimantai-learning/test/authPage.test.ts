@@ -3,14 +3,14 @@ import * as assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { authPageHtml } from '../src/authPageHtml';
 
-for (const mode of ['signIn', 'signUp'] as const) {
+for (const mode of ['signIn', 'signUp', 'resetPassword'] as const) {
   test(`${mode} reveals each password independently and remasks on submit and error`, () => {
     const dom = new JSDOM(authPageHtml(mode, 'test-nonce', 'production'), {runScripts:'outside-only'});
     const sent: any[] = [], win = dom.window, doc = win.document;
     (win as any).acquireVsCodeApi = () => ({postMessage:(message: any) => sent.push(message)});
     try {
       for (const script of doc.querySelectorAll('script')) win.eval(script.textContent!);
-      const fields = mode === 'signUp' ? ['password','confirmation'] : ['password'];
+      const fields = mode !== 'signIn' ? ['password','confirmation'] : ['password'];
       for (const id of fields) {
         const input = doc.getElementById(id) as HTMLInputElement;
         const toggle = doc.querySelector<HTMLButtonElement>(`button[aria-controls="${id}"]`)!;
@@ -27,7 +27,7 @@ for (const mode of ['signIn', 'signUp'] as const) {
         assert.equal(input.value, 'local test password');
         assert.equal(sent.length, 0);
       }
-      (doc.getElementById('email') as HTMLInputElement).value = 'learner@example.test';
+      if (mode !== 'resetPassword') (doc.getElementById('email') as HTMLInputElement).value = 'learner@example.test';
       if (mode === 'signUp') (doc.getElementById('name') as HTMLInputElement).value = 'Test Learner';
       doc.querySelector<HTMLButtonElement>('.reveal')!.click();
       doc.querySelector('form')!.dispatchEvent(new win.Event('submit', {cancelable:true}));
@@ -44,6 +44,27 @@ for (const mode of ['signIn', 'signUp'] as const) {
     } finally { dom.window.close(); }
   });
 }
+
+test('Forgot password uses email only, validates it, and permits retry after a delivery error', () => {
+  const dom = new JSDOM(authPageHtml('forgotPassword', 'nonce', 'staging'), {runScripts:'outside-only'});
+  try {
+    const win = dom.window, doc = win.document, sent: any[] = [];
+    (win as any).acquireVsCodeApi = () => ({postMessage:(message: any) => sent.push(message)});
+    win.eval(doc.querySelector('script')!.textContent!);
+    assert.deepEqual([...doc.querySelectorAll('input')].map(input => input.id), ['email']);
+    const email = doc.getElementById('email') as HTMLInputElement;
+    const submit = () => doc.querySelector('form')!.dispatchEvent(new win.Event('submit', {cancelable:true}));
+    email.value = 'invalid'; submit(); assert.equal(sent.length, 0);
+    email.value = 'learner@example.test'; submit(); submit();
+    assert.equal(sent.length, 1); assert.equal(sent[0].mode, 'forgotPassword');
+    assert.equal(sent[0].password, undefined);
+    win.dispatchEvent(new win.MessageEvent('message', {data:{type:'error', message:'Try again later.'}}));
+    assert.equal(email.disabled, false); assert.equal(email.value, 'learner@example.test');
+    assert.equal(doc.activeElement, email);
+    (doc.getElementById('switch') as HTMLButtonElement).click();
+    assert.equal(sent[1].mode, 'signIn');
+  } finally { dom.window.close(); }
+});
 
 test('account forms explain requirements and reject invalid input before sending credentials', () => {
   for (const mode of ['signUp', 'signIn'] as const) {

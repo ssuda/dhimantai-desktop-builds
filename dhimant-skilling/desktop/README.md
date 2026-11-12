@@ -2,11 +2,11 @@
 
 A separate Code OSS/VSCodium distribution using stock Electron for YouTube playback and consent-based microphone/camera access. It installs beside Microsoft VS Code, with its own application ID and user-data directory. The agent, backend and Flutter app are unchanged.
 
-New empty windows welcome the learner with Course Catalog. The Learning sidebar starts with Courses, Instructor, Study, Doubt Solver and Practice, with Course Files below. Existing editor tabs take precedence on restore. Practice expands the existing exercise browser; the terminal remains in its existing runtime workflow.
+New empty windows welcome the learner with Course Catalog. The Learning sidebar starts with Courses, Instructor, Doubt Solver and Practice, with Course Files below. Study is temporarily disabled while its course selection and reading materials are validated. Existing editor tabs take precedence on restore. Practice expands the existing exercise browser; the terminal remains in its existing runtime workflow.
 
 Outline and Timeline are hidden by default. They remain available from the Views menu for learners who want them.
 
-The Activity Bar is hidden by default; the Learning sidebar is the primary navigation. Search, source control, debugging, extensions and settings remain accessible through menus, keyboard shortcuts and the Command Palette. Users can restore the Activity Bar through the layout settings.
+The compact left Activity Bar keeps the existing navigation, with Updates and the learner's profile at the bottom. Updates shows progress and ready/error badges without interrupting a lesson. The profile opens the existing account, sign-in/sign-out and settings actions. Existing installations reveal the rail once when upgrading from the earlier persisted hidden default; later layout choices and workspace overrides are respected.
 
 Copilot is optional and disabled by default. The custom desktop permits it only for courses explicitly teaching AI-assisted coding; the current reviewed course is **Use AI Coding Help with Verification**. `src/courseCopilot.ts` in the learning extension holds the exact course allowlist. Instructor, Study, Practice and registered course files follow the active editor's course. Unknown courses and the catalog disable it. The switch uses in-memory configuration in the current window; it never rewrites user or workspace settings or enables another open window. A Practice exercise that disallows assistance remains disabled.
 
@@ -162,7 +162,7 @@ increment the desktop release when changing its payload.
 
 ## macOS Developer ID signing and notarization
 
-The next preview build is **1.143.10007-preview.7**, with new artifact filenames.
+The published staging desktop version is **1.143.10007-preview.7**, with new artifact filenames.
 Published preview 3 and preview 5 downloads remain unchanged. Both native
 macOS runners use the same signing path. The automatic staging pipeline sets
 `macos_signing: ad-hoc` in both macOS jobs, so these previews still trigger
@@ -255,6 +255,14 @@ Flutter rooms do not expose the extension-only automatic code-observation RPC. T
 
 Run `node --test dhimant-skilling/desktop/tests/*.test.mjs`, `python3 -m unittest discover -s dhimant-skilling/desktop/tests -p 'test_*.py'`, and, after extension compilation, `node --test dhimant-skilling/dhimantai-learning/out/test/desktopRoom.test.js`.
 
+Preview 7 is published for Windows x64, macOS ARM64/Intel x64 and Linux x64.
+It bundles extension **0.39.18**; Linux ARM64 is excluded. All four sequential
+builds and Windows install/CLI/uninstall acceptance passed. Both Mac packages
+passed signature and architecture checks; the Apple Silicon app also passed an
+integrated-browser check with a local fixture. Five installer hashes and ten
+website download redirects were verified publicly. See the
+[preview 7 release report](../../deploy/releases/2026-11-11-staging-desktop-preview7.json).
+
 Preview 5 updates the five existing website targets: Windows x64, macOS x64/ARM64,
 and Linux x64/ARM64. It bundles extension **0.39.17** and enables silent extension
 updates. Its release and acceptance checks are recorded in the
@@ -278,9 +286,9 @@ The local macOS ARM64 preview builds and signs successfully. Extension compilati
 
 The YouTube check may need an initial Play click in the real player. Cross-origin IFrame API calls do not reliably carry browser user activation; the test leaves autoplay restrictions enabled.
 
-Preview 5 macOS packages are ad-hoc signed and unnotarized. The preview 5
-pipeline supports Developer ID signing/notarization, but no real signed build has
-been validated yet because the credentials are missing. Windows remains unsigned.
+The published macOS packages are ad-hoc signed and unnotarized. The pipeline
+supports Developer ID signing/notarization, but this release does not certify a
+Developer ID-signed build. Windows remains unsigned.
 Native playback, capture, install/uninstall and signed-in Instructor acceptance
 must be recorded on the final signed artifacts before customer release. No Windows
 or Linux runtime acceptance is implied by the macOS checks.
@@ -288,6 +296,8 @@ or Linux runtime acceptance is implied by the macOS checks.
 Native test launchers use disposable profiles, in-memory secret storage and a macOS mock keychain. They contain no real sign-in credentials. The installed application retains OS-backed secure storage; ad-hoc signing can cause macOS Keychain prompts after rebuilds. Consistent Developer ID signing is required for customer updates.
 
 ## Updates
+
+There are two independent release paths. An extension-only change publishes the VSIX and its learning release manifest; leave the desktop version in `lock.json` and the desktop installer manifest unchanged. The desktop download gate compares only the native app version, never `extensionVersion`. The client fetches the small manifests to check both paths, but downloads an app installer only when a newer native app version exists. Native shell or Electron changes require a desktop release.
 
 The learning extension updates silently from the selected dhimantAI service when the app starts. Downloads are
 checked against the published SHA-256 before installation. The current lesson keeps running; the new version
@@ -300,10 +310,12 @@ Preview 3 and preview 4 need a one-time update to preview 5: the app must allow 
 `builtInExtensionsEnabledWithAutoUpdates` and bundle extension 0.39.10 or newer. Publishing or manually
 installing a VSIX alone cannot enable this in older apps, which reject updates to bundled extensions.
 
-Native application updates are disabled for this preview. Microsoft and VSCodium update feeds cannot replace
-the custom media runtime. Native Electron/device changes still require installing the next dhimantAI package
-over it; application IDs and user-data paths remain stable.
+Native updates use the owned `https://dhimant.ai/upskill/releases.json` manifest and GitHub release assets. Selection matches the installed build's environment, preview/stable channel, platform and CPU; changing the learning API service cannot switch the native release channel. Checks run at startup and every six hours, or explicitly from App Updates. The shared `dhimantai.autoUpdate` setting controls background downloads. A failed automatic download gets one attempt per installed/available version and can be retried manually.
 
-For a customer channel, maintain the source pins, apply upstream security releases, rebuild and validate all target installers, sign/notarize them, then publish an owned HTTPS update feed with checksums. The existing updater plumbing is retained, but no feed or automatic release publication is configured here. Code OSS and VSCodium license/notices remain in the distribution; Open VSX remains the extension catalog.
+Desktop installers stream to private extension storage with a size limit, a finite timeout and SHA-256 verification. Partial downloads are discarded, concurrent requests share work, and cached installers are verified again before opening. The rail offers **Open desktop installer** only after verification. Opening the OS installer is an explicit action; the app never forces a restart, runs a silent installer or replaces a running application. Learning updates still install silently and activate on the next normal restart, with an optional explicit reload in App Updates.
+
+The currently published ad-hoc/unsigned previews still require the normal OS installer steps (macOS DMG, Windows setup, or Linux Debian package). Native rail changes require rebuilding and installing the desktop; the learning extension alone cannot add the new native controls. Until that upgrade, update progress/readiness uses the existing dhimantAI status-bar item, which opens App Updates. Microsoft and VSCodium update feeds remain disabled. Application IDs, course files and user-data paths remain stable.
+
+For native background replacement and restart on a customer channel, sign/notarize the packages and configure the platform's signed updater. The current owned manifest stages installers only; it does not certify an automatic replacement mechanism. Continue maintaining the source pins, upstream security releases and platform acceptance checks. Code OSS and VSCodium license/notices remain in the distribution; Open VSX remains the extension catalog.
 
 Upstream references: [VSCodium build instructions](https://github.com/VSCodium/vscodium/blob/master/docs/howto-build.md), [Electron permission handlers](https://www.electronjs.org/docs/latest/api/session), [GitHub native runner labels](https://github.com/actions/runner-images).

@@ -4,6 +4,19 @@ import {readFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {runInNewContext} from 'node:vm';
 
+test('paused desktop Study command reports unavailable without opening a reader or reading courses', async()=>{
+  let open:()=>unknown=()=>{},notice='',disposed=false;
+  const file=resolve(__dirname,'../src/studyReader.js');
+  const sandbox={exports:{},require:(name:string)=>name==='vscode'?{
+    commands:{registerCommand:(_name:string,callback:()=>unknown)=>{open=callback;return {dispose(){disposed=true;}};}},
+    window:{showInformationMessage:(message:string)=>{notice=message;},createWebviewPanel:()=>{throw new Error('Reader must stay closed');}}
+  }:name.startsWith('./')?name==='./desktopFeatures'?{STUDY_ENABLED:false}:{}:require(name)};
+  runInNewContext(readFileSync(file,'utf8'),sandbox);
+  const registration=await (sandbox.exports as any).registerStudyReader({}, {}, ()=> 'staging', ()=> ({}));
+  await open();assert.match(notice,/temporarily unavailable/);assert.equal(registration.companions.length,0);
+  registration.dispose();assert.equal(disposed,true);
+});
+
 test('Study restores across host restarts and isolates accounts and services', async()=>{
   const extensionPath=resolve(__dirname,'../..');
   const stored=new Map<string,unknown>();
@@ -20,6 +33,7 @@ test('Study restores across host restarts and isolates accounts and services', a
       window:{createWebviewPanel:()=>{views++;return {webview:{postMessage:async(m:any)=>{sent.push(m);return true;},onDidReceiveMessage:(fn:any)=>{message=fn;},asWebviewUri:(u:any)=>u.fsPath},
         onDidDispose:(fn:any)=>{disposePanel=fn;},onDidChangeViewState(){},reveal(){},dispose(){disposePanel();}};}}};
     const sandbox={exports:{},AbortController,require:(name:string)=>name==='vscode'?vscode:name==='./coachAudio'?{trustedRoomUrl:()=>true}:
+      name==='./desktopFeatures'?{STUDY_ENABLED:true}:
       name==='./studyDocument'?{downloadStudyDocument:async()=>Buffer.from('fixture-book')}:
       name==='./api'?{Api:class{
         async studyCatalog(){return {courses:companions.map((c:any)=>({...c,chapters:c.chapters.map((ch:any)=>({...ch,format:'epub'}))}))};}

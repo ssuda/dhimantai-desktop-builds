@@ -24,15 +24,23 @@ export class FrappeServer implements AppServer {
     if (!response.ok || !sid || sid === 'Guest') throw new Error('The Frappe sandbox did not accept the login.');
     this.cookie = 'sid=' + sid;
   }
-  private async get(path: string): Promise<Response> {
+  private async get(path: string, body?: unknown): Promise<Response> {
     for (let attempt = 0; attempt < 2; attempt++) {
       if (!this.cookie) await this.login();
-      const response = await this.request(this.origin + path, {headers: {Cookie: this.cookie, Accept: 'application/json'},
-        signal: AbortSignal.timeout(15000)});
+      const response = await this.request(this.origin + path, {headers: {Cookie: this.cookie, Accept: 'application/json',
+        ...(body === undefined ? {} : {'Content-Type': 'application/json'})}, ...(body === undefined ? {} : {method: 'POST', body: JSON.stringify(body)}),
+        signal: AbortSignal.timeout(30000)});
       if (response.status === 401 || response.status === 403) { this.cookie = ''; continue; }
       return response;
     }
     throw new Error('The Frappe sandbox refused the session.');
+  }
+  /** Creates a record as this login, through the same validation as the form; docstatus 1 also submits it. Returns its name. */
+  async insert(form: string, values: Record<string, unknown>): Promise<string> {
+    const response = await this.get('/api/resource/' + encodeURIComponent(form), values);
+    const body = await response.json().catch(() => ({})) as {data?: {name?: string}; exception?: string};
+    if (!response.ok || !body.data?.name) throw new Error(`ERPNext did not accept the ${form}: ${String(body.exception ?? response.status).slice(0, 300)}`);
+    return body.data.name;
   }
   async describe(form: string): Promise<AppForm> {
     const response = await this.get('/api/method/frappe.desk.form.load.getdoctype?doctype=' + encodeURIComponent(form));

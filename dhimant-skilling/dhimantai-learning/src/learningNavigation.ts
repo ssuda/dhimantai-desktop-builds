@@ -8,7 +8,6 @@ export function registerLearningNavigation(context: vscode.ExtensionContext) {
   const entries = [
     ['Courses', 'library', 'dhimantai.courseCatalog'],
     ['Instructor', 'book', 'dhimantai.openLearningRoom'],
-    ['Study', 'file-text', 'dhimantai.openStudy'],
     ['Doubt Solver', 'question', 'dhimantai.openDoubtSolver'],
     ['Practice', 'code', 'dhimantai.browsePractice'],
     ['Git & GitHub', 'source-control', 'dhimantai.gitHub'],

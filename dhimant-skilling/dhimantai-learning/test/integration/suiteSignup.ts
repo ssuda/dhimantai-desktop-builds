@@ -11,8 +11,8 @@ export async function run(): Promise<void> {
     try { await action(); results.push({ step, ok: true }); }
     catch (error) { results.push({ step, ok: false, error: String(error instanceof Error ? error.stack : error) }); throw error; }
   };
-  const ext = vscode.extensions.getExtension<{ auth: Auth; practice: PracticeBrowser }>('optficial.dhimantai-learning')!;
-  const { auth, practice } = await ext.activate();
+  const ext = vscode.extensions.getExtension<{ auth: Auth; practice: PracticeBrowser; uriHandler: vscode.UriHandler }>('optficial.dhimantai-learning')!;
+  const { auth, practice, uriHandler } = await ext.activate();
   const driver = new AuthPageDriver();
   const original = { pick: vscode.window.showQuickPick, input: vscode.window.showInputBox };
   (vscode.window as any).showQuickPick = () => { throw new Error('Authentication must not open a picker'); };
@@ -74,6 +74,31 @@ export async function run(): Promise<void> {
       driver.close();
       assert.deepEqual(await Promise.all([first, second]), [undefined, undefined]);
       assert.deepEqual(await auth.session(), previous);
+    });
+    await check('forgot password sends an email link, returns to desktop and updates the password without signing in', async () => {
+      await auth.signOut();
+      const pending = auth.signIn();
+      (driver.document().getElementById('forgot') as HTMLButtonElement).click(); await driver.flush();
+      assert.deepEqual([...driver.document().querySelectorAll('input')].map(input => input.id), ['email']);
+      await driver.submit({email: account.email});
+      assert.match(driver.document().getElementById('status')!.textContent!, /If an account uses that email/);
+      const {link} = await call('/__recovery');
+      assert.ok(link.startsWith(vscode.env.uriScheme + '://optficial.dhimantai-learning/password-reset'));
+      driver.close(); await pending; // The pending verifier survives closing the sign-in page.
+      await uriHandler.handleUri(vscode.Uri.parse(link));
+      await driver.waitForPage();
+      assert.equal(await auth.session(), undefined, 'recovery does not log in');
+      assert.deepEqual([...driver.document().querySelectorAll('input')].map(input => input.id), ['password','confirmation']);
+      await driver.submit({password:'updated password', confirmation:'different password'});
+      assert.match(driver.document().getElementById('status')!.textContent!, /same password/);
+      await driver.submit({password:'updated password', confirmation:'updated password'});
+      assert.match(driver.document().getElementById('status')!.textContent!, /Password updated/);
+      assert.equal(await auth.session(), undefined);
+      await driver.submit({email:account.email, password:account.password});
+      assert.match(driver.document().getElementById('status')!.textContent!, /Invalid login/);
+      await driver.submit({email:account.email, password:'updated password'});
+      assert.equal((await auth.session())?.user.email, account.email);
+      assert.equal(driver.panel, undefined);
     });
     await check('email confirmation returns to sign-in with inline guidance and no local session', async () => {
       await auth.signOut(); await call('/__settings', {confirmation:true});

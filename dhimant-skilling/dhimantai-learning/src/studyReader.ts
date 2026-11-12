@@ -8,9 +8,15 @@ import { Environment, EnvironmentName } from './environments';
 import { CompanionCourse, readingCursor, readingFontSize, readingUrl, StudyChoice, StudySource } from './studyContent';
 import { studyHtml } from './studyHtml';
 import { downloadStudyDocument } from './studyDocument';
+import { STUDY_ENABLED } from './desktopFeatures';
 
 export async function registerStudyReader(context: vscode.ExtensionContext, auth: Auth,
     environment: () => EnvironmentName, service: () => Environment, copilot?: CopilotPolicy) {
+  if (!STUDY_ENABLED) {
+    const command = vscode.commands.registerCommand('dhimantai.openStudy', () =>
+      vscode.window.showInformationMessage('Study Mode is temporarily unavailable on desktop.'));
+    return { companions: [] as CompanionCourse[], dispose: () => command.dispose() };
+  }
   const media = vscode.Uri.joinPath(context.extensionUri, 'media');
   const companions: CompanionCourse[] = [];
   let panel: vscode.WebviewPanel | undefined, epoch = 0, generation = 0, selection = '';
