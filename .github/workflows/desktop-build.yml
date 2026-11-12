@@ -30,10 +30,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Require private build repository
-        env:
-          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
-        run: test "$REPOSITORY_PRIVATE" = true
+      - name: Require desktop build repository
+        run: test "$GITHUB_REPOSITORY" = ssuda/dhimantai-desktop-builds
       - name: Preserve source line endings
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4

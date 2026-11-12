@@ -15,11 +15,9 @@ jobs:
     env:
       PYTHONUTF8: '1'
     steps:
-      - name: Require private repository
+      - name: Require desktop build repository
         shell: bash
-        env:
-          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
-        run: test "$REPOSITORY_PRIVATE" = true
+        run: test "$GITHUB_REPOSITORY" = ssuda/dhimantai-desktop-builds
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:

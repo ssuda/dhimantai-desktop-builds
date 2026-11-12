@@ -118,7 +118,9 @@ receipts before publishing. Windows acceptance uses the installer uploaded in th
 same run and completes before the first macOS build starts.
 
 The staging Actions secret contains only the Flutter client's token URL and client HMAC
-key. The workflow refuses a public repository and never deploys a service.
+key. The workflow runs only in `ssuda/dhimantai-desktop-builds`, which is public,
+and never deploys a service. Credentials remain in Actions secrets and are excluded
+from the source export.
 Linux runners use temporary swap; native compilation may take substantially
 longer than extension compilation. Installers and receipts are retained for
 14 days, build logs for 7 days. Download the artifacts before retention expires.
@@ -171,7 +173,7 @@ callers in `.github/workflows/desktop-preview.yml` to `macos_signing: developer-
 for signed and notarized builds.
 
 Configure these **repository Actions secrets** in
-[the private build repository](https://github.com/ssuda/dhimantai-desktop-builds/settings/secrets/actions):
+[the build repository](https://github.com/ssuda/dhimantai-desktop-builds/settings/secrets/actions):
 
 | Secret | Required value |
 | --- | --- |

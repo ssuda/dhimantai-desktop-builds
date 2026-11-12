@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export committed desktop inputs to a separate private GitHub build repository."""
+"""Export committed desktop inputs to the separate GitHub build repository."""
 import argparse
 import hashlib
 import json
@@ -43,7 +43,7 @@ def main():
     (args.out / '.gitignore').write_text('node_modules/\n**/out/\n**/__pycache__/\n*.vsix\n.env*\ndesktop-flutter.json\n'
                                       '*.p8\n*.p12\n*.pfx\n*.pem\n*.key\n*.keychain*\n')
     (args.out / '.gitattributes').write_text('# Preserve exported bytes for source provenance on every OS.\n* -text\n')
-    (args.out / 'README.md').write_text('# dhimantAI desktop builds\n\nPrivate build inputs exported from commit `' + commit + '`.\n\n'
+    (args.out / 'README.md').write_text('# dhimantAI desktop builds\n\nBuild inputs exported from commit `' + commit + '`.\n\n'
         'The source of truth is the Bitbucket repository. Only desktop inputs are mirrored here; '
         'shared reader assets and packaged course data are included, but backend and Flutter app '
         'code and repository history are excluded. Every push to main starts the staging desktop build '
@@ -54,7 +54,7 @@ def main():
         'ad-hoc macOS signing without notarization. For Developer ID builds, configure the Apple Actions secrets listed in '
         '[the desktop guide](dhimant-skilling/desktop/README.md#macos-developer-id-signing-and-notarization). '
         'Then change both macOS callers to macos_signing: developer-id.\n\n'
-        'Installers and their SHA-256 build receipts are retained as private workflow artifacts. '
+        'Installers and their SHA-256 build receipts are retained as workflow artifacts. '
         'Publishing them to dhimant.ai is a separate release step.\n')
     print(f'Exported {len(files)} desktop inputs from {commit} to {args.out}')
 
