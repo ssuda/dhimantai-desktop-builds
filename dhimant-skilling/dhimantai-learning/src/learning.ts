@@ -2,13 +2,14 @@ import type { DraftPayload, PracticeProject, RunConfiguration } from './api';
 
 /** File names the sandbox writes (agent/course_projects/runtime/program.py), so error locations match. */
 const ENTRY_FILES: Record<string, string> = {
-  python: 'main.py', rust: 'main.rs', c: 'main.c', java: 'Main.java',
+  python: 'main.py', rust: 'main.rs', c: 'main.c', cpp: 'main.cpp', java: 'Main.java',
   javascript: 'main.js', typescript: 'main.ts', go: 'main.go', bash:'main.sh',zsh:'main.sh',pglab:'main.sh',sql:'main.sql',
 };
 
 /** Editor support for each sandbox language; JavaScript and TypeScript are built into VS Code. */
 export const LANGUAGE_EXTENSIONS: Record<string, { id: string; name: string } | undefined> = {
   python: { id: 'ms-python.python', name: 'Python' },
+  cpp: { id: 'ms-vscode.cpptools', name: 'C/C++' },
   c: { id: 'ms-vscode.cpptools', name: 'C/C++' },
   rust: { id: 'rust-lang.rust-analyzer', name: 'rust-analyzer' },
   go: { id: 'golang.go', name: 'Go' },

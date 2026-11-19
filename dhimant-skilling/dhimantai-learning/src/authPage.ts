@@ -1,19 +1,27 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import type { Auth, Session } from './auth';
+import { isLoginProvider } from './providerLogin';
 import { authPageHtml, AuthPageMode } from './authPageHtml';
 import type { EnvironmentName } from './environments';
 import { authInputErrors, authErrorMessage } from './authValidation';
 
+export interface CourseSignup {
+  title: string;
+  waitingForEmail(email: string): Promise<void>;
+}
+
 // Notebook helpers share SecretStorage, so every entry point reuses the same account page.
 const pages = new WeakMap<object, AuthPage>();
 
-export function openAuthPage(owner: object, auth: Auth, environment: () => EnvironmentName, mode: AuthPageMode): Promise<Session | undefined> {
+export function cancelProviderLogin(owner: object) { pages.get(owner)?.cancelProvider(); }
+
+export function openAuthPage(owner: object, auth: Auth, environment: () => EnvironmentName, mode: AuthPageMode, course?: CourseSignup): Promise<Session | undefined> {
   let page = pages.get(owner);
   if (!page) {
-    page = new AuthPage(auth, environment, mode, () => pages.delete(owner));
+    page = new AuthPage(auth, environment, mode, () => pages.delete(owner), course);
     pages.set(owner, page);
-  } else page.open(mode);
+  } else page.open(mode, course);
   return page.result;
 }
 
@@ -22,12 +30,13 @@ class AuthPage {
   private resolve!: (session: Session | undefined) => void;
   private readonly panel: vscode.WebviewPanel;
   private readonly environment: EnvironmentName;
+  private providerAttempt?: AbortController;
   private busy = false;
   private closed = false;
   private mode: AuthPageMode;
 
   constructor(private readonly auth: Auth, private readonly currentEnvironment: () => EnvironmentName,
-      mode: AuthPageMode, onClose: () => void) {
+      mode: AuthPageMode, onClose: () => void, private course?: CourseSignup) {
     this.environment = currentEnvironment();
     this.mode = mode;
     this.result = new Promise(resolve => { this.resolve = resolve; });
@@ -39,33 +48,56 @@ class AuthPage {
     });
     this.panel.onDidDispose(() => {
       this.closed = true;
+      this.cancelProvider();
       this.auth.clearPasswordRecovery();
       received.dispose(); config.dispose(); onClose(); this.resolve(undefined);
     });
     this.render();
   }
 
-  open(mode: AuthPageMode) {
+  open(mode: AuthPageMode, course?: CourseSignup) {
+    if (course) {
+      const changingCourse = !!this.course;
+      this.course = course;
+      if (mode === this.mode || ((changingCourse || this.busy) && (this.mode === 'signUp' || this.mode === 'signIn'))) {
+        void this.panel.webview.postMessage({type:'courseDestination', title:course.title});
+        this.panel.reveal();
+        return;
+      }
+    }
     if ((!this.busy || mode === 'resetPassword') && mode !== this.mode) { this.mode = mode; this.render(); }
+    if (mode === 'resetPassword') this.cancelProvider();
     this.panel.reveal();
   }
 
   private render(notice = '') {
     this.panel.title = this.mode === 'signUp' ? 'dhimantAI · Sign up'
       : this.mode === 'signIn' ? 'dhimantAI · Sign in' : 'dhimantAI · Reset password';
-    this.panel.webview.html = authPageHtml(this.mode, randomBytes(18).toString('base64'), this.environment, notice);
+    this.panel.webview.html = authPageHtml(this.mode, randomBytes(18).toString('base64'), this.environment, notice, this.course?.title);
   }
 
+  cancelProvider() { this.providerAttempt?.abort(new Error('Browser sign-in cancelled.')); }
+
   private async handle(message: any) {
+    if (message?.type === 'cancelProvider') { this.cancelProvider(); return; }
     if (this.closed || this.busy || !message || this.environment !== this.currentEnvironment()) return;
     if (message.type === 'navigate' && ['signIn', 'signUp', 'forgotPassword'].includes(message.mode)) {
       this.auth.clearPasswordRecovery();
       this.open(message.mode);
       return;
     }
-    if (message.type !== 'submit' || message.mode !== this.mode) return;
+    if (message.mode !== this.mode) return;
+    if (message.type === 'provider') {
+      if ((this.mode !== 'signIn' && this.mode !== 'signUp') || !isLoginProvider(message.provider)) return;
+    } else if (message.type !== 'submit') return;
     this.busy = true;
     try {
+      if (message.type === 'provider') {
+        this.providerAttempt = new AbortController();
+        const session = await this.auth.signInWithProvider(message.provider, this.providerAttempt.signal);
+        if (!this.closed) { this.resolve(session); this.panel.dispose(); }
+        return;
+      }
       const { email, password, name, confirmation } = message;
       const mode = this.mode;
       const errors = authInputErrors(message, mode === 'forgotPassword' || mode === 'resetPassword' ? mode : mode === 'signUp');
@@ -88,6 +120,7 @@ class AuthPage {
         if (typeof name !== 'string') throw new Error('Enter your name.');
         if (confirmation !== password) throw new Error('Passwords do not match.');
         session = await this.auth.signUpWithPassword(name, email, password, false);
+        if (!session && !this.closed) await this.course?.waitingForEmail(email);
       } else session = await this.auth.signInWithPassword(email, password);
       if (this.closed) return;
       if (session) { this.resolve(session); this.panel.dispose(); }
@@ -96,7 +129,7 @@ class AuthPage {
         this.render('Check your email to confirm your account, then sign in. If you already have an account, use your existing password.');
       }
     } catch (error) {
-      if (!this.closed) await this.panel.webview.postMessage({ type: 'error', message: authErrorMessage(error) });
-    } finally { this.busy = false; }
+      if (!this.closed && this.mode === message.mode) await this.panel.webview.postMessage({ type: 'error', message: authErrorMessage(error) });
+    } finally { this.busy = false; this.providerAttempt = undefined; }
   }
 }

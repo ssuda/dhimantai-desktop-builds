@@ -48,11 +48,11 @@ test('local notebook restores edits for every language without inventing executi
   assert.deepEqual(restored, book);
   const exported = exportNotebook(restored);
   const cells = exported.cells as any[];
-  assert.equal(cells.length, 8);
+  assert.equal(cells.length, Object.keys(codeLanguages).length + 1);
   assert.equal(cells.at(-1).source,book.textDraft);
   assert.equal(cells.at(-1).metadata.dhimantai.kind,'note');
-  assert.deepEqual(cells.slice(0,7).map(cell => cell.metadata.vscode.languageId), Object.keys(codeLanguages));
-  for (const cell of cells.slice(0,7)) {
+  assert.deepEqual(cells.slice(0,-1).map(cell => cell.metadata.vscode.languageId), Object.keys(codeLanguages));
+  for (const cell of cells.slice(0,-1)) {
     assert.deepEqual(cell.outputs, []); assert.equal(cell.execution_count, null);
     assert.equal(cell.metadata.dhimantai.assisted, true);
   }
@@ -85,10 +85,14 @@ test('Python notebook keeps executed definitions, handles errors/input, and clea
     assert.equal((await kernel.run('value = 40', '')).exit_code, 0);
     assert.equal((await kernel.run('value + 2', '')).stdout, '42\n');
     assert.equal((await kernel.run('print(input().upper())', 'hello\n')).stdout, 'HELLO\n');
-    assert.match((await kernel.run('1 / 0', '')).stderr, /ZeroDivisionError/);
+    const invalid = await kernel.run('1 / 0', '');
+    assert.notEqual(invalid.exit_code, 0);
+    assert.match(invalid.stdout + invalid.stderr, /ZeroDivisionError/);
     assert.equal((await kernel.run('value', '')).stdout, '40\n');
     kernel.restart();
-    assert.match((await kernel.run('value', '')).stderr, /NameError/);
+    const missing = await kernel.run('value', '');
+    assert.notEqual(missing.exit_code, 0);
+    assert.match(missing.stdout + missing.stderr, /NameError/);
     const timeout = await kernel.run('while True: pass', '');
     assert.equal(timeout.status, 'timeout');
     assert.equal((await kernel.run('print("recovered")', '')).stdout, 'recovered\n');

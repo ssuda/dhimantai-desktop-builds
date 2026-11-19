@@ -116,5 +116,8 @@ test('the profile avatar uses recognisable initials and the menu leads with lear
     assert.equal(rows.at(-1), '$(sign-out) Sign out');
     assert.ok(!rows.includes('asha.k@example.test'), 'the identity is the title, not a row that does nothing');
     assert.deepEqual(executed.at(-1), ['dhimantai.browsePractice']);
+    choice = '$(account) Manage profile'; await commands.get('dhimantai.profile')!();
+    assert.deepEqual(executed.at(-1), ['external', 'https://app-staging.dhimant.ai/#/profile?signin=email']);
+    assert.ok(!JSON.stringify(executed.at(-1)).includes('asha.k'), 'profile URLs do not carry identity or session tokens');
   } finally { controls.dispose(); }
 });

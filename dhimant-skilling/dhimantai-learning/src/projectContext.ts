@@ -8,7 +8,8 @@ import type { ProjectSource } from './projectCore';
 export function publicContextPath(path: string) {
   return path.length <= 160 && !path.includes('\\') && !path.includes(':') &&
     path.split('/').every(part => /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(part)) &&
-    /\.(py|java|c|h|cpp|rs|go|js|ts|tsx|jsx|html|css|sql|md|json|toml|txt|rst|csv|tsv|yaml|yml)$/.test(path) &&
+    (/\.(py|java|kt|kts|swift|xml|c|h|cpp|cc|cxx|hpp|hh|hxx|rs|go|js|mjs|cjs|ts|tsx|jsx|html|css|sql|md|json|toml|txt|rst|csv|tsv|yaml|yml)$/.test(path) ||
+      /(?:^|\/)(?:Dockerfile(?:\.(?!(?:pem|key|env)$)[A-Za-z0-9_-]+)?|Caddyfile|alembic\.ini)$/i.test(path)) &&
     !/(?:^|\/)(?:(?:credentials?|secrets?|tokens?|passwords?|private|env|keys?)(?:\.[^/]*)?(?:\/|$)|\.env[^/]*(?:\/|$)|[^/]*\.(?:pem|key)(?:\/|$)|id_rsa[^/]*(?:\/|$)|service_account[^/]*(?:\/|$)|[^/]*_(?:credentials|token|secret|key)\.(?!py$)[^/.]+$)/i.test(path);
 }
 

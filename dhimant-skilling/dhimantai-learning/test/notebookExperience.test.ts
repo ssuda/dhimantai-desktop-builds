@@ -6,7 +6,9 @@ import { JSDOM } from 'jsdom';
 import { EditorView } from '@codemirror/view';
 import { cellLanguages, codeLanguages, RoomCodeSession } from '../src/roomCode';
 import { TutorPython } from '../src/tutorPython';
-import { emptyNotebook } from '../src/tutorNotebook';
+import { emptyNotebook, exportNotebook, importNotebook } from '../src/tutorNotebook';
+import { NotebookCells } from '../src/notebookCells';
+import { resourceLimitError } from '../src/podman';
 import { practiceDocument, PracticeNotebook } from '../src/practiceNotebook';
 import { engineeringSkills } from '../src/skillPractice';
 import { learningComposer } from '../src/learningComposer';
@@ -16,9 +18,9 @@ function surface(livekit: unknown = {RoomEvent:{}}, composer = learningComposer(
   const ids = ['tutor','doubt_solver','end','wide','latest','add-note','add-code','save-notebook','open-notebook','restart-runtime','clear-conversation'];
   const dom = new JSDOM('<!doctype html><header class="workspace-header"><div class="workspace-title"><h1>Implement `subtract_time` &lt; safely</h1></div><div class="workspace-actions"></div></header><main id="feed"></main>' + composer
     + ids.map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('')
-    + '<input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox"><span id="status"></span><span id="code-observer-status"></span><span id="notebook-save-status"></span>'
+    + '<section class="notebook-toolbar"><div class="notebook-tools"></div></section><input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox"><span id="status"></span><span id="code-observer-status"></span><span id="notebook-save-status"></span>'
     + '<select id="cell-language">' + Object.keys(cellLanguages).map(language => `<option>${language}</option>`).join('') + '</select>'
-    + '<select id="course-runtime"><option value="course">Course container</option><option value="terminal">Open course terminal</option><option value="setup">Set up / rebuild course</option></select>',
+    + '<select id="course-runtime"><option value="course">Course container</option><option value="colab" data-gpu hidden disabled>Google Colab · GPU</option><option value="cloud" data-gpu hidden disabled>Cloud GPU · Jupyter</option><option value="jupyter" data-gpu hidden disabled>Your GPU · Jupyter</option><option value="ssh" data-gpu data-managed-gpu hidden disabled>SSH</option><option value="cloud-cli" data-gpu data-managed-gpu hidden disabled>Cloud Spot GPUs</option><option value="finish" data-gpu hidden disabled>Finish lab</option><option value="terminal">Open course terminal</option><option value="setup">Set up / rebuild course</option></select>',
     {runScripts:'outside-only',url:'https://webview.example',pretendToBeVisual:true});
   const w = dom.window, sent: any[] = [];
   if (practice) w.document.body.dataset.notebookMode = 'practice';
@@ -39,6 +41,149 @@ function surface(livekit: unknown = {RoomEvent:{}}, composer = learningComposer(
     await new Promise(r => setTimeout(r,300)); w.close();
   }};
 }
+
+test('Doubt Solver detects pasted C in a Java cell, switches its compiler and saves the corrected language', async () => {
+  class Room {
+    remoteParticipants = new Map([['worker', {identity:'worker', isAgent:true, trackPublications:new Map()}]]);
+    localParticipant = {registerRpcMethod() {}, performRpc:async () => 'ok'};
+    on() {} async connect() {} async disconnect() {} registerTextStreamHandler() {}
+  }
+  const ui = surface({Room, RoomEvent:{}}), {w, sent, post, click, code} = ui;
+  const runtime = new NotebookCells(() => ({}), undefined, undefined, 15000);
+  const session = new RoomCodeSession({current:async () => true, aiEnabled:() => true,
+    run:s => runtime.run(s.language, s.source, s.stdin, {argv:s.argv, files:s.files, interactive:false}),
+    coach:async () => { throw new Error('Run does not ask for AI feedback.'); }});
+  const source = '#include <stdio.h>\n\nint main() {\n  int numbers[] = {10, 20, 30, 40, 50};\n  int sum = 0;\n  for (int i = 0; i < 5; i++) { sum += numbers[i]; }\n  printf("Sum: %d\\n", sum);\n  printf("Average: %.2f\\n", sum / 5.0);\n  return 0;\n}';
+  try {
+    post({type:'openTutor', mode:'doubt_solver'}); if (sent.at(-1).type === 'tutorLessons') selectLesson(w, sent.at(-1).attempt); const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook', attempt, documentKey:'c-java-mismatch', notebook:emptyNotebook()});
+    post({type:'grant', attempt, url:'unused', token:'unused'});
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const picker = w.document.getElementById('cell-language') as HTMLSelectElement;
+    picker.value = 'java'; click('add-code');
+    const cell = w.document.querySelector<HTMLElement>('.practice-code-editor')!;
+    const cellPicker = cell.querySelector<HTMLSelectElement>('[aria-label="Code cell language"]')!;
+    const run = cell.querySelector<HTMLButtonElement>('[data-action="run"]')!;
+    const editor = code(cell);
+    editor.dispatch({changes:{from:0, insert:'class Main { public static void main(String[] args) {} }'}});
+    assert.equal(run.disabled, false, w.document.getElementById('status')!.textContent!);
+    run.click(); const oldRun = sent.filter(m => m.type === 'codeAction').at(-1);
+    assert.equal(oldRun.language, 'java'); assert.equal(cellPicker.disabled, true);
+    picker.value = 'c'; picker.dispatchEvent(new w.Event('change'));
+    assert.equal(cellPicker.value, 'java', 'the toolbar only chooses the language for new cells');
+    editor.dispatch({changes:{from:0, to:editor.state.doc.length, insert:source}, selection:{anchor:source.length}});
+    const warning = cell.querySelector<HTMLElement>('.cell-language-mismatch')!;
+    assert.equal(warning.hidden, false); assert.match(warning.textContent!, /looks like C code.*set to Java/);
+    const count = sent.filter(m => m.type === 'codeAction').length;
+    run.click(); assert.equal(sent.filter(m => m.type === 'codeAction').length, count, 'no Java compile request is sent');
+    warning.querySelector<HTMLButtonElement>('button')!.click();
+    assert.equal(warning.hidden, true); assert.equal(cellPicker.value, 'c');
+    assert.equal(editor, code(cell), 'the editor and undo history are retained');
+    assert.equal(editor.state.doc.toString(), source); assert.equal(editor.state.selection.main.head, source.length);
+    assert.equal(cell.querySelector('.cm-content')!.getAttribute('aria-label'), 'c code');
+    post({...oldRun, type:'codeResult', execution:{status:'exited',exit_code:1,stdout:'',stderr:'Main.java: stale compiler error',truncated:false}});
+    assert.equal(cell.querySelector<HTMLElement>('.practice-output')!.hidden, true);
+    run.click(); const request = sent.filter(m => m.type === 'codeAction').at(-1);
+    assert.equal(request.language, 'c'); assert.equal(request.source, source); assert.ok(request.revision > oldRun.revision);
+    await session.handle(request, post);
+    assert.equal(cell.querySelector('.practice-output')!.textContent, 'Exited with code 0.\nSum: 150\nAverage: 30.00\n');
+    assert.doesNotMatch(cell.querySelector('.practice-output')!.textContent!, /Main.java/);
+    cellPicker.value = 'java'; cellPicker.dispatchEvent(new w.Event('change'));
+    assert.equal(cell.querySelector<HTMLElement>('.practice-output')!.hidden, true, 'changing language invalidates the previous result');
+    assert.equal(cell.querySelector('.cm-content')!.getAttribute('aria-label'), 'java code');
+    cellPicker.value = 'c'; cellPicker.dispatchEvent(new w.Event('change'));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const saved = sent.filter(m => m.type === 'notebookChanged').at(-1).notebook;
+    assert.equal(saved.drafts[0].language, 'c'); assert.equal(saved.drafts[0].source, source);
+    const exported = JSON.parse(JSON.stringify(exportNotebook(saved)));
+    assert.equal(exported.cells[0].metadata.vscode.languageId, 'c');
+    post({type:'restoreNotebook', attempt, documentKey:'c-java-reopened', notebook:importNotebook(new TextEncoder().encode(JSON.stringify(exportNotebook(saved))))});
+    const reopened = w.document.querySelector<HTMLElement>('.practice-code-editor')!;
+    assert.equal(reopened.querySelector<HTMLSelectElement>('[aria-label="Code cell language"]')!.value, 'c');
+    assert.equal(code(reopened).state.doc.toString(), source);
+    assert.equal(reopened.querySelector<HTMLElement>('.practice-output')!.hidden, true);
+    // Example cells are mounted from their original fence; their saved correction must win.
+    post({type:'restoreNotebook', attempt, documentKey:'corrected-example', notebook:{...saved,
+      cells:[{id:'example', kind:'board', text:'```java\n' + source + '\n```'}],
+      drafts:[{...saved.drafts[0], key:'example:0'}]}});
+    assert.equal(w.document.querySelector<HTMLSelectElement>('.practice-code-editor [aria-label="Code cell language"]')!.value, 'c');
+  } finally { session.clear(); runtime.restart(); await ui.close(); }
+});
+
+test('Doubt Solver shows the selected course container for Java and C and separates preparation from execution', async () => {
+  class Room {
+    remoteParticipants = new Map([['worker', {identity:'worker', isAgent:true, trackPublications:new Map()}]]);
+    localParticipant = {registerRpcMethod() {}, performRpc:async () => 'ok'};
+    on() {} async connect() {} async disconnect() {} registerTextStreamHandler() {}
+  }
+  const ui=surface({Room,RoomEvent:{}}), {w,sent,post,click,code}=ui;
+  try {
+    post({type:'openTutor',mode:'doubt_solver'}); if (sent.at(-1).type === 'tutorLessons') selectLesson(w, sent.at(-1).attempt);const attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'shared',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',codeRuntime:'Course container'});
+    await new Promise(resolve=>setTimeout(resolve,0));
+    const picker=w.document.getElementById('cell-language') as HTMLSelectElement;
+    for(const [language,source,label] of [['java','class Main { public static void main(String[] args) {} }','Java'],
+      ['c','#include <stdio.h>\nint main() { puts("C"); }','C']]) {
+      picker.value=language;click('add-code');
+      const cell=Array.from(w.document.querySelectorAll<HTMLElement>('.practice-code-editor')).at(-1)!;
+      code(cell).dispatch({changes:{from:0,insert:source}});
+      assert.match(cell.querySelector(':scope > small')!.textContent!,new RegExp(label+' · Course container'));
+      cell.querySelector<HTMLButtonElement>('[data-action="run"]')!.click();
+      const request=sent.filter(m=>m.type==='codeAction').at(-1);
+      assert.match(cell.querySelector('.practice-status')!.textContent!,/^Preparing container…/);
+      post({...request,type:'codeResult',event:{kind:'phase',phase:'preparing'}});
+      assert.doesNotMatch(cell.querySelector('.practice-status')!.textContent!,/Running/);
+      post({...request,type:'codeResult',event:{kind:'phase',phase:'running'}});
+      assert.match(cell.querySelector('.practice-status')!.textContent!,new RegExp('^Running code… '+label+' · Course container'));
+      post({...request,type:'codeResult',execution:{status:'exited',exit_code:0,stdout:'ok\n',stderr:'',truncated:false}});
+    }
+    assert.equal(w.document.querySelector('[value="course"]')!.textContent,'Course container');
+    assert.equal(w.document.querySelector('[value="terminal"]')!.textContent,'Open course terminal');
+    post({type:'runtimeRestarted',runtime:'course'});
+    for(const cell of w.document.querySelectorAll('.practice-code-editor'))
+      assert.match(cell.querySelector(':scope > small')!.textContent!,/Course container/);
+  } finally {await ui.close();}
+});
+
+test('notebook separates setup errors, compiler failures and actual output across retries', async () => {
+  const ui=surface(), {w,sent,post,click,code}=ui;
+  try {
+    post({type:'openPractice'});const attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'runtime-failures',notebook:emptyNotebook()});
+    post({type:'practiceReady',attempt,aiEnabled:true,practice:{id:'runtime-task',language:'python'},codeRuntime:'Course container'});
+    click('add-code');
+    const cell=w.document.querySelector<HTMLElement>('.practice-code-editor')!;
+    code(cell).dispatch({changes:{from:0,insert:'print("Runtime ready")'}});
+    const status=cell.querySelector<HTMLElement>('.practice-status')!;
+    const output=cell.querySelector<HTMLElement>('.practice-output')!;
+    const run=cell.querySelector<HTMLButtonElement>('[data-action="run"]')!;
+    const reply=(result:object)=>post({...sent.filter(m=>m.type==='codeAction').at(-1),type:'codeResult',...result});
+    run.click();assert.match(status.textContent!,/^Preparing container/);
+    reply({error:resourceLimitError('crun: open memory.max: No such file or directory','win32')!.message,failureStage:'preparing'});
+    assert.match(status.textContent!,/^Code did not run/);
+    assert.equal(output.hidden,false);
+    assert.match(output.textContent!,/Windows PowerShell outside the course cell and course terminal/);
+    assert.match(output.textContent!,/Access is denied/);
+    assert.match(output.textContent!,/predicted output are lesson content, not output from this run/);
+    assert.doesNotMatch(output.textContent!,/Exited with code|Compilation failed/);
+    assert.equal(run.disabled,false);
+    run.click();assert.equal(output.hidden,true);assert.equal(output.textContent,'');
+    reply({execution:{status:'exited',exit_code:0,stdout:'Runtime ready\n',stderr:'',truncated:false}});
+    assert.match(status.textContent!,/completed successfully/);
+    assert.equal(output.textContent,'Exited with code 0.\nRuntime ready\n');
+    const language=cell.querySelector<HTMLSelectElement>('[aria-label="Code cell language"]')!;
+    language.value='cpp';language.dispatchEvent(new w.Event('change'));
+    code(cell).dispatch({changes:{from:0,to:code(cell).state.doc.length,insert:'int main() { int count = 5 }'}});
+    run.click();reply({execution:{status:'compile_error',exit_code:1,stdout:'',stderr:'main.cpp: expected semicolon',truncated:false}});
+    assert.match(status.textContent!,/^Compilation failed/);
+    assert.match(output.textContent!,/^Compilation failed \(exit code 1\).*expected semicolon/s);
+    assert.doesNotMatch(output.textContent!,/Podman|Runtime ready|PowerShell/);
+    run.click();reply({execution:{status:'exited',exit_code:7,stdout:'',stderr:'program failed',truncated:false}});
+    assert.match(status.textContent!,/^Run failed/);
+    assert.doesNotMatch(status.textContent!,/Compilation failed|Code did not run/);
+  } finally {await ui.close();}
+});
 
 test('SQL predictions remain distinct from successful, failed and retried execution results', async () => {
   const ui = surface(), {w,sent,post,click,code} = ui;
@@ -141,15 +286,123 @@ test('shared notebook context excludes private material and never creates a mode
     assert.equal(chats.at(-1),'Explain this code');
     assert.doesNotMatch(chats.at(-1)!,/private scratch/);
     assert.equal(field.value,'');
-    rooms[0].listeners.get('DataReceived')!(new TextEncoder().encode(JSON.stringify({method:'display_on_screen',content:'What is 6 times 7?',is_question_prompt:true,tutor_checkpoint_id:'question-42'})),agent);
+    const question = '## Your turn\n\n**Section check — Start here**\n\nMeena has five neat sentences, each with a year. Two years are wrong and one fact mixes two mountain ranges — but nothing in the answer shows which parts are wrong.';
+    rooms[0].listeners.get('DataReceived')!(new TextEncoder().encode(JSON.stringify({method:'display_on_screen',content:question,is_question_prompt:true,tutor_checkpoint_id:'question-42'})),agent);
     assert.equal(w.document.getElementById('send-label')!.textContent,'Answer Instructor');
-    assert.match(w.document.getElementById('composer-context')!.textContent!,/What is 6 times 7/);
-    await ask('42');
+    const replyContext = w.document.getElementById('composer-context')!;
+    const preview = 'Your turn Section check — Start here Meena has five neat sentences, each with a year. Two years are wrong and one fact mixes two mountain ranges — but nothing in the answer shows which parts are wrong.';
+    assert.equal(replyContext.hidden, false);
+    assert.equal(replyContext.textContent, 'Replying to: ' + preview.slice(0, 180) + '…', 'formatting is removed before the preview is shortened');
+    assert.equal(replyContext.children.length, 0, 'the preview remains plain text');
+    const questionCard = w.document.getElementById('feed')!.lastElementChild!;
+    assert.equal(questionCard.querySelector('h2')!.textContent, 'Your turn');
+    assert.equal(questionCard.querySelector('strong')!.textContent, 'Section check — Start here', 'the question card retains formatting');
+    await ask('Check the facts against reliable sources.');
     assert.match(chats.at(-1)!,/^TUTOR_NOTEBOOK_ANSWER\n/);
     assert.equal(JSON.parse(chats.at(-1)!.split('\n')[1]).checkpoint_id,'question-42');
     assert.equal(w.document.getElementById('send-label')!.textContent,'Ask Instructor');
+    assert.equal(replyContext.hidden, true);
+    assert.equal(replyContext.textContent, '');
     assert.equal(runCount(),before);
   } finally { await ui.close(); }
+});
+
+for (const media of [false,true]) test(`Instructor accepts written predictions and distinguishes examples from edited runs (${media ? 'desktop' : 'extension'})`, async () => {
+  const rooms: Room[] = [], chats: {text:string; options:any}[] = [];
+  const agent = {identity:'worker', isAgent:true, trackPublications:new Map()};
+  let fail = false;
+  class Room {
+    listeners = new Map<string, Function>();
+    remoteParticipants = new Map([['worker', agent]]);
+    localParticipant = {registerRpcMethod() {}, performRpc:async () => 'ok',
+      sendText:async (text:string, options:any) => { if (fail) throw new Error('offline'); chats.push({text,options}); }};
+    constructor() { rooms.push(this); }
+    on(name:string, listener:Function) { this.listeners.set(name, listener); }
+    async connect() {} async disconnect() {} registerTextStreamHandler() {}
+  }
+  const ui = surface({Room, RoomEvent:{DataReceived:'DataReceived'}}), {w,sent,post,click,code} = ui;
+  const tick = () => new Promise(resolve => setTimeout(resolve,0));
+  const board = (packet:object) => rooms[0].listeners.get('DataReceived')!(new TextEncoder().encode(JSON.stringify({method:'display_on_screen',...packet})),agent);
+  const field = w.document.getElementById('message') as HTMLTextAreaElement;
+  const answer = async () => { field.value='My prediction'; field.dispatchEvent(new w.Event('input')); click('send'); await tick(); };
+  const runtime = new NotebookCells(() => ({}), undefined, undefined, 15000);
+  const requestFor = (cell:Element) => { cell.querySelector<HTMLButtonElement>('[data-action="run"]')!.click(); return sent.filter(m=>m.type==='codeAction').at(-1); };
+  try {
+    post({type:'openTutor',mode:'tutor'}); selectLesson(w,sent.at(-1).attempt);
+    const attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'prediction',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media}); await tick();
+    board({content:'What do these programs print?\n```python\nprint(6 * 7)\n```\n```python\nprint(7 * 7)\n```',is_question_prompt:true,tutor_checkpoint_id:'predict-1'});
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length,0);
+    assert.equal(w.document.querySelectorAll('#feed pre > code.language-python').length,2);
+    assert.equal(w.document.getElementById('send-label')!.textContent,'Answer Instructor');
+    fail=true; await answer();
+    assert.equal(field.value,'My prediction');
+    fail=false; await answer();
+    assert.match(chats.at(-1)!.text,/^TUTOR_NOTEBOOK_ANSWER\n/);
+    assert.equal(JSON.parse(chats.at(-1)!.text.split('\n')[1]).checkpoint_id,'predict-1');
+    assert.equal(sent.filter(m=>m.type==='codeAction').length,0);
+
+    const prompt='State the printed line and explain why the loop stops.';
+    const task={source:'Your turn',question:prompt,starter:'',language:'python',question_id:'q2',checkpoint_id:'q2'};
+    board({content:prompt,is_question_prompt:true,tutor_checkpoint_id:'q2',tutor_practice_editor:task});
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length,0,'legacy prediction with a mistaken language');
+    await answer();
+    assert.equal(JSON.parse(chats.at(-1)!.text.split('\n')[1]).checkpoint_id,'q2');
+
+    board({content:'Write a Python function.',is_question_prompt:true,tutor_checkpoint_id:'q3',tutor_answer_kind:'code',
+      tutor_practice_editor:{...task,question:'Write a Python function.',question_id:'q3',checkpoint_id:'q3'}});
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length,1);
+    assert.equal(w.document.getElementById('send-label')!.textContent,'Ask Instructor');
+
+    const source = ['def check_order(order_id):', '    return str(order_id) == "1043"',
+      'def refund_workflow(order_id):', '    return "Escalated" if check_order(order_id) else "Order not found"',
+      'assert check_order(1043) and check_order("1043") and not check_order("9999")', 'print(refund_workflow("1043"))'].join('\n');
+    board({content:'```python\n'+source+'\n```\nPredicted output (by inspection):\n\n```text\nEscalated\n```'});
+    const example=[...w.document.querySelectorAll<HTMLElement>('.practice-code-editor')].at(-1)!;
+    const reference=w.document.querySelector('.lesson-output-label')!;
+    assert.match(reference.textContent!,/Instructor example.*"1043"/);
+    const run=async (output:string)=>{
+      const request=requestFor(example);
+      const execution = await runtime.run(request.language, request.source, '', {interactive:false});
+      assert.equal(execution.exit_code,0,execution.stderr); assert.equal(execution.stdout.trim(),output);
+      post({...request,type:'codeResult',execution});
+      return request;
+    };
+    const first=await run('Escalated');
+    const view=code(example);
+    view.dispatch({changes:{from:0,to:view.state.doc.length,insert:source.replace('print(refund_workflow("1043"))','print(refund_workflow("9999"))')}});
+    await run('Order not found');
+    const live=example.querySelector(':scope > .execution-result')!;
+    assert.match(live.textContent!,/Live run.*#2.*"9999".*Order not found/s);
+    assert.match(example.querySelector('details .execution-result')!.textContent!,/Earlier run.*#1.*"1043".*Escalated/s);
+    post({...first,type:'codeResult',execution:{status:'exited',exit_code:0,stdout:'STALE',stderr:'',truncated:false}});
+    assert.doesNotMatch(live.textContent!,/STALE|Escalated/);
+    assert.match(reference.textContent!,/"1043"/);
+    assert.doesNotMatch(reference.textContent!,/9999/);
+    board({content:'Your run returned Order not found.',tutor_feedback:true,tutor_code_review_basis:'learner_reported'});
+    assert.match(w.document.getElementById('feed')!.lastElementChild!.textContent!,/Feedback based on learner-reported output/);
+    const draft = {key:'checkpoint:q2',snippet:'code-7',language:'python',source:'my earlier attempt',
+      stdin:'',prediction:'',explanation:'My reasoning',helped:false};
+    post({type:'restoreNotebook',attempt,documentKey:'legacy-quiz',notebook:{...emptyNotebook(),drafts:[draft],
+      cells:[{id:'old',kind:'board',text:prompt,packet:{is_question_prompt:true,tutor_checkpoint_id:'q2',tutor_practice_editor:task}}]}});
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length,0);
+    assert.match(w.document.getElementById('feed')!.textContent!,/Previously saved work.*my earlier attempt/s);
+    click('save-notebook');
+    assert.equal(sent.at(-1).notebook.drafts[0].source,draft.source);
+
+    const concept = 'What should the loop do with an unknown tool?';
+    post({type:'restoreNotebook',attempt,documentKey:'old-concept',notebook:{...emptyNotebook(),drafts:[draft],
+      cells:[{id:'old',kind:'board',text:concept,packet:{is_question_prompt:true,tutor_checkpoint_id:'q2',
+        tutor_answer_kind:'code',tutor_practice_editor:{...task,question:concept}}}]}});
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length,1);
+    board({method:'notebook_resume_ready',checkpoint_id:'q2',verified:true,tutor_answer_kind:'written'});
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length,0);
+    assert.match(w.document.getElementById('feed')!.textContent!,/Previously saved work.*my earlier attempt/s);
+    assert.equal(w.document.getElementById('send-label')!.textContent,'Answer Instructor');
+    await answer();
+    assert.equal(JSON.parse(chats.at(-1)!.text.split('\n')[1]).checkpoint_id,'q2');
+  } finally { runtime.restart(); await ui.close(); }
 });
 
 test('Doubt Solver runs new and restored Python cells through settings changes and reconnection', async () => {
@@ -186,7 +439,7 @@ test('Doubt Solver runs new and restored Python cells through settings changes a
   };
   const saved = {...emptyNotebook(), cells:[{id:'saved-code',kind:'code' as const,text:'print(6 * 7)',packet:{language:'python'}}]};
   try {
-    post({type:'openTutor',mode:'doubt_solver'});
+    post({type:'openTutor',mode:'doubt_solver'}); if (sent.at(-1).type === 'tutorLessons') selectLesson(w, sent.at(-1).attempt);
     const attempt = sent.at(-1).attempt;
     post({type:'restoreNotebook',attempt,documentKey:'doubt-doc',notebook:saved});
     post({type:'workstationState',label:'Ready'});
@@ -256,6 +509,8 @@ test('notebook scrolling follows new cells in page coordinates and preserves a r
     const page = w.document.documentElement, feed = w.document.getElementById('feed')!;
     const latest = w.document.getElementById('latest')!;
     let height = 2000, top = 300;
+    Object.defineProperty(w, 'innerHeight', {value:600});
+    feed.getBoundingClientRect = () => ({bottom:height-top}) as DOMRect;
     Object.defineProperties(page, {
       clientHeight:{get:() => 600}, scrollHeight:{get:() => height},
       scrollTop:{get:() => top, set:value => { top = Math.max(0, Math.min(height - 600, value)); }},
@@ -264,6 +519,7 @@ test('notebook scrolling follows new cells in page coordinates and preserves a r
     assert.equal(latest.hidden, false, 'page scrolling updates Jump to latest');
     click('add-note');
     assert.equal(top, 300, 'a new cell does not interrupt reading an older explanation');
+    (feed.lastElementChild as HTMLElement).getBoundingClientRect = () => ({top:1700-top}) as DOMRect;
     click('latest');
     assert.equal(top, 1400, 'Jump to latest scrolls the page to the draft cell');
     assert.equal(latest.hidden, true);
@@ -410,9 +666,9 @@ test('notebook saves student notes and cells in every supported language and res
     await new Promise(r => setTimeout(r,300));
     const saved = sent.filter(message => message.type === 'notebookChanged').at(-1);
     assert.equal(saved.notebook.cells[0].text,'My reasoning survives reopening.');
-    assert.equal(saved.notebook.drafts.length,7);
+    assert.equal(saved.notebook.drafts.length,Object.keys(codeLanguages).length);
     post({type:'restoreNotebook',documentKey:'account-document',notebook:saved.notebook});
-    assert.equal(w.document.querySelectorAll('.practice-code-editor').length,7);
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length,Object.keys(codeLanguages).length);
     assert.deepEqual(Array.from(w.document.querySelectorAll('.practice-code-editor')).map(element => code(element).state.doc.toString()),
       Object.keys(codeLanguages).map(language => 'student work for ' + language));
     assert.equal(sent.some(message => message.type === 'notebookTurn'),false);
@@ -439,6 +695,87 @@ test('the separate message bar autosaves unsent work, and Enter never sends it',
     ui.post({type:'restoreNotebook',documentKey:'draft-document',notebook:saved});
     assert.equal(field.value,'My question\nMy reasoning');
     assert.equal(ui.w.document.querySelectorAll('#composer').length,1);
+  } finally { await ui.close(); }
+});
+
+test('Practice review without sample tests shows the service error beside intact code and can retry', async () => {
+  const ui = surface(), {w,sent,post,code} = ui;
+  const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+  try {
+    const source = 'from collections import deque\ntasks = deque(["first", "second"])\nprint(tasks.pop())';
+    const task: PracticeNotebook = {id:'queue-review',language:'python',title:'Interview Questions on Queues and Deques',
+      question:'Implement a FIFO task scheduler.',starter:source,assistance:true,path:'/unused',account:'learner',tests:[]};
+    post({type:'openPractice'}); const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook',documentKey:task.id,notebook:practiceDocument(task)});
+    post({type:'practiceReady',attempt,practice:{id:task.id,language:task.language,title:task.title,tools:{tests:0,trace:true}},aiEnabled:true});
+    const element = w.document.querySelector('.practice-code-editor')!;
+    assert.equal(element.querySelector<HTMLButtonElement>('[data-tool=tests]')!.disabled, true);
+    assert.match(element.querySelector('.sample-availability')!.textContent!, /You can still Run, Review my code/);
+    element.querySelector<HTMLButtonElement>('[data-action=run]')!.click();
+    const run = sent.at(-1);
+    post({type:'codeResult',attempt,snippet:run.snippet,revision:run.revision,request:run.request,
+      execution:{status:'exited',exit_code:0,stdout:'second\n',stderr:'',truncated:false}});
+    const review = element.querySelector<HTMLButtonElement>('[data-action=submit]')!;
+    review.click(); const request = sent.at(-1);
+    assert.equal(request.type,'notebookTurn'); assert.equal(request.submitted,true);
+    assert.equal(request.snapshot.source,source); assert.equal(request.run.output,'second\n');
+    const error = 'The feedback request has unsupported fields. Update the learning service.';
+    post({type:'notebookReply',attempt,request:request.request,error}); await tick();
+    assert.ok(element.querySelector('.practice-status')!.textContent!.includes(error));
+    assert.equal(code(element).state.doc.toString(),source);
+    assert.equal(review.disabled,false);
+    assert.doesNotMatch(w.document.getElementById('feed')!.textContent!,/Feedback is in your notebook/);
+    review.click(); const retry = sent.at(-1);
+    post({type:'notebookReply',attempt,request:retry.request,content:'pop removes the newest task. Check which end a FIFO queue removes.'}); await tick();
+    assert.match(w.document.getElementById('feed')!.textContent!,/Code review/);
+    assert.match(element.querySelector('.practice-status')!.textContent!,/Feedback is in your notebook/);
+    assert.equal(code(element).state.doc.toString(),source);
+  } finally { await ui.close(); }
+});
+
+test('Memory list questions and reviews preserve passing samples and recover from service failures', async () => {
+  const ui = surface(), {w,sent,post,code} = ui;
+  const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+  try {
+    const source = 'n = int(input())\nsteps = []\nfor i in range(n):\n    steps.append(input())\nprint(n)\nprint(" -> ".join(steps))';
+    const stdin = '3\nobserve\nthink\nact\n', output = '3\nobserve -> think -> act\n';
+    const task: PracticeNotebook = {id:'memory-list',language:'python',title:'Agent Memory List: Record Each Loop Step',
+      question:'Read n step names. Print the count and the steps joined with ->.',starter:source,
+      assistance:true,path:'/notebook-coach/tutor',account:'learner',tests:[{id:'example',kind:'stdio',stdin,expected:output}]};
+    post({type:'openPractice'}); const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook',documentKey:task.id,notebook:practiceDocument(task)});
+    post({type:'practiceReady',attempt,practice:{...task,tools:{tests:1,trace:true}},aiEnabled:true});
+    const element = w.document.querySelector('.practice-code-editor')!;
+    element.querySelector<HTMLButtonElement>('[data-tool=tests]')!.click(); const tests = sent.at(-1);
+    post({type:'practiceToolResult',attempt,request:tests.request,tool:'tests',
+      tests:[{id:'example',verdict:'passed',stdin,expected:output,actual:output,stderr:''}]}); await tick();
+    assert.match(element.textContent!, /Sample tests: 1 of 1 passed/);
+    const field = w.document.getElementById('message') as HTMLTextAreaElement;
+    const submit = () => w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit',{cancelable:true}));
+    field.value = 'Okay so what is list?'; field.dispatchEvent(new w.Event('input')); submit();
+    const asked = sent.filter(m => m.type === 'notebookTurn').at(-1);
+    assert.equal(asked.message, field.value); assert.equal(asked.snapshot.source, source);
+    const error = 'The feedback request has unsupported fields. Reopen the lesson and ask again; if it continues, update the extension.';
+    post({type:'notebookReply',attempt,request:asked.request,error}); await tick();
+    assert.ok(w.document.getElementById('status')!.textContent!.includes(error));
+    assert.equal(field.value, 'Okay so what is list?', 'a failed request preserves the unsent question');
+    assert.equal(code(element).state.doc.toString(), source);
+    submit(); const retry = sent.filter(m => m.type === 'notebookTurn').at(-1);
+    assert.notEqual(retry.request, asked.request);
+    post({type:'notebookReply',attempt,request:retry.request,content:'A list stores several items in order. Each append adds one step.'}); await tick();
+    assert.equal(field.value, '');
+    assert.match(w.document.getElementById('feed')!.textContent!, /A list stores several items/);
+    const review = element.querySelector<HTMLButtonElement>('[data-action=submit]')!;
+    review.click(); const failedReview = sent.filter(m => m.type === 'notebookTurn').at(-1);
+    assert.equal(failedReview.submitted, true);
+    post({type:'notebookReply',attempt,request:failedReview.request,error:'The Coach could not reply. You can retry this step.'}); await tick();
+    assert.match(element.querySelector('.practice-status')!.textContent!, /You can retry this step/);
+    assert.equal(review.disabled, false);
+    review.click(); const reviewed = sent.filter(m => m.type === 'notebookTurn').at(-1);
+    post({type:'notebookReply',attempt,request:reviewed.request,content:'Your loop records each step. Consider what happens when the count is zero.'}); await tick();
+    assert.match(w.document.getElementById('feed')!.textContent!, /Your loop records each step/);
+    assert.match(element.textContent!, /Sample tests: 1 of 1 passed/);
+    assert.equal(code(element).state.doc.toString(), source);
   } finally { await ui.close(); }
 });
 
@@ -602,10 +939,10 @@ test('Doubt Solver uses shared Get Help with a per-doubt help ladder and names D
   const events = ['TrackPublished','TrackSubscribed','TrackUnsubscribed','DataReceived','ParticipantDisconnected','Disconnected','Reconnecting','Reconnected'];
   const ui = surface({Room, RoomEvent:Object.fromEntries(events.map(name => [name, name]))}, composer), {w,sent,post} = ui;
   try {
-    post({type:'openTutor',mode:'doubt_solver'}); const attempt = sent.at(-1).attempt;
+    post({type:'openTutor',mode:'doubt_solver'}); if (sent.at(-1).type === 'tutorLessons') selectLesson(w, sent.at(-1).attempt); const attempt = sent.at(-1).attempt;
     post({type:'restoreNotebook',attempt,documentKey:'doubt',notebook:emptyNotebook()});
     post({type:'grant',attempt,url:'unused',token:'unused'}); await new Promise(r => setTimeout(r,0));
-    assert.equal(w.document.querySelectorAll('#notebook-help-actions button').length, 5);
+    assert.equal(w.document.querySelectorAll('#notebook-help-actions button').length, 9);
     assert.equal(w.document.getElementById('audio-microphone'), null);
     const send = w.document.getElementById('send')!;
     assert.equal(send.getAttribute('aria-label'), 'Ask Doubt Solver');
@@ -903,7 +1240,7 @@ test('Flutter Practice actions preserve selected-line context and retire replies
     const editor = code(w.document.querySelector('.practice-code-editor')!);
     editor.dispatch({changes:{from:0,insert:'value = 7\nprint(value)'},selection:{anchor:10}});
     const actions = [...w.document.querySelectorAll<HTMLButtonElement>('[data-practice-strategy]')];
-    assert.deepEqual(actions.map(b => b.textContent), ['Explain problem','Explain code','Explain errors','Explain failed tests','Next step']);
+    assert.deepEqual(actions.map(b => b.textContent), ['Explain problem','Explain code','Explain errors','Explain failed tests','Next step','Explain simply','Give an example','Quiz me','Summarise']);
     actions[1].click(); const request = sent.at(-1);
     assert.equal(request.strategy, 'trace'); assert.equal(request.focusLine, 2);
     assert.match(request.message, /starting with the selected line/);
@@ -1074,13 +1411,17 @@ for (const mode of ['tutor', 'doubt_solver'] as const) test(`${mode}: Explain pr
     fail = false;
     if (mode === 'doubt_solver') {
       click('new-doubt');
+      post({type:'openDoubtChat',chapter:chapterId,newChat:true});
+      const newAttempt=sent.at(-1).attempt;
+      post({type:'restoreNotebook',attempt:newAttempt,documentKey:'new-doubt',notebook:emptyNotebook()});
+      post({type:'grant',attempt:newAttempt,url:'unused',token:'unused',chapterId});await tick();
       const field = w.document.getElementById('message') as HTMLTextAreaElement;
       field.value = 'What does a dot product measure?'; field.dispatchEvent(new w.Event('input')); click('send'); await tick();
       action.click(); await tick();
       assert.match(chats.at(-1)!, /dot product measure/);
       assert.doesNotMatch(chats.at(-1)!, /cross product|variable assignment/);
     }
-    const publish = (packet:object) => rooms[0].listeners.get('DataReceived')!(new TextEncoder().encode(JSON.stringify(packet)),peer);
+    const publish = (packet:object) => rooms.at(-1)!.listeners.get('DataReceived')!(new TextEncoder().encode(JSON.stringify(packet)),peer);
     const before = w.document.querySelectorAll('article').length;
     publish({method:'draw_svg',action:'clear',svg:''});
     publish({method:'draw_svg',action:'update',svg:'  '});
@@ -1108,7 +1449,7 @@ for (const mode of ['tutor', 'doubt_solver'] as const) test(`${mode}: Explain pr
   } finally { await ui.close(); }
 });
 
-for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}: all five Get Help actions share requests, context and inline replies`, async () => {
+for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}: all nine Get Help actions share requests, context and inline replies`, async () => {
   const chats: string[] = [];
   const peer = {identity:'worker', isAgent:true, trackPublications:new Map()};
   class Room {
@@ -1132,7 +1473,7 @@ for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}
       : {type:'grant',attempt,url:'unused',token:'unused',chapterId});
     await tick();
     const actions = [...w.document.querySelectorAll<HTMLButtonElement>('#notebook-help-actions button')];
-    assert.deepEqual(actions.map(action => action.textContent), ['Explain problem','Explain code','Explain errors','Explain failed tests','Next step']);
+    assert.deepEqual(actions.map(action => action.textContent), ['Explain problem','Explain code','Explain errors','Explain failed tests','Next step','Explain simply','Give an example','Quiz me','Summarise']);
     actions[0].click();
     const empty = sent.filter(message => message.type === 'notebookTurn').at(-1);
     assert.equal(empty.snapshot.source,'', 'problem help works before writing code');
@@ -1150,7 +1491,7 @@ for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}
     const run = sent.filter(message => message.type === 'codeAction').at(-1);
     post({type:'codeResult',attempt,request:run.request,snippet:run.snippet,revision:run.revision,
       execution:{status:'exited',exit_code:1,stdout:'',stderr:'NameError: missing',truncated:false,duration_ms:1}});
-    const strategies = ['plan','trace','read_error','by_hand','small_steps'];
+    const strategies = ['plan','trace','read_error','by_hand','small_steps','simplify','walkthrough','by_hand','reflect'];
     for (const [i,action] of actions.entries()) {
       action.click();
       const request = sent.filter(message => message.type === 'notebookTurn').at(-1);
@@ -1171,7 +1512,7 @@ for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}
     const reply = [...w.document.querySelectorAll<HTMLButtonElement>('[data-reply]')].find(button => !button.disabled)!;
     reply.click();
     const followup = sent.filter(message => message.type === 'notebookTurn').at(-1);
-    assert.match(followup.message,/About your reply: Shared reply 4/);
+    assert.match(followup.message,/About your reply: Shared reply 8/);
     post({type:'notebookReply',attempt,request:followup.request,error:'Service unavailable'}); await tick();
     assert.ok(actions.every(button => !button.disabled));
     assert.match(w.document.getElementById('status')!.textContent!,/Service unavailable/);
@@ -1181,18 +1522,121 @@ for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}
   } finally { await ui.close(); }
 });
 
-test('browser task questions use the Instructor composer and acknowledge progress only after delivery', async () => {
-  const messages:string[]=[],rpcs:any[]=[],tracks:any[]=[];
-  const agent={identity:'worker',isAgent:true,trackPublications:new Map()};let fail=false;
+test('desktop media controls explain connection, session and mode restrictions without starting capture', async () => {
+  let captured = 0;
   class Room {
+    remoteParticipants = new Map([['worker', {identity:'worker', isAgent:true, trackPublications:new Map()}]]);
+    localParticipant = {registerRpcMethod() {}, performRpc:async () => 'ok'};
+    on() {} async connect() {} async disconnect() {} registerTextStreamHandler() {}
+  }
+  const ui = surface({Room, RoomEvent:{}, createLocalAudioTrack:async () => {captured++;}},
+    learningComposer('Instructor', false, '<button type="button" id="audio-microphone"></button><button type="button" id="audio-camera"></button><button type="button" id="sound"></button>'));
+  const {w,post,sent,click} = ui, tick = () => new Promise(r => setTimeout(r,0));
+  const message = w.document.getElementById('media-control-status')!;
+  const mic = w.document.getElementById('audio-microphone') as HTMLButtonElement;
+  try {
+    post({type:'openTutor'}); selectLesson(w,sent.at(-1).attempt);
+    assert.match(message.textContent!, /Connect to Instructor/); assert.equal(mic.disabled,true);
+    let attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'no-media',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media:false}); await tick();
+    assert.equal(message.hidden,false); assert.match(message.textContent!, /typed messages and attachments/);
+    assert.equal(mic.title,message.textContent); assert.equal(mic.getAttribute('aria-describedby'),message.id);
+    click('audio-microphone'); assert.equal(captured,0);
+    post({type:'openTutor',mode:'doubt_solver'}); if (sent.at(-1).type === 'tutorLessons') selectLesson(w, sent.at(-1).attempt); attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'doubt-media',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',media:true}); await tick();
+    assert.equal(message.hidden,true); assert.equal(mic.disabled,false);
+    assert.equal((w.document.getElementById('audio-camera') as HTMLButtonElement).disabled,false);
+    post({type:'openTutor'}); selectLesson(w,sent.at(-1).attempt); attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'voice-enabled',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media:true}); await tick();
+    assert.equal(message.hidden,true); assert.equal(mic.disabled,false); assert.equal(mic.title,'Start microphone');
+    assert.equal(captured,0,'making capture available never opts the learner in');
+  } finally { await ui.close(); }
+});
+
+test('Instructor activity survives microphone shutdown and clears on idle, reconnect and session changes', async () => {
+  const rpcs:any[]=[];
+  const rooms: Room[] = [];
+  const agent = {identity:'worker', isAgent:true, attributes:{'lk.agent.state':'thinking'}, trackPublications:new Map()};
+  let stopped = 0;
+  class Room {
+    listeners = new Map<string, Function>();
+    remoteParticipants = new Map([['worker', agent]]);
+    localParticipant = {registerRpcMethod() {}, performRpc:async (request:any) => {rpcs.push(request);return 'ok';}, publishTrack:async () => {}, unpublishTrack:async () => {}};
+    constructor() { rooms.push(this); }
+    on(name:string, listener:Function) { this.listeners.set(name, listener); }
+    async connect() {} async disconnect() {} registerTextStreamHandler() {}
+  }
+  const names = ['ParticipantAttributesChanged','DataReceived','Reconnecting','Reconnected','Disconnected'];
+  const ui = surface({Room, RoomEvent:Object.fromEntries(names.map(name => [name,name])),
+    createLocalAudioTrack:async () => ({stop() { stopped++; }, mediaStreamTrack:{addEventListener() {}}})},
+    learningComposer('Instructor', false, '<button type="button" id="audio-microphone"></button><button type="button" id="audio-camera"></button><button type="button" id="sound"></button>'));
+  const {w,post,sent,click} = ui, tick = () => new Promise(r => setTimeout(r,0));
+  const activity = w.document.getElementById('assistant-activity')!;
+  try {
+    assert.equal(activity.hidden, true);
+    post({type:'openTutor'}); selectLesson(w,sent.at(-1).attempt);
+    const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'linux-voice',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media:true}); await tick();
+    assert.equal(activity.textContent, 'Thinking…', 'hydrate a response already processing when connected');
+    assert.equal(activity.hidden, false);
+    const state = (value:string) => {
+      agent.attributes['lk.agent.state'] = value;
+      rooms[0].listeners.get('ParticipantAttributesChanged')!({'lk.agent.state':value},agent);
+    };
+    state('listening'); assert.equal(activity.hidden, true);
+    click('audio-microphone'); await tick();
+    state('thinking');
+    click('audio-microphone'); await tick();
+    assert.equal(stopped,1);
+    assert.equal(w.document.getElementById('audio-microphone')!.getAttribute('aria-pressed'),'false');
+    assert.equal(w.document.getElementById('status')!.textContent,'Microphone off. Sending your response…');
+    assert.ok(rpcs.some(r=>r.method==='toggle_audio' && JSON.parse(r.payload).commit_turn===true));
+    assert.equal(activity.hidden,false);
+    assert.equal(activity.textContent,'Thinking…','stopping capture must not clear an in-flight response');
+    rooms[0].listeners.get('ParticipantAttributesChanged')!({'lk.agent.state':'listening'},{identity:'other',isAgent:true});
+    rooms[0].listeners.get('ParticipantAttributesChanged')!({'lk.agent.state':'listening'},{identity:'learner',isAgent:false});
+    rooms[0].listeners.get('ParticipantAttributesChanged')!({'unrelated':'value'},agent);
+    assert.equal(activity.textContent,'Thinking…','only this session’s agent state affects its indicator');
+    state('speaking'); assert.equal(activity.textContent,'Replying…');
+    state('listening'); assert.equal(activity.hidden,true); assert.equal(activity.textContent,'');
+    const svg = '<svg viewBox="0 0 320 120"><text x="10" y="30">Terminal → shell</text></svg>';
+    const receive = rooms[0].listeners.get('DataReceived')!;
+    receive(new TextEncoder().encode(JSON.stringify({method:'display_on_screen',content:'```svg\n' + svg + '\n```\n\nWhat does `pwd` mean?',is_question_prompt:true,tutor_checkpoint_id:'pwd'})),agent);
+    assert.equal(w.document.getElementById('composer-context')!.textContent,'Replying to: Diagram What does pwd mean?');
+    assert.ok(w.document.querySelector('#feed img.board-diagram'));
+    assert.equal(w.document.querySelector('[data-lesson-action="continueLesson"]'),null,'an unanswered question still requires an answer');
+    receive(new TextEncoder().encode(JSON.stringify({method:'display_on_screen',content:'The shell interprets pwd.',tutor_feedback:true,tutor_checkpoint_id:'pwd'})),agent);
+    assert.ok(w.document.querySelector('.composer-quick-actions #practice-help'));
+    assert.equal(w.document.querySelector<HTMLButtonElement>('.composer-quick-actions [data-lesson-action="continueLesson"]')!.hidden,false);
+    state('thinking'); rooms[0].listeners.get('Reconnecting')!();
+    assert.equal(activity.hidden,true);
+    state('speaking'); assert.equal(activity.hidden,true,'do not display activity for a disconnected transport');
+    rooms[0].listeners.get('Reconnected')!(); assert.equal(activity.textContent,'Replying…');
+    click('end'); assert.equal(activity.hidden,true);
+    state('thinking'); assert.equal(activity.hidden,true,'late events from the old room are ignored');
+  } finally { await ui.close(); }
+});
+
+test('browser task questions use the Instructor composer and acknowledge progress only after delivery', async () => {
+  const messages:string[]=[],rpcs:any[]=[],tracks:any[]=[],rooms:Room[]=[];
+  const agent={identity:'worker',isAgent:true,trackPublications:new Map()};let fail=false,failObservation=false;
+  class Room {
+    listeners=new Map<string,Function>();
     remoteParticipants=new Map([['worker',agent]]);
-    localParticipant={registerRpcMethod(){},performRpc:async(request:any)=>{rpcs.push(request);return 'ok';},
+    localParticipant={registerRpcMethod(){},performRpc:async(request:any)=>{
+      rpcs.push(request);if(failObservation&&request.method==='on_browser_activity')throw new Error('offline');return 'ok';},
       sendText:async(text:string)=>{if(fail)throw new Error('offline');messages.push(text);},
       publishTrack:async(track:any)=>{tracks.push(track);},unpublishTrack:async()=>{}};
-    on(){} async connect(){} async disconnect(){} async startAudio(){} registerTextStreamHandler(){}
+    constructor(){rooms.push(this);}
+    on(name:string,listener:Function){this.listeners.set(name,listener);}
+    async connect(){} async disconnect(){} async startAudio(){} registerTextStreamHandler(){}
   }
   const track={stop(){},mediaStreamTrack:{addEventListener(){}}};
-  const ui=surface({Room,RoomEvent:{},createLocalAudioTrack:async()=>track},
+  const ui=surface({Room,RoomEvent:Object.fromEntries(['Reconnecting','Reconnected','Disconnected'].map(name=>[name,name])),createLocalAudioTrack:async()=>track},
     learningComposer('Instructor',false,'<button type="button" id="audio-microphone" disabled></button><button type="button" id="audio-camera" disabled></button><button type="button" id="sound"></button>'));
   const {w,post,sent,click}=ui,wait=()=>new Promise(r=>setTimeout(r,10));
   try {
@@ -1245,8 +1689,25 @@ test('browser task questions use the Instructor composer and acknowledge progres
       assert.equal(shortcut(field,extra).defaultPrevented,false,'Enter keeps its normal editing behavior');
     }
     await wait();assert.equal(messages.length,0,'keyboard input never sends a draft');
+    post({type:'browserObservation',attempt,chapter:chapterId,observation:{task:'company'},question,focusQuestion:question.id});
+    await wait();assert.equal(messages.length,0,'opening the answer box never submits even a complete draft');
+    rooms[0].listeners.get('Reconnecting')!();
+    assert.equal(sent.filter(m=>m.type==='browserState').at(-1).connected,false,'ERPNext immediately sees the reconnecting state');
+    assert.equal((w.document.getElementById('send') as HTMLButtonElement).disabled,true);
+    assert.ok(field.value);assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/Reconnecting/);
+    const observations=rpcs.filter(r=>r.method==='on_browser_activity').length;
+    rooms[0].listeners.get('Reconnected')!();await wait();
+    assert.ok(rpcs.filter(r=>r.method==='on_browser_activity').length>observations,'reconnection resynchronizes the form without waiting for an edit');
+    assert.equal(sent.filter(m=>m.type==='browserState').at(-1).connected,true);
+    assert.equal(messages.length,0,'reconnection never sends the unfinished draft');
+    failObservation=true;click('send');await wait();
+    assert.equal(sent.filter(m=>m.type==='browserState').at(-1).connected,false,'RPC failure cannot leave a stale connected indicator');
+    assert.ok(field.value);assert.equal(sent.some(m=>m.type==='browserAnswer'),false);
+    assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/draft.*Reconnect Instructor/);
+    failObservation=false;
     fail=true;click('send');await wait();
     assert.equal(sent.some(m=>m.type==='browserAnswer'),false);assert.ok(field.value);
+    assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/delivery could not be confirmed/);
     fail=false;click('send');await wait();
     assert.equal(forwarded,before,'editing keys never escape to the desktop workbench');
     assert.match(messages.at(-1)!,/Question: What grows.*\nMy answer: Receivables/);
@@ -1268,5 +1729,343 @@ test('browser task questions use the Instructor composer and acknowledge progres
     coursePicker.value='Python';coursePicker.dispatchEvent(new w.Event('change'));
     w.document.querySelector<HTMLButtonElement>('#lesson-list button')!.click();
     assert.equal(sent.at(-1).type,'join');assert.equal(sent.at(-1).chapterId,'python-chapter','changing courses leaves the browser course normally');
+  } finally {await ui.close();}
+});
+
+test('opening the same ERPNext lesson reconnects after disconnect and preserves the saved answer',async()=>{
+  const rooms:Room[]=[],messages:string[]=[];
+  const agent={identity:'worker',isAgent:true,trackPublications:new Map()};
+  class Room {
+    listeners=new Map<string,Function>();remoteParticipants=new Map([['worker',agent]]);
+    localParticipant={registerRpcMethod(){},performRpc:async()=> 'ok',sendText:async(text:string)=>{messages.push(text);}};
+    constructor(){rooms.push(this);}on(name:string,listener:Function){this.listeners.set(name,listener);}
+    async connect(){}async disconnect(){}registerTextStreamHandler(){}
+  }
+  const ui=surface({Room,RoomEvent:{Disconnected:'Disconnected',DataReceived:'DataReceived'}}),{w,post,sent,click}=ui;
+  const wait=()=>new Promise(r=>setTimeout(r,10));
+  try {
+    post({type:'openTutor',mode:'tutor'});selectLesson(w,sent.at(-1).attempt);
+    const attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'supplier',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,browserCourse:true});await wait();
+    const question={id:'supplier:check',task:'supplier',kind:'explanation',title:'Create a supplier',
+      question:'Why keep a separate customer record?',context:'Saved supplier record.',options:[],minLength:30,maxLength:500};
+    post({type:'browserObservation',attempt,chapter:chapterId,observation:{task:'supplier'},question});
+    const field=w.document.getElementById('message') as HTMLTextAreaElement;
+    const answer='Separate records keep payables and receivables distinct for the same company.';
+    field.value=answer;field.dispatchEvent(new w.Event('input'));
+    rooms[0].listeners.get('Disconnected')!();
+    const saved=sent.filter(m=>m.type==='notebookChanged').at(-1).notebook;
+    assert.equal(saved.textDraft,answer);assert.equal(field.value,answer);
+    post({type:'chooseCourse',course:'ERPNext Essentials',lesson:chapterId});
+    const retry=sent.filter(m=>m.type==='join').at(-1);
+    assert.notEqual(retry.attempt,attempt,'the same lesson can reconnect instead of silently ignoring the request');
+    post({type:'restoreNotebook',attempt:retry.attempt,documentKey:'supplier-retry',notebook:saved});
+    post({type:'grant',attempt:retry.attempt,url:'unused',token:'unused',chapterId,browserCourse:true});
+    post({type:'browserObservation',attempt:retry.attempt,chapter:chapterId,observation:{task:'supplier'},question,focusQuestion:question.id});await wait();
+    assert.equal(field.value,answer);assert.equal(messages.length,0);
+    assert.equal(w.document.getElementById('notebook-help-status')!.textContent,'Instructor connected');
+    click('send');await wait();
+    assert.equal(messages.length,1);assert.match(messages[0],/My answer: Separate records/);
+    assert.equal(field.value,'');assert.equal(sent.filter(m=>m.type==='browserAnswer').length,1);
+    rooms[1].listeners.get('DataReceived')!(new TextEncoder().encode(JSON.stringify({method:'display_on_screen',
+      content:'Correct: separate supplier and customer records keep payables and receivables distinct.'})),agent);
+    assert.match(w.document.getElementById('feed')!.textContent!,/Correct: separate supplier and customer records/);
+  }finally{await ui.close();}
+});
+
+
+test('an ERP answer waits for lesson preload without a second send or false delivery error',async()=>{
+  const messages:string[]=[],observations:any[]=[];
+  const agent={identity:'worker',isAgent:true,trackPublications:new Map()};let loaded=false;
+  class Room {
+    remoteParticipants=new Map([['worker',agent]]);
+    localParticipant={registerRpcMethod(){},performRpc:async(request:any)=>{
+      if(request.method==='on_browser_activity' && JSON.parse(request.payload).task) {
+        observations.push(JSON.parse(request.payload));return loaded?'ok':'unavailable';
+      }
+      return 'ok';
+    },sendText:async(text:string)=>{messages.push(text);}};
+    on(){}async connect(){}async disconnect(){}registerTextStreamHandler(){}
+  }
+  const ui=surface({Room,RoomEvent:{}}),{w,post,sent,click}=ui,wait=()=>new Promise(r=>setTimeout(r,10));
+  try {
+    post({type:'openTutor',mode:'tutor'});selectLesson(w,sent.at(-1).attempt);
+    const attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'erp-preload',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,browserCourse:true});await wait();
+    const question={id:'supplier:check',task:'supplier',kind:'explanation',title:'Supplier',question:'Why separate records?',
+      context:'Saved supplier.',options:[],minLength:30,maxLength:500};
+    post({type:'browserObservation',attempt,chapter:chapterId,observation:{task:'supplier'},question});await wait();
+    const field=w.document.getElementById('message') as HTMLTextAreaElement;
+    field.value='Supplier and customer records keep payables and receivables separate.';field.dispatchEvent(new w.Event('input'));click('send');await wait();
+    assert.equal(messages.length,0);assert.ok(field.value);
+    assert.doesNotMatch(w.document.getElementById('notebook-help-status')!.textContent!,/unavailable|could not/);
+    loaded=true;await new Promise(r=>setTimeout(r,300));
+    assert.equal(messages.length,1);assert.equal(field.value,'');
+    assert.equal(sent.filter(m=>m.type==='browserAnswer').length,1);
+    assert.deepEqual(observations[0],observations[1],'only the same read-only snapshot is retried');
+  }finally{await ui.close();}
+});
+
+test('ERPNext observation failure exposes reconnect and preserves the unsent explanation',async()=>{
+  const messages:string[]=[],observations:number[]=[],rooms:Room[]=[];
+  const agent={identity:'worker',isAgent:true,trackPublications:new Map()};let failed=true;
+  class Room {
+    remoteParticipants=new Map([['worker',agent]]);
+    localParticipant={registerRpcMethod(){},performRpc:async(request:any)=>{
+      if(request.method==='on_browser_activity') {
+        observations.push(JSON.parse(request.payload).sequence);
+        if(failed)throw new Error('Method not supported at destination');
+      }
+      return 'ok';
+    },sendText:async(text:string)=>{messages.push(text);}};
+    constructor(){rooms.push(this);}on(){}async connect(){}async disconnect(){}registerTextStreamHandler(){}
+  }
+  const ui=surface({Room,RoomEvent:{}}),{w,post,sent,click}=ui,wait=()=>new Promise(r=>setTimeout(r,10));
+  try {
+    post({type:'openTutor',mode:'tutor'});selectLesson(w,sent.at(-1).attempt);
+    const attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'erp-retry',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,browserCourse:true});await wait();
+    const question={id:'item:check',task:'item',kind:'explanation',title:'Stock item',question:'Why maintain stock?',
+      context:'Saved item record.',options:[],minLength:30,maxLength:500};
+    post({type:'browserObservation',attempt,chapter:chapterId,observation:{task:'item'},question});await wait();
+    const field=w.document.getElementById('message') as HTMLTextAreaElement;
+    const answer='Maintain Stock records stock movements for this physical item.';
+    field.value=answer;field.dispatchEvent(new w.Event('input'));
+    const retryButton=w.document.getElementById('tutor') as HTMLButtonElement;
+    assert.equal(retryButton.hidden,false);assert.equal(retryButton.textContent,'Reconnect Instructor');
+    assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/draft.*Reconnect Instructor/);
+    click('send');await wait();
+    assert.equal(field.value,answer);assert.equal(messages.length,0);
+    assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/draft.*Reconnect Instructor/);
+    assert.doesNotMatch(w.document.getElementById('notebook-help-status')!.textContent!,/Method not supported/);
+    click('tutor');
+    const retry=sent.filter(m=>m.type==='join').at(-1);
+    assert.notEqual(retry.attempt,attempt);
+    assert.equal(field.value,answer,'the draft stays visible even while reconnecting');
+    assert.equal(sent.filter(m=>m.type==='notebookChanged').at(-1).notebook.textDraft,answer);
+    failed=false;
+    post({type:'grant',attempt:retry.attempt,url:'unused',token:'unused',chapterId,browserCourse:true});await wait();
+    post({type:'browserObservation',attempt:retry.attempt,chapter:chapterId,observation:{task:'item'},question});await wait();
+    assert.equal(messages.length,0,'reconnect does not submit the answer');
+    assert.equal(retryButton.hidden,true);
+    assert.ok(observations.every((n,i)=>i===0||n>observations[i-1]),'a rejoined worker never receives reset sequence numbers');
+    click('send');await wait();assert.equal(messages.length,1);
+    assert.equal(sent.filter(m=>m.type==='browserAnswer').length,1);
+  }finally{await ui.close();}
+});
+
+test('GPU runtime selection stays selected and late CPU state cannot reroute the notebook', async () => {
+  const ui=surface();try {
+    const picker=ui.w.document.getElementById('course-runtime') as HTMLSelectElement;
+    ui.post({type:'runtimeSelected',runtime:'cloud',label:'Cloud GPU · Jupyter',ready:true,message:'GPU connected. Compute costs are separate.'});
+    assert.equal(picker.value,'cloud');
+    ui.post({type:'workstationState',label:'CPU ready',machines:{machines:['course'],selected:'course'}});
+    assert.equal(picker.value,'cloud');
+    ui.post({type:'runtimeError',message:'Reconnect the selected GPU. No CPU fallback.'});
+    assert.equal(picker.value,'cloud');
+    assert.match(ui.w.document.getElementById('status')!.textContent!,/Reconnect/);
+    ui.post({type:'runtimeSelected',runtime:'course'});
+    assert.equal(picker.value,'course');
+    ui.post({type:'runtimeSelected',runtime:'cloud',label:'Cloud GPU · Jupyter'});
+    ui.post({type:'openPractice'});
+    const attempt=ui.sent.at(-1).attempt;
+    ui.post({type:'practiceReady',attempt,practice:{id:'cpu',language:'python'},codeRuntime:'Course'});
+    assert.equal(picker.value,'course','opening CPU Practice removes a previous cloud selection');
+    assert.equal((picker.querySelector('[value="cloud"]') as HTMLOptionElement).disabled,true);
+  } finally {await ui.close();}
+});
+
+test('managed compute finishes only for the active full lesson and saves its recap before cleanup',async()=>{
+  const rooms:any[]=[],agent={identity:'worker',isAgent:true,trackPublications:new Map()};
+  class Room {
+    listeners=new Map<string,Function>();remoteParticipants=new Map([['worker',agent]]);
+    localParticipant={registerRpcMethod(){},performRpc:async()=> 'ok',sendText:async()=>{}};
+    constructor(){rooms.push(this);}on(name:string,listener:Function){this.listeners.set(name,listener);}
+    async connect(){}async disconnect(){}registerTextStreamHandler(){}
+  }
+  const ui=surface({Room,RoomEvent:Object.fromEntries(['DataReceived','Disconnected','Reconnecting','Reconnected','ParticipantDisconnected'].map(name=>[name,name]))});
+  try {
+    ui.post({type:'openTutor',mode:'tutor'});selectLesson(ui.w,ui.sent.at(-1).attempt);const attempt=ui.sent.at(-1).attempt;
+    ui.post({type:'restoreNotebook',attempt,documentKey:'gpu-summary',notebook:emptyNotebook()});
+    ui.post({type:'grant',attempt,url:'unused',token:'unused',chapterId,gpuRuntimes:true,gpuCount:2});await new Promise(resolve=>setTimeout(resolve,0));
+    ui.post({type:'runtimeSelected',runtime:'cloud-cli',ready:true});
+    const publish=(patch:object)=>rooms[0].listeners.get('DataReceived')(new TextEncoder().encode(JSON.stringify({method:'tutor_session_summary',subject:'Python',chapter:'Lists',topic:'Lists',is_complete:true,partial_session:false,summary_scope:'full',big_idea:'Saved recap',...patch})),agent);
+    publish({partial_session:true,summary_scope:'partial'});assert.equal(ui.sent.filter(m=>m.type==='finishLab').length,0);
+    publish({chapter:'Different chapter'});assert.equal(ui.sent.filter(m=>m.type==='finishLab').length,0);
+    publish({});
+    assert.equal(ui.sent.at(-1).type,'finishLab');assert.equal(ui.sent.at(-1).chapterId,chapterId);
+    const saved=ui.sent.at(-2);assert.equal(saved.type,'notebookChanged');assert.equal(saved.documentKey,'gpu-summary');
+    assert.ok(saved.notebook.cells.some((c:any)=>c.kind==='recap'&&c.text.includes('Saved recap')));
+  }finally{await ui.close();}
+});
+
+test('silent completed cells explain no output without passing failed or cancelled runs', async () => {
+  class Room {
+    remoteParticipants = new Map([['worker', {identity:'worker', isAgent:true, trackPublications:new Map()}]]);
+    localParticipant = {registerRpcMethod() {}, performRpc:async () => 'ok'};
+    on() {} async connect() {} async disconnect() {} registerTextStreamHandler() {}
+  }
+  const ui = surface({Room, RoomEvent:{}}), {w,sent,post,click,code} = ui;
+  try {
+    post({type:'openTutor',mode:'doubt_solver'}); if (sent.at(-1).type === 'tutorLessons') selectLesson(w, sent.at(-1).attempt); const attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'silent',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused'}); await new Promise(resolve=>setTimeout(resolve,0));
+    click('add-code'); const cell=w.document.querySelector<HTMLElement>('.practice-code-editor')!;
+    code(cell).dispatch({changes:{from:0,insert:'assert 2 + 2 == 4'}});
+    const status=cell.querySelector('.practice-status')!;
+    for(const [state,exit,message] of [['exited',0,/successfully with no output.*passing assertions/],
+      ['exited',1,/Run failed/],['cancelled',null,/Stopped/]] as const) {
+      cell.querySelector<HTMLButtonElement>('[data-action="run"]')!.click();
+      const request=sent.filter(m=>m.type==='codeAction').at(-1);
+      post({type:'codeResult',attempt,snippet:request.snippet,revision:request.revision,request:request.request,
+        execution:{status:state,exit_code:exit,stdout:'',stderr:exit===1?'AssertionError':'',truncated:false}});
+      assert.match(status.textContent!,message);
+      if(exit!==0)assert.doesNotMatch(status.textContent!,/successfully/);
+    }
+  } finally {await ui.close();}
+});
+
+test('sticky notebook index expands earlier explanations and retains chapter coverage', async () => {
+  const ui=surface(), {w,sent,post}=ui;
+  try {
+    post({type:'openTutor',mode:'tutor'});
+    post({type:'tutorLessons',attempt:sent.at(-1).attempt,courses:[{name:'Python',chapters:[
+      {id:'lists',name:'Lists',progress:{status:'covered',covered:1,total:1,topics:[]}},
+      {id:chapterId,name:'Functions',progress:{status:'in_progress',covered:1,total:3,topics:[]}}
+    ]}]});
+    w.document.querySelectorAll<HTMLButtonElement>('#lesson-list button')[1].click();
+    const attempt=sent.at(-1).attempt, notebook=emptyNotebook();
+    notebook.cells=[{id:'explanation',kind:'board',text:'## Save the module\n\nRun the save cell first.',collapsed:true},
+      {id:'verify',kind:'code',text:'assert 2 + 2 == 4',packet:{language:'python'}}];
+    post({type:'restoreNotebook',attempt,documentKey:'navigation',notebook});
+    const summary=w.document.querySelector('.notebook-progress')!;
+    assert.match(summary.textContent!,/Functions.*1\/3 topics covered.*1\/2 chapters covered/);
+    assert.match(summary.getAttribute('title')!,/mastery.*separately/);
+    const select=w.document.querySelector<HTMLSelectElement>('.notebook-index')!;
+    assert.equal(select.hidden,false);assert.match(select.options[1].textContent!,/Save the module/);
+    select.value='explanation';select.dispatchEvent(new w.Event('change'));
+    const row=w.document.querySelector<HTMLElement>('[data-cell-id="explanation"]')!;
+    assert.equal(row.classList.contains('is-collapsed'),false);assert.equal(w.document.activeElement,row);
+    assert.equal(select.value,'');
+    post({type:'restoreNotebook',attempt,documentKey:'empty',notebook:emptyNotebook()});
+    assert.equal(select.options.length,1);assert.equal(select.hidden,true);
+  } finally {await ui.close();}
+});
+
+test('learning preferences restore before greeting and changing a persona keeps the current lesson', async () => {
+  const {learningPreferencesHtml} = await import('../src/learningPreferences');
+  const calls:any[] = [];
+  class Room {
+    remoteParticipants = new Map([['worker',{identity:'worker',isAgent:true,trackPublications:new Map()}]]);
+    localParticipant = {registerRpcMethod(){},performRpc:async (request:any)=>{calls.push(request);return 'ok';}};
+    on(){} async connect(){} async disconnect(){} registerTextStreamHandler(){}
+  }
+  const ui = surface({Room,RoomEvent:{}}, learningComposer('Instructor',true,'<button id="sound"></button>')+learningPreferencesHtml);
+  const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
+  try {
+    ui.post({type:'openTutor',mode:'doubt_solver'}); if (ui.sent.at(-1).type === 'tutorLessons') selectLesson(ui.w, ui.sent.at(-1).attempt);
+    const attempt=ui.sent.at(-1).attempt;
+    const preferences={preferred_name:'Varun',check_frequency:'minimal',voice:'calm'};
+    ui.post({type:'learningPreferences',preferences});
+    ui.post({type:'restoreNotebook',attempt,documentKey:'preferences',notebook:emptyNotebook()});
+    ui.post({type:'grant',attempt,url:'unused',token:'unused'}); await tick();
+    const applied=calls.find(call=>call.method==='set_learning_preferences');
+    assert.deepEqual(JSON.parse(applied.payload),preferences);
+    assert.ok(calls.indexOf(applied)<calls.findIndex(call=>call.method==='switch_mode'));
+    assert.equal((ui.w.document.getElementById('preferred-name') as HTMLInputElement).value,'Varun');
+    const voice=ui.w.document.getElementById('preferred-voice') as HTMLSelectElement;
+    voice.value='energetic'; voice.dispatchEvent(new ui.w.Event('change'));
+    const save=ui.sent.at(-1);
+    assert.equal(save.type,'learningPreferences'); assert.equal(save.preferences.voice,'energetic');
+    ui.post({type:'learningPreferences',preferences:save.preferences}); await tick();
+    assert.equal(calls.filter(call=>call.method==='switch_mode').length,1,'a voice choice must not restart the lesson');
+    assert.equal(JSON.parse(calls.filter(call=>call.method==='set_learning_preferences').at(-1).payload).voice,'energetic');
+    assert.match(ui.w.document.getElementById('learning-preferences-status')!.textContent!,/next spoken reply/);
+  } finally {await ui.close();}
+});
+
+test('session restore is explicit and scoped to the current notebook',async()=>{
+  const ui=surface(),{post,w,sent}=ui;
+  try {
+    post({type:'restoreNotebook',documentKey:'lesson-a',notebook:emptyNotebook()});
+    post({type:'runtimeHistory',documentKey:'lesson-a',count:2,needsRestore:true});
+    assert.match(w.document.getElementById('runtime-restore')!.textContent!,/repeats file writes/);
+    assert.equal(sent.some(m=>m.type==='restoreRuntime'),false);
+    w.document.querySelector<HTMLButtonElement>('#runtime-restore button')!.click();
+    assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1))),{type:'restoreRuntime',documentKey:'lesson-a'});
+    post({type:'runtimeHistory',documentKey:'another-lesson',count:0,needsRestore:false});
+    assert.equal(w.document.getElementById('runtime-restore')!.hidden,false);
+    post({type:'runtimeHistory',documentKey:'lesson-a',count:2,needsRestore:false});
+    assert.equal(w.document.getElementById('runtime-restore')!.hidden,true);
+  } finally {await ui.close();}
+});
+
+test('Doubt Solver prevents missing ScriptedModel setup, accepts a repaired lesson cell and shows its actual output', async () => {
+  class Room {
+    remoteParticipants = new Map([['worker',{identity:'worker',isAgent:true,trackPublications:new Map()}]]);
+    localParticipant = {registerRpcMethod(){},performRpc:async()=> 'ok'};
+    on(){} async connect(){} async disconnect(){} registerTextStreamHandler(){}
+  }
+  const ui=surface({Room,RoomEvent:{}}),{w,sent,post,code}=ui;
+  const runtime=new NotebookCells(()=>({}),undefined,undefined,15000);
+  const source=readFileSync(resolve(__dirname,'../../../../content/courses/build-ai-agents/chapters/ch01_agent_loop.py'),'utf8');
+  const program=source.match(/```python\n(class ScriptedModel:[\s\S]*?)\n```/)![1];
+  const missing=program.slice(program.indexOf('model = ScriptedModel'));
+  try {
+    post({type:'openTutor',mode:'doubt_solver'});selectLesson(w,sent.at(-1).attempt);const attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'scripted-model',notebook:{...emptyNotebook(),cells:[
+      {id:'example',kind:'board',text:'Predict the third printed line.\n\n```python\n'+missing+'\n```'},
+      {id:'reading',kind:'board',text:'```python prediction-only\nprint(undefined_name)\n```'},
+    ]}});
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId});await new Promise(r=>setTimeout(r,0));
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length,1,'reading-only snippets have no Run control');
+    assert.match(w.document.querySelector('.code-reading-only')!.textContent!,/Prediction only · not executable/);
+    const cell=w.document.querySelector('.practice-code-editor')!,run=cell.querySelector<HTMLButtonElement>('[data-action="run"]')!;
+    assert.equal(run.disabled,true);assert.match(cell.querySelector('.code-completeness')!.textContent!,/Missing setup: ScriptedModel/);
+    run.click();assert.equal(sent.filter(m=>m.type==='codeAction').length,0);
+    const editor=code(cell);editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:program}});
+    assert.equal(run.disabled,false,'adding the exact lesson definition enables Run');
+    run.click();const request=sent.filter(m=>m.type==='codeAction').at(-1);
+    const execution=await runtime.run(request.language,request.source,'',{interactive:false});
+    post({...request,type:'codeResult',execution});
+    assert.equal(execution.exit_code,0);assert.equal(execution.stdout.trim().split('\n').at(-1),'None 3');
+    assert.match(cell.querySelector('.practice-output')!.textContent!,/None 3/);
+    assert.doesNotMatch(cell.querySelector('.practice-output')!.textContent!,/NameError/);
+  } finally {await runtime.close();await ui.close();}
+});
+
+
+test('a stalled Doubt Solver delivery releases the composer, keeps the draft and never retries automatically',async()=>{
+  let sends=0,finish:()=>void=()=>{};const rpcs:any[]=[];
+  class Room {
+    remoteParticipants=new Map([['worker',{identity:'worker',isAgent:true,trackPublications:new Map()}]]);
+    localParticipant={registerRpcMethod(){},performRpc:async(rpc:any)=>{rpcs.push(rpc);return 'ok';},
+      sendText:()=>{sends++;return new Promise<void>(resolve=>{finish=resolve;});}};
+    on(){}async connect(){}async disconnect(){}registerTextStreamHandler(){}
+  }
+  const ui=surface({Room,RoomEvent:{}}),{w,sent,post,click}=ui;
+  const original=w.setTimeout.bind(w);w.setTimeout=((fn:any,ms?:number,...args:any[])=>original(fn,ms===20000?5:ms,...args)) as any;
+  try {
+    post({type:'openTutor',mode:'doubt_solver'});selectLesson(w,sent.at(-1).attempt);const attempt=sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'delivery',notebook:emptyNotebook()});
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId});await new Promise(r=>setTimeout(r,0));
+    const field=w.document.getElementById('message') as HTMLTextAreaElement;
+    field.value='Let me practise lists';field.dispatchEvent(new w.Event('input'));click('send');
+    await new Promise(r=>setTimeout(r,30));
+    assert.equal(sends,1);assert.equal(field.value,'Let me practise lists');
+    assert.equal((w.document.getElementById('send') as HTMLButtonElement).disabled,false);
+    assert.match(w.document.getElementById('status')!.textContent!,/timed out.*Check for a reply/);
+    finish();await new Promise(r=>setTimeout(r,0));
+    assert.equal(sends,1);assert.equal(field.value,'Let me practise lists');
+    assert.doesNotMatch(w.document.getElementById('feed')!.textContent!,/Let me practise lists/);
+    const observations=rpcs.filter(r=>r.method==='on_editor_activity').length;
+    click('send');await new Promise(r=>setTimeout(r,0));
+    assert.equal(sends,2,'only the learner explicitly retries');
+    assert.equal(rpcs.filter(r=>r.method==='on_editor_activity').length,observations,'unchanged code context is not sent again');
+    finish();await new Promise(r=>setTimeout(r,0));
+    assert.equal(field.value,'');
   } finally {await ui.close();}
 });

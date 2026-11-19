@@ -34,15 +34,15 @@ export async function desktopRoom(extensionPath: string, environment: Environmen
     headers: {'Content-Type': 'application/json', Accept: 'application/json',
       'X-Signature': createHmac('sha256', config.signingKey).update(body).digest('hex')},
     body, signal: AbortSignal.timeout(30_000)});
-  if (!response.ok) throw new Error(`Could not connect to Instructor (${response.status}). Try again.`);
+  if (!response.ok) throw new Error(`Could not connect to the learning room (${response.status}). Try again.`);
   const raw = await response.json() as any;
   const data = raw.message ?? raw;
   if (typeof data.serverUrl !== 'string' || typeof data.participantToken !== 'string') {
-    throw new Error('Instructor returned an incomplete connection. Try again.');
+    throw new Error('The learning room returned an incomplete connection. Try again.');
   }
   const issued = JSON.parse(Buffer.from(data.participantToken.split('.')[1] ?? '', 'base64url').toString());
   if (issued.sub !== account || issued.video?.room !== room || issued.video?.canPublish === false) {
-    throw new Error('Instructor did not grant this device connection. Try again.');
+    throw new Error('The learning room did not grant this device connection. Try again.');
   }
   return {url: data.serverUrl, token: data.participantToken};
 }

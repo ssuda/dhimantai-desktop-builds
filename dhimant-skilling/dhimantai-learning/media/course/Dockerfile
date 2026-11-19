@@ -2,6 +2,9 @@
 FROM docker.io/library/node:22-bookworm-slim AS node_runtime
 FROM docker.io/library/python:3.12-slim-bookworm
 COPY --from=node_runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node_runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 libatomic1 util-linux sudo git curl \
  && rm -rf /var/lib/apt/lists/* && useradd -m -s /bin/bash learner \
@@ -15,9 +18,10 @@ RUN python -m pip install --no-cache-dir -r /opt/dhimantai/requirements.txt
 COPY runtime/ /opt/dhimantai/
 RUN chmod -R a+rX /opt/dhimantai && sh /opt/dhimantai/shell.sh \
  && install -m 755 /opt/dhimantai/language.sh /usr/local/sbin/dhimantai-language \
+ && for item in javascript postgres redis; do /usr/local/sbin/dhimantai-language "$item" || exit 1; done \
  && for item in COURSE_INSTALLS; do /usr/local/sbin/dhimantai-language "$item" || exit 1; done \
- && usermod --shell /bin/zsh learner
-ENV SHELL=/bin/zsh
+ && usermod --shell /bin/zsh learner && rm -rf /var/lib/apt/lists/* /root/.cache
+ENV SHELL=/bin/zsh PATH=/usr/lib/postgresql/17/bin:$PATH
 USER learner
 WORKDIR /course
 CMD ["sleep", "infinity"]

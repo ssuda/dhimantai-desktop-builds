@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { EnvironmentName } from './environments';
+import { COLAB_SETUP_STEPS } from './colabSetup';
 
 interface Cell {
   id: string;
@@ -13,8 +14,8 @@ interface Cell {
 interface Notebook { nbformat: number; nbformat_minor: number; metadata: Record<string, any>; cells: Cell[] }
 export interface CourseLab { name: string; notebook: Notebook }
 export function validateCourseLabs(labs: CourseLab[]): CourseLab[] {
-  if (!Array.isArray(labs) || labs.length < 1 || labs.length > 16 || new Set(labs.map(l => l.name)).size !== labs.length
-      || labs.some(l => !/^\d\d-[a-z0-9-]+\.ipynb$/.test(l.name) || l.notebook?.nbformat !== 4
+  if (!Array.isArray(labs) || labs.length < 1 || labs.length > 256 || new Set(labs.map(l => l.name)).size !== labs.length
+      || labs.some(l => !/^\d{2,3}-[a-z0-9-]+\.ipynb$/.test(l.name) || l.notebook?.nbformat !== 4
         || !Array.isArray(l.notebook.cells) || !l.notebook.cells.length || !l.notebook.metadata)) {
     throw new Error('The service returned invalid course labs. Refresh your courses and try again.');
   }
@@ -69,29 +70,16 @@ Your notebook stays on this computer; code executes on Colab. Local data files a
 [Colab connection and file guide](https://github.com/googlecolab/colab-vscode/wiki/User-Guide) · [TorchTPU documentation](https://torchtpu.readthedocs.io/en/latest/)
 `;
 
-export function courseAccelerator(course: string): 'tpu' | 'gpu' | undefined {
-  switch (course.trim().toLowerCase()) {
-    case 'build an llm from scratch': return 'tpu';
-    case 'inference engineering': return 'gpu';
-    default: return undefined;
-  }
-}
-export const hasColabLabs = (course: string) => !!courseAccelerator(course);
 
-const gpuSteps = `## Connect a GPU runtime
+const gpuSteps = `## Bring your own GPU compute
 
-In Instructor's **Notebook runtime** dropdown choose **Google Colab**, then **Select Another Kernel → Colab → New Colab Server → GPU**. Complete your own Google sign-in. GPU availability and usage depend on your account.
+Use a compatible GPU runtime from the Runtime dropdown, then follow the published lesson setup and compute requirements. Students arrange and pay for their compute. Preserve notebooks and download outputs before stopping the external runtime.`;
 
-For your own Linux GPU machine, choose **Your GPU / Jupyter server**, then **Select Another Kernel → Existing Jupyter Server** (or its local Python environment). Follow Chapter 1 for Jupyter and SSH tunnel setup. The notebook's preflight verifies the actual GPU before installing or running vLLM.
-
-Code runs on the selected machine; notebooks stay on this computer. Upload required files separately and download result files before stopping the runtime. Colab: Remove Server releases a Colab allocation. Stop your own Jupyter process and rented GPU separately when finished.
-
-vLLM labs execute the engine directly without a hosted inference API. DeepInfer's current SM100 / Ascend 950 deployment requires separate compatible hardware; its source and planning exercises can be studied here.
-`;
-
-export async function prepareColabNotebooks(labs: string | CourseLab[], directory: string, environment: EnvironmentName, course = 'Build an LLM from Scratch', provider: 'google.colab' | 'jupyter' = 'google.colab') {
-  const accelerator = courseAccelerator(course);
+export async function prepareColabNotebooks(labs: string | CourseLab[], directory: string, environment: EnvironmentName, course = 'Build an LLM from Scratch', provider: 'google.colab' | 'jupyter' = 'google.colab', accelerator:'gpu'|'tpu'|undefined=undefined, guidance?:string) {
   if (!accelerator) throw new Error('No external runtime labs are available for this course.');
+  const courseSteps = guidance || (accelerator === 'tpu' ? steps : gpuSteps);
+  const runtimeSteps = provider === 'google.colab' && accelerator === 'gpu'
+    ? `## Connect Colab before running\n\n${COLAB_SETUP_STEPS}\n\n${courseSteps}` : courseSteps;
   await mkdir(directory, { recursive: true });
   if (await realpath(directory) !== directory) throw new Error('The Colab notebook folder must be inside the course.');
   const sources = typeof labs === 'string' ? await Promise.all((await readdir(labs))
@@ -106,7 +94,7 @@ export async function prepareColabNotebooks(labs: string | CourseLab[], director
         dhimantai_runtime: { provider, accelerator, version: 1 },
         dhimantai_coach: { version: 1, environment, path: '/notebook-coach/tutor', question: title },
       },
-      cells: [markdown('colab-guide', accelerator === 'tpu' ? steps : gpuSteps),
+      cells: [markdown('colab-guide', runtimeSteps),
         ...(accelerator === 'tpu' ? [code('colab-tpu-setup', TPU_SETUP)] : []), ...original.cells.map(cell =>
         cell.cell_type === 'code'
           ? { ...cell, source: accelerator === 'tpu' ? tpuLessonCell(sourceText(cell.source)) : sourceText(cell.source), outputs: [], execution_count: null }
@@ -119,7 +107,7 @@ export async function prepareColabNotebooks(labs: string | CourseLab[], director
     nbformat: 4, nbformat_minor: 5,
     metadata: { ...notebooks[0].notebook.metadata,
       dhimantai_coach: { version: 1, environment, path: '/notebook-coach/tutor', question: `Set up ${course} on ${accelerator.toUpperCase()}` } },
-    cells: [markdown('intro', `# ${course} — ${accelerator.toUpperCase()} runtime\n\n` + (accelerator === 'tpu' ? steps : gpuSteps)),
+    cells: [markdown('intro', `# ${course} — ${accelerator.toUpperCase()} runtime\n\n` + runtimeSteps),
       ...(accelerator === 'tpu' ? [code('colab-tpu-setup', TPU_SETUP)] : []),
       markdown('lessons', '## Open a lesson\n\nEach notebook has its own kernel selection and setup cell. Choose **Open Course with Colab Runtime** again to select a lesson, or open one of these files:\n\n' +
         notebooks.map(({name}) => `- [${name}](${name})`).join('\n'))],

@@ -11,6 +11,7 @@ const KERNELS: Record<string, {name: string; display_name: string; extension: st
   typescript: {name: 'typescript', display_name: 'TypeScript', extension: '.ts'},
   rust: {name: 'rust', display_name: 'Rust', extension: '.rs'},
   java: {name: 'java', display_name: 'Java', extension: '.java'},
+  cpp: {name: 'cpp', display_name: 'C++', extension: '.cpp'},
   c: {name: 'c', display_name: 'C', extension: '.c'},
   go: {name: 'go', display_name: 'Go', extension: '.go'},
   sql: {name: 'sql', display_name: 'PostgreSQL', extension: '.sql'},

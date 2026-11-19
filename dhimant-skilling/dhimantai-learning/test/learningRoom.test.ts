@@ -35,10 +35,10 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     w.eval(readFileSync(resolve(__dirname,'../../media/learning-room/room.js'),'utf8'));
     post({type:'openTutor',mode:'doubt_solver'},'https://untrusted.example');
     assert.equal(sent.filter(m => m.type === 'join').length,0,'external frames cannot select a learning mode');
-    post({type:'openTutor',mode:'doubt_solver'});
+    post({type:'openTutor',mode:'doubt_solver'}); if (sent.at(-1).type === 'tutorLessons') selectLesson(w, sent.at(-1).attempt);
     assert.equal(sent.at(-1).mode,'doubt_solver','the catalog can start directly in Doubt Solver');
     const doubtAttempt = sent.at(-1).attempt;
-    post({type:'openTutor',mode:'doubt_solver'});
+    post({type:'openTutor',mode:'doubt_solver'}); if (sent.at(-1).type === 'tutorLessons') selectLesson(w, sent.at(-1).attempt);
     assert.equal(sent.at(-1).attempt,doubtAttempt,'reopening the current mode does not restart it');
     post({type:'failed',attempt:doubtAttempt,message:'Could not connect.'});
     assert.equal(w.document.getElementById('tutor')!.textContent,'Retry Doubt Solver');
@@ -56,7 +56,7 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     const grant = {type:'grant',attempt:sent.at(-1).attempt,url:'unused',token:'unused',chapterId};
     post(grant,'https://untrusted.example'); assert.equal(rooms.length,0);
     post(grant); await new Promise(r=>setTimeout(r,0));
-    assert.deepEqual(JSON.parse(rpcs.find(rpc => rpc.method === 'switch_mode').payload), {mode:'tutor',chapter_id:chapterId});
+    assert.deepEqual(JSON.parse(rpcs.find(rpc => rpc.method === 'switch_mode').payload), {mode:'tutor',language:'en-IN',chapter_id:chapterId});
     const receive = rooms[0].listeners.get('DataReceived')!;
     const data = new TextEncoder().encode(JSON.stringify({method:'display_on_screen',content:'## Factors\n\n**Two**\n\n```py\nprint(2)\n```\n\n$2^2$\n\n<img src=x onerror=alert(1)>'}));
     receive(data,{isAgent:false}); assert.equal(html().children.length,0);
@@ -145,7 +145,7 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     const help = JSON.parse(chats.at(-1).text.split('\n').slice(1).join('\n'));
     assert.equal(help.source, 'print(\"next\")');
     assert.equal(help.prediction, 'next'); assert.equal(help.run.output, 'next\n');
-    assert.match(editor.textContent!, /Instructor will respond here/);
+    assert.match(editor.textContent!, /Request sent to Instructor/);
     const observed = JSON.parse(rpcs.filter(r => r.method === 'on_editor_activity').at(-1).payload);
     assert.equal(observed.source, 'print("next")'); assert.equal(observed.run.output, 'next\n');
     assert.match(chats.at(-1).text, /^TUTOR_NOTEBOOK_HELP\n/, 'review requests help from the same Instructor, never submits an answer');
@@ -251,6 +251,8 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
       '<foreignObject><iframe src="https://untrusted.example"/></foreignObject>' +
       '<text x="10" y="20">Banana</text><text x="10" y="38">-2</text></svg>';
     for (const content of [svg, '```svg\n' + svg + '\n```']) {
+      field.value = 'Show the diagram again.'; field.dispatchEvent(new w.Event('input')); send.click();
+      await new Promise(r => setTimeout(r, 0));
       publish(content);
       const img = html().lastElementChild!.querySelector('img')!;
       assert.match(img.alt, /Banana, -2/);
@@ -261,6 +263,8 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     }
     const branchSvg = readFileSync(resolve(__dirname, '../../../../test/fixtures/git_branch_cards.svg'), 'utf8');
     for (const content of [branchSvg, '```svg\n' + branchSvg + '\n```']) {
+      field.value = 'Show the diagram again.'; field.dispatchEvent(new w.Event('input')); send.click();
+      await new Promise(r => setTimeout(r, 0));
       publish('### Try a change on a branch\n\n' + content);
       const img = html().lastElementChild!.querySelector('img')!;
       const clean = new w.DOMParser().parseFromString(decodeURIComponent(img.src.split(',').slice(1).join(',')), 'image/svg+xml');
@@ -283,11 +287,13 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     assert.equal(w.document.body.classList.contains('focus-view'), false);
     const cards = html().children.length, joins = sent.filter(m => m.type === 'join').length;
     w.document.getElementById('doubt_solver')!.click();
-    assert.equal(sent.at(-1).type, 'openOtherMode', 'Doubt Solver opens in its own tab through the host');
-    assert.equal(html().children.length, cards, 'this lesson, its notebook and its session stay intact');
+    assert.equal(sent.at(-1).type, 'workspaceMode', 'Doubt Solver requests a workspace switch through the host');
+    assert.equal(sent.at(-1).mode, 'doubt_solver');
+    assert.equal(sent.at(-1).carryDraft, false, 'ordinary mode changes keep separate drafts');
+    assert.equal(html().children.length, cards, 'the current notebook remains intact until the host switches modes');
     assert.equal(sent.filter(m => m.type === 'join').length, joins);
     assert.equal(rooms.length, 1);
-    assert.equal(run.disabled, false, 'the Instructor session keeps running');
+    assert.equal(run.disabled, false, 'the current session remains usable until the host switches modes');
     await new Promise(r => setTimeout(r, 0));
   } finally { w.close(); }
 });

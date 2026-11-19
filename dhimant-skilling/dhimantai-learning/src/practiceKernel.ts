@@ -17,7 +17,7 @@ const liveChanged=new vscode.EventEmitter<void>();
 export function registerPracticeKernel(courseRunner:CourseRunner,options:{id?:string;label?:string;lab?:(doc:vscode.NotebookDocument)=>boolean;wants?:(doc:vscode.NotebookDocument)=>boolean;resetEvents?:(reset:()=>void)=>vscode.Disposable[]}={}):vscode.Disposable {
   const kernel=vscode.notebooks.createNotebookController(options.id??PRACTICE_KERNEL,'jupyter-notebook',options.label??'dhimantAI Practice');
   kernel.description='Runs in the course container; setup and repair complete before the cell starts';
-  kernel.supportedLanguages=['python','javascript','typescript','rust','java','c','go','sql','shellscript'];
+  kernel.supportedLanguages=['python','javascript','typescript','rust','java','c','cpp','go','sql','shellscript'];
   kernel.supportsExecutionOrder=true;
   const sessions=new Map<string,NotebookCells>(), running=new Map<string,vscode.NotebookCell>();
   const cancellations=new Map<string,AbortController>();
@@ -95,9 +95,13 @@ export function registerPracticeKernel(courseRunner:CourseRunner,options:{id?:st
   const close=(doc:vscode.NotebookDocument)=>{const key=doc.uri.toString();interrupt(key);for(const [id,s] of sessions)if(id.startsWith(key+'|')){s.restart();sessions.delete(id);}};
   const closed=vscode.workspace.onDidCloseNotebookDocument(close);
   const reset=()=>{cancellations.forEach(c=>c.abort());sessions.forEach(s=>s.restart());sessions.clear();};
-  const prefer=(doc:vscode.NotebookDocument)=>{if(options.wants?.(doc))kernel.updateNotebookAffinity(doc,vscode.NotebookControllerAffinity.Preferred);};
+  const prefer=(doc:vscode.NotebookDocument)=>{if(doc.notebookType==='jupyter-notebook' && options.wants)kernel.updateNotebookAffinity(doc,
+    options.wants(doc)?vscode.NotebookControllerAffinity.Preferred:vscode.NotebookControllerAffinity.Default);};
   vscode.workspace.notebookDocuments.forEach(prefer);
   const opened=vscode.workspace.onDidOpenNotebookDocument(prefer);
+  // Existing connection notebooks acquire external-runtime metadata on repair.
+  // Revoke any old preference rather than leaving Podman preferred indefinitely.
+  const changed=vscode.workspace.onDidChangeNotebookDocument(event=>{if(event.metadata)prefer(event.notebook);});
   const selected=kernel.onDidChangeSelectedNotebooks(({notebook,selected})=>{
     if(selected)return;
     close(notebook);
@@ -116,5 +120,5 @@ export function registerPracticeKernel(courseRunner:CourseRunner,options:{id?:st
       item.command='dhimantai.cellInput';item.tooltip='Send input to a running program';return item;
     }
   });
-  return vscode.Disposable.from(kernel,send,closed,opened,selected,status,...(options.resetEvents?.(reset)??[]),new vscode.Disposable(reset));
+  return vscode.Disposable.from(kernel,send,closed,opened,changed,selected,status,...(options.resetEvents?.(reset)??[]),new vscode.Disposable(reset));
 }

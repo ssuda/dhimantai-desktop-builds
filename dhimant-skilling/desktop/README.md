@@ -130,6 +130,20 @@ build. On a fresh native Windows runner, it verifies the installer checksum, ins
 checks the packaged architecture and staging defaults, runs the installed CLI,
 and uninstalls. Its receipt does not certify GUI, YouTube or physical devices.
 
+For a Windows Skilling release, also run the first Data Science notebook exercise on
+a Windows machine using the supported WSL/Podman setup. In the learning extension
+directory, run `npm run compile`, then the following check with the published
+Data Science course image for the release. Keep the resulting Windows receipt
+with the installer acceptance evidence.
+
+```powershell
+node test/firstCourseRuntime.cjs $DataScienceImageByDigest windows-first-exercise.json
+```
+
+The check starts a disposable container with the course limits, exercises the
+desktop notebook bridge and verifies both the readiness message and the Pandas
+result. It exits with an error if setup or either cell fails.
+
 If a job fails before any steps start, inspect its Actions annotation. The message
 “recent account payments have failed or your spending limit needs to be increased”
 requires the `ssuda` account owner to resolve [GitHub billing](https://github.com/settings/billing)

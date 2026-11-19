@@ -1,9 +1,10 @@
 // Buffer only the active spoken reply, in memory. Pausing retains incoming speech.
 // Nothing is recorded on disk. Report rendered samples, not server completion.
 class CoachAudioBuffer extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options = {}) {
     super();
-    this.samples = new Float32Array(Math.ceil(sampleRate * 190));
+    const limit = options.processorOptions?.maxSeconds === 380 ? 380 : 190;
+    this.samples = new Float32Array(Math.ceil(sampleRate * limit));
     this.head = 0;
     this.size = 0;
     this.paused = false;

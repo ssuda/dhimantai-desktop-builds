@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import { Auth } from './auth';
 import { Environment, EnvironmentName } from './environments';
-import { ensurePodman } from './podman';
+import { ensurePodman, ERP_MEMORY_MIB } from './podman';
 import { ErpSandbox, sandboxKey } from './browserSandbox';
 import {BrowserLearning, BrowserTask, ERP_COURSE, VerifiedTask} from './browserLearning';
 import {FrappeServer} from './apps/frappe';
@@ -12,11 +12,12 @@ import {TaskVerifier, VerifiableTask} from './apps/verifier';
 import {learnerRpc,PublicCatalog} from './learnerCatalog';
 import {Api} from './api';
 import {DemoLesson, DemoState, demoFinished, demoKey, demoTasks, ERP_DEMO, prepareDemo} from './erpDemo';
+import {BusinessShift, ShiftLesson, ShiftState, checkShiftHandover, shiftFinished, shiftKey, shiftTasks} from './erpShift';
+import {verifiedKey} from './browserCourseProgress';
+export {verifiedKey} from './browserCourseProgress';
 
 /** Matches the training ERPNext pages on any loopback port, and nothing else served from loopback. */
 export const ERP_TAB_FILTER='http://127.0.0.1:*/{desk,desk/**,app/**,login,assets/frappe/dhimantai/**}';
-/** ERPNext tasks this account has verified on this computer (practice evidence, separate from Instructor coverage). */
-export const verifiedKey=(environment:EnvironmentName,account:string)=>`browser.erpnext.verified.${environment}.${account}`;
 
 /** One local ERPNext stack per service/profile, with separate ERPNext logins for dhimantAI accounts. */
 export class BrowserCourses {
@@ -37,9 +38,10 @@ export class BrowserCourses {
     this.subscriptions = [
       vscode.commands.registerCommand('dhimantai.openBrowserCourse', (id?:string) => {
         if (id && id !== 'erpnext-essentials') return;
-        return this.launch(false);
+        return this.launch('course');
       }),
-      vscode.commands.registerCommand('dhimantai.openErpDemo', () => this.launch(true)),
+      vscode.commands.registerCommand('dhimantai.openErpDemo', () => this.launch('demo')),
+      vscode.commands.registerCommand('dhimantai.openErpShift', () => this.launch('shift')),
       auth.onDidChange(session => { if(this.scope && session?.user.id !== this.scope.account) void this.stop(); }),
       vscode.workspace.onDidChangeConfiguration(e => { if(e.affectsConfiguration('dhimantai.environment')) void this.stop(); }),
     ];
@@ -49,8 +51,8 @@ export class BrowserCourses {
     if (!value) {value=randomBytes(24).toString('hex');await this.context.secrets.store(key,value);}
     return value;
   }
-  private launch(demo:boolean) {
-    return this.pending ??= this.open(demo).catch(error => {
+  private launch(mode:'course'|'demo'|'shift') {
+    return this.pending ??= this.open(mode).catch(error => {
       this.output.appendLine(String(error));
       void vscode.window.showErrorMessage('ERPNext: ' + (error instanceof Error ? error.message : String(error)));
     }).finally(() => { this.pending=undefined; });
@@ -70,7 +72,7 @@ export class BrowserCourses {
     await this.context.globalState.update(stateKey,{learner,verified:{}} satisfies DemoState);
     return learner;
   }
-  private async open(demo=false) {
+  private async open(mode:'course'|'demo'|'shift'='course') {
     await this.stopping;
     const account=(await this.auth.session())?.user.id, environment=this.environment(), generation=this.generation;
     if (!account) {
@@ -79,8 +81,24 @@ export class BrowserCourses {
       return;
     }
     const key=sandboxKey(this.context.globalStorageUri.fsPath + ':' + environment);
+    const demo=mode==='demo';
+    const shift:BusinessShift|undefined=mode==='shift'
+      ? JSON.parse(await readFile(vscode.Uri.joinPath(this.context.extensionUri,'media','browser','erpnext','shift.json').fsPath,'utf8')):undefined;
+    if(shift && !this.learning)throw new Error('The business shift needs the Instructor connection.');
     if(demo && !this.learning)throw new Error('The demo needs the Instructor connection.');
-    const id=demo ? await this.demoLearner(environment,account,key) : sandboxKey(environment + ':' + account);
+    let id=demo ? await this.demoLearner(environment,account,key) : sandboxKey(environment + ':' + account);
+    if(shift) {
+      const store=shiftKey(environment,account),previous=this.context.globalState.get<ShiftState>(store);
+      // Resume automatically; a completed shift offers a fresh company without deleting its old records.
+      let fresh=!previous;
+      if(shiftFinished(previous,shift)) {
+        const choice=await vscode.window.showInformationMessage('Your business shift is complete.','Review handover','Start a new shift');
+        if(!choice)return;
+        fresh=choice==='Start a new shift';
+      }
+      id=fresh?sandboxKey(environment+':'+account+':shift:'+randomBytes(8).toString('hex')):previous!.learner;
+      if(fresh)await this.context.globalState.update(store,{learner:id,verified:{}} satisfies ShiftState);
+    }
     if(!id)return;
     this.scope={account,environment,learner:id};
     const [admin,password]=await Promise.all([this.credential('browser.erpnext.admin.'+key),this.credential('browser.erpnext.learner.'+key+'.'+id)]);
@@ -91,7 +109,9 @@ export class BrowserCourses {
         const terminal=vscode.window.createTerminal({name:'Install course runtime',shellPath:'/usr/bin/sudo',shellArgs:[file,...args]});
         const closed=vscode.window.onDidCloseTerminal(t=>{if(t!==terminal)return;closed.dispose();t.exitStatus?.code===0?resolve():reject(new Error('Runtime installation did not finish.'));});
         terminal.show();
-      }),8192);
+      }),ERP_MEMORY_MIB, async () => await vscode.window.showInformationMessage(
+        'ERPNext needs 6 GB of runtime memory. Restart the runtime to allocate it? Active containers will restart; save any running work first.',
+        {modal:true}, 'Restart and continue') === 'Restart and continue');
       if(!await current())return;
       this.runtime=new ErpSandbox(bin,vscode.Uri.joinPath(this.context.extensionUri,'media','browser','erpnext').fsPath,key,log);
       this.starting=this.runtime.start(admin,{id,password},report);
@@ -121,23 +141,52 @@ export class BrowserCourses {
       if(!await current())return;
       if(!course.lessons.length)throw new Error('No guided tasks are published for your ERPNext course access.');
       // The demo keeps its own progress with its own learner, so it never counts toward the account's course.
-      const store=demo?demoKey(environment,account):verifiedKey(environment,account);
-      const readVerified=()=>(demo?this.context.globalState.get<DemoState>(store)?.verified:this.context.globalState.get<Record<string,VerifiedTask>>(store))??{};
-      const writeVerified=(verified:Record<string,VerifiedTask>)=>this.context.globalState.update(store,demo?{learner:id,verified} satisfies DemoState:verified);
-      const lessons=demo?demoTasks(course.lessons as DemoLesson[]):course.lessons;
-      if(demo) {
+      const store=shift?shiftKey(environment,account):demo?demoKey(environment,account):verifiedKey(environment,account);
+      const actionTotals=this.context.globalState.get<ShiftState>(store)?.actions??{};
+      let storeWrites=Promise.resolve();
+      const writeShift=(update:(old:ShiftState|undefined)=>ShiftState)=>{
+        const next=storeWrites.then(()=>this.context.globalState.update(store,update(this.context.globalState.get<ShiftState>(store))));
+        storeWrites=next.catch(()=>{});return next;
+      };
+      const readVerified=()=>((demo||shift)?this.context.globalState.get<DemoState>(store)?.verified:this.context.globalState.get<Record<string,VerifiedTask>>(store))??{};
+      const writeVerified=(verified:Record<string,VerifiedTask>)=>shift?writeShift(()=>({learner:id,verified,actions:actionTotals}))
+        :this.context.globalState.update(store,demo?{learner:id,verified}:verified);
+      const lessons=shift?shiftTasks(course.lessons as ShiftLesson[],shift):demo?demoTasks(course.lessons as DemoLesson[]):course.lessons;
+      const verifier=new TaskVerifier(new FrappeServer(url,'Administrator',admin),vscode.Uri.joinPath(this.context.extensionUri,'media','browser','player').fsPath);
+      const verify=async(task:string,record:string)=>{
+        const definition=lessons.find(l=>l.id===task) as unknown as VerifiableTask|undefined;
+        return !!definition && verifier.verify(definition,record,`learner-${id}@training.invalid`,id.slice(0,10),
+          Object.fromEntries(Object.entries(readVerified()).map(([k,v])=>[k,v.record])));
+      };
+      if(demo || shift) {
         const learnerServer=new FrappeServer(url,`learner-${id}@training.invalid`,password);
         const today=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
-        await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'ERPNext demo',cancellable:false},async progress=>{
+        await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:shift?'Preparing your business shift':'ERPNext demo',cancellable:false},async progress=>{
           progress.report({message:'Preparing the customer, supplier, item and both orders'});
           await prepareDemo(learnerServer,lessons as DemoLesson[],id.slice(0,10),today,readVerified(),
-            async(task,entry)=>{if(await current())await writeVerified({...readVerified(),[task]:entry});});
+            async(task,entry)=>{
+              if(!await current())throw new Error('The training account changed during preparation.');
+              if(shift && !await verify(task,entry.record))throw new Error('ERPNext could not verify the prepared '+task+'.');
+              await writeVerified({...readVerified(),[task]:entry});
+            });
         });
         if(!await current())return;
       }
-      const verifier=new TaskVerifier(new FrappeServer(url,'Administrator',admin),vscode.Uri.joinPath(this.context.extensionUri,'media','browser','player').fsPath);
       fragment=await this.learning.start({origin:url,account,environment,learner:id,tasks:lessons,current,
-        ...(demo?{course:{id:'erpnext-essentials',title:ERP_COURSE,finale:ERP_DEMO.finale}}:{}),
+        ...(shift?{course:{id:'erpnext-essentials',title:ERP_COURSE,finale:shift.finale,shift},
+          handover:()=>this.context.globalState.get<ShiftState>(store)?.handover,
+          recordHandover:async(text:string,recorded:string)=>{
+            if(!await current() || !await checkShiftHandover(shift,readVerified(),verify) || !await current())return false;
+            await writeShift(old=>({...old,learner:id,verified:readVerified(),actions:actionTotals,handover:{text,recorded,at:new Date().toISOString()}}));
+            return true;
+          },
+          recordAction:(command,result)=>{
+            const previous=actionTotals[command.task]??{calls:0,durationMs:0,failures:0};
+            actionTotals[command.task]={calls:previous.calls+1,durationMs:previous.durationMs+(result.duration_ms||0),failures:previous.failures+(result.status==='completed'?0:1)};
+            void writeShift(old=>({...old,learner:id,verified:old?.verified??{},actions:actionTotals})).catch(()=>this.output.appendLine('Could not retain the local shift action totals.'));
+            this.output.appendLine('BUSINESS_SHIFT_USAGE '+JSON.stringify({schema:1,kind:'action',shift:shift.id,run:id.slice(0,10),
+              request:command.id,task:command.task,action:command.action,outcome:result.status,duration_ms:result.duration_ms,model_calls:0}));
+          }}:demo?{course:{id:'erpnext-essentials',title:ERP_COURSE,finale:ERP_DEMO.finale}}:{}),
         signIn:{usr:`learner-${id}@training.invalid`,pwd:password},
         verified:readVerified,
         recordVerified:async(task,done)=>{
@@ -150,13 +199,14 @@ export class BrowserCourses {
           try {verified=!!definition && await verifier.verify(definition,done.record,`learner-${id}@training.invalid`,id.slice(0,10),earlier);}
           catch(error){this.output.appendLine('ERPNext progress check failed: '+(error instanceof Error?error.message:String(error)));}
           if(!verified || !await current())return false;
-          await writeVerified({...readVerified(),[task]:done});
+          const demonstrated=shift&&!!actionTotals[task]?.calls;
+          await writeVerified({...readVerified(),[task]:{...done,assisted:done.assisted||!!demonstrated}});
           this.verifiedChanged.fire();
           return true;
         }});
       // Resume the Instructor at the first task this account has not finished (checked and explained).
       const verified=readVerified();
-      const resume=lessons.find(lesson=>!verified[lesson.id]?.explained)??(demo?lessons[lessons.length-1]:lessons[0]);
+      const resume=lessons.find(lesson=>!verified[lesson.id]?.explained)??((demo||shift)?lessons[lessons.length-1]:lessons[0]);
       await vscode.commands.executeCommand('dhimantai.openLearningRoom',ERP_COURSE,resume.instructorChapter);
     }
     // Preferred: the desktop browser signs the learner in and injects the player, so nothing depends on the app image.

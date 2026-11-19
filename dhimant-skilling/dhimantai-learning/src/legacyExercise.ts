@@ -14,7 +14,7 @@ export async function openLegacyExercise(folder: vscode.Uri, environment: () => 
   if (['production', 'staging', 'development', 'local'].includes(meta.environment) && meta.environment !== environment())
     await vscode.workspace.getConfiguration('dhimantai').update('environment', meta.environment, vscode.ConfigurationTarget.Global);
   let source: string | undefined = typeof meta.synced?.source === 'string' ? meta.synced.source : undefined;
-  for (const language of ['python', 'javascript', 'typescript', 'c', 'java', 'go', 'rust']) {
+  for (const language of ['python', 'javascript', 'typescript', 'c', 'cpp', 'java', 'go', 'rust']) {
     const saved = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(folder, entryFile(language))).then(b => decoder.decode(b), () => undefined);
     if (saved !== undefined) { source = saved; break; }
   }

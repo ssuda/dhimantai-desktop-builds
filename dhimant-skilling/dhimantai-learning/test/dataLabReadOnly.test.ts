@@ -29,7 +29,7 @@ test('as datalab_reader, writes fail and reads work', {timeout: 240_000}, async 
   execFileSync(bin, ['run', '-d', '--rm', '--name', name, '--entrypoint', 'sleep',
     ...mount(join(extension, 'media/course/sql_runtime.py'), '/opt/dhimantai/sql_runtime.py'),
     ...mount(join(extension, 'media/course/data_lab.py'), '/course/.datalab/data_lab.py'),
-    ...mount(join(extension, 'media/datalab'), '/course/.datalab/samples'),
+    ...mount(join(extension, '../../content/courses/runtime-assets/data'), '/course/.datalab/samples'),
     ...mount(work, '/course/.datalab/imports'), '-v', `${home}:/course/.home`,
     '-e', 'DHIMANTAI_PG_TEMPLATE=/tmp/pg-template', IMAGE, 'infinity']);
   try {

@@ -26,7 +26,7 @@ function fixture() {
       return new Response('{}');
     }, require: (id: string) => id === 'vscode' ? {env:{uriScheme:'dhimantai'}, EventEmitter:class {event = () => ({dispose(){}}); fire(){throw new Error('Recovery must not sign in');}}}
       : id === './authPage' ? {openAuthPage: (_owner: unknown, _auth: unknown, _env: unknown, mode: string) => {pages.push(mode);}}
-      : realRequire(id)});
+      : id === './providerLogin' ? {} : realRequire(id)});
   const auth = new exports.Auth(secrets, () => environment, () => service);
   const link = () => {
     const request = requests.find(r => r.url.pathname.endsWith('/recover'))!;

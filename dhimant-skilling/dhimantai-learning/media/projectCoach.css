@@ -4,16 +4,21 @@
 h2 { margin: 0; font-size: 1.15em; }
 h3 { margin: 0 0 6px; font-size: 1em; }
 .milestone-nav { display: flex; align-items: center; gap: 6px; }
-.milestone-nav label { flex: 1; min-width: 0; }
-.milestone-nav button { flex-shrink: 0; padding-inline: 8px; }
+.milestone-nav select { flex: 1; min-width: 0; }
+.milestone-nav button { flex-shrink: 0; min-width: 28px; font-size: 1.2em; line-height: 1; }
 #progressText { margin: 0; font-size: .9em; }
 #progress { width: 100%; height: 5px; flex-shrink: 0; accent-color: var(--vscode-progressBar-background); }
-.completion-choice { display: flex; align-items: flex-start; gap: 6px; }
-.completion-choice input { flex-shrink: 0; }
 select, textarea { width: 100%; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); padding: 6px; font: inherit; }
 textarea { resize: vertical; max-height: 120px; }
 [hidden] { display: none !important; }
 #goal { font-weight: 600; }
+#task ol { margin: 0; padding-inline-start: 1.5em; }
+#task li + li { margin-top: 6px; }
+#checkpointDetails { display: grid; gap: 6px; border-top: 1px solid var(--vscode-panel-border); padding-block-start: 10px; }
+#checkpointDetails h3 { margin: 0; }
+#note[aria-invalid="true"] { border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)); outline: 2px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)); outline-offset: -2px; }
+#noteError { color: var(--vscode-errorForeground); }
+#noteError:empty, #saved:empty, #milestoneStatus:empty { display: none; }
 #files { gap: 8px; }
 #files button { text-align: left; overflow-wrap: anywhere; }
 #files > div { max-width: 100%; }
@@ -24,8 +29,13 @@ details { border-top: 1px solid var(--vscode-panel-border); padding-top: 8px; }
 details[open] > * { margin-top: 8px; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 250px; overflow: auto; }
 #composer { flex-shrink: 0; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); padding: 8px 0 0; border-top: 1px solid var(--vscode-panel-border); }
-#composer label { display: block; margin-bottom: 4px; }
 .log { flex: 0 0 auto; }
 .bubble { white-space: pre-wrap; }
 #handoffStatus { white-space: pre-wrap; overflow-wrap: anywhere; }
 .shared-summary { margin: 4px 0; font-size: .85em; overflow-wrap: anywhere; }
+#task .link { display: inline; font-family: var(--vscode-editor-font-family); font-size: .95em; padding: 0; text-decoration: underline; overflow-wrap: anywhere; }
+#projectTools summary, #sharingDetails summary { cursor: pointer; }
+#sharingDetails { border: 0; padding: 0; }
+#shared { max-height: 16vh; }
+#conversation:empty { display: none; }
+#checkpointDetails .row { margin: 0; }

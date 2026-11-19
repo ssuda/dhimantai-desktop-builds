@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { jupyterMetadata } from './notebookCommands';
+import { externalRuntimeFor, jupyterMetadata } from './notebookCommands';
 import { openNotebookKernelPicker } from './notebookKernelPicker';
 
 export const COLAB_EXTENSION = 'google.colab';
@@ -27,14 +27,23 @@ export async function ensureColab() {
     if (!extension)
       throw new Error('Enable Google Colab in Extensions and reload VS Code if requested, then try again.');
   }
-  await extension.activate();
+  const jupyter = vscode.extensions.getExtension<{createJupyterServerCollection?: unknown}>('ms-toolsai.jupyter');
+  if (!jupyter) throw new Error('Enable Microsoft Jupyter and Google Colab in Extensions, reload the app, then choose Use Colab Kernel again.');
+  try {
+    const api = await jupyter.activate();
+    if (typeof api?.createJupyterServerCollection !== 'function')
+      throw new Error('Update Microsoft Jupyter to a version that supports Colab servers.');
+    await extension.activate();
+  } catch (error) {
+    throw new Error(`Colab could not register its kernel source. Enable or update Microsoft Jupyter and Google Colab, reload the app, then choose Use Colab Kernel again. Check View → Output → Colab / Jupyter. ${error instanceof Error ? error.message : String(error)}`);
+  }
   return true;
 }
 
 export async function chooseColabKernel(doc: vscode.NotebookDocument, accelerator: 'tpu' | 'gpu' | 'any' = 'tpu') {
   if (doc.isClosed) return;
   void vscode.window.showInformationMessage(
-    `Select Another Kernel → Colab → New Colab Server, sign in with Google, then choose ${accelerator === 'any' ? 'CPU, GPU or TPU' : accelerator.toUpperCase()}. Availability and usage depend on your Colab account.`
+    `Select Another Kernel → Colab → New Colab Server, sign in with Google, choose ${accelerator === 'any' ? 'CPU, GPU or TPU' : accelerator.toUpperCase()}, then select Python 3 (ipykernel). If the picker shows only DhimantAI Course and Practice, use Back to return to kernel sources. If Colab is missing, enable or update Google Colab and Microsoft Jupyter in Extensions and reload the app. Availability and usage depend on your Colab account.`
   );
   // Use the supported VS Code picker; Colab does not expose a public command to
   // allocate a TPU. Never silently select Auto Connect (which may use a CPU).
@@ -48,6 +57,6 @@ export async function useColabForNotebook(doc = vscode.window.activeNotebookEdit
   if ((language && language !== 'python') || doc.getCells().some(
     cell => cell.kind === vscode.NotebookCellKind.Code && cell.document.languageId !== 'python'
   )) throw new Error('Use a Python notebook with Google Colab.');
-  const accelerator = jupyterMetadata(doc).dhimantai_runtime?.accelerator;
+  const accelerator = externalRuntimeFor(doc)?.accelerator;
   if (await ensureColab()) return chooseColabKernel(doc, accelerator === 'gpu' || accelerator === 'tpu' ? accelerator : 'any');
 }

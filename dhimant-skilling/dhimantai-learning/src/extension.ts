@@ -7,6 +7,7 @@ import { AuthoringStudio } from './apps/authoringStudio';
 import {BrowserLearning} from './browserLearning';
 import { registerCourseKernel } from './courseKernel';
 import * as vscode from 'vscode';
+import { acceptProviderCallback, providerCallbackPath } from './providerLogin';
 import { ProjectResults } from './projectResults';
 import { openProject } from './capstone';
 import { validateProjectWorkspace } from './projectSetup';
@@ -88,7 +89,7 @@ export async function activate(context: vscode.ExtensionContext) {
         if (envName() !== scope.environment) throw new Error('Your service changed. Reopen the course.');
         return service;
       }, scope.account);
-      return (await scoped.courseRuntime(scope.course)).runtime;
+      return scoped.courseRuntime(scope.course);
     });
   context.subscriptions.push(vscode.commands.registerCommand('dhimantai.courseMachines', (uri:vscode.Uri) => courses.machineState(uri)),
     vscode.commands.registerCommand('dhimantai.selectCourseMachine', (uri:vscode.Uri,machine:string) => {
@@ -117,7 +118,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const projectChanges = new vscode.EventEmitter<void>();
   const projectResults = new ProjectResults(context.globalState, () => projectChanges.fire());
   const projectMedia = vscode.Uri.joinPath(context.extensionUri, 'media').fsPath;
-  const practice = new PracticeBrowser(auth, envName, env, courses, projectResults, projectMedia);
+  const practice = new PracticeBrowser(auth, envName, env, courses, projectResults, projectMedia, learningRoom.activeCourse);
   context.subscriptions.push(registerCourseShellProfile(() => practice.courseTerminalOptions(),
     uri => !!courses.recordFor(uri), () => courses.enabled));
   const workstationAction = async <T>(action: () => Promise<T>): Promise<T | undefined> => {
@@ -138,7 +139,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const study = await registerStudyReader(context, auth, envName, env, copilotPolicy);
   context.subscriptions.push(study);
   const catalog = new CourseCatalog(auth, envName, env, () => practice.refresh(), learningRoom.hasNotebook, study.companions, projectResults, projectMedia,
-    (environment, account) => Object.values(context.globalState.get<Record<string, {explained?: boolean}>>(verifiedKey(environment, account)) ?? {}).filter(task => task.explained === true).length);
+    (environment, account) => Object.values(context.globalState.get<Record<string, {explained?: boolean}>>(verifiedKey(environment, account)) ?? {}).filter(task => task.explained === true).length, context.globalState);
   context.subscriptions.push(browserCourses.onDidVerify(() => { void catalog.refresh(); }));
   context.subscriptions.push(projectChanges, projectChanges.event(() => { practice.refresh(); void catalog.refresh(); }),
     vscode.window.onDidChangeWindowState(state => { if (state.focused) practice.refresh(); }),
@@ -167,7 +168,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }));
   context.subscriptions.push(catalog);
-  context.subscriptions.push(vscode.commands.registerCommand('dhimantai.pricing', () => catalog.open()));
+  context.subscriptions.push(vscode.commands.registerCommand('dhimantai.pricing', () => catalog.open(undefined,true)));
   const installed = context.extension.packageJSON.version as string;
   let appControls: DesktopAppControls | undefined;
   const updates = new ExtensionUpdates(envName, installed, () => appControls?.refresh());
@@ -282,7 +283,7 @@ export async function activate(context: vscode.ExtensionContext) {
     try {
       if (expectedEnvironment && expectedEnvironment !== envName()) throw new Error(`Choose ${expectedEnvironment} in Dhimantai: Environment before continuing with that account.`);
       const session = await auth[mode]();
-      if (!session) return;
+      if (!session || await catalog.continueConfirmedSignup(session)) return;
       if (mode === 'signUp') {
         void vscode.window.showInformationMessage('Your account is ready. Join a course to get started.');
         await catalog.open();
@@ -294,6 +295,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const uriHandler: vscode.UriHandler = {
     async handleUri(uri) {
+      if (uri.path.startsWith(providerCallbackPath)) {
+        if (!acceptProviderCallback(uri)) void vscode.window.showInformationMessage('This sign-in request has ended. Start sign-in again in Skilling.');
+        return;
+      }
       if (uri.path === '/password-reset') {
         try { await auth.acceptPasswordRecovery(uri); }
         catch { void vscode.window.showErrorMessage('Could not open this password reset link. Use Forgot password in Sign in to request a new link for this app and service.'); }
@@ -333,7 +338,10 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('dhimantai.openCourse', node => practice.openCourse(node)
       .catch(error => vscode.window.showErrorMessage(error.message))),
     vscode.commands.registerCommand('dhimantai.refreshPractice', () => practice.refresh()),
-    vscode.commands.registerCommand('dhimantai.browsePractice', () => vscode.commands.executeCommand('dhimantai.practice.focus')),
+    vscode.commands.registerCommand('dhimantai.browsePractice', () => {
+      practice.refresh();
+      if (!learningRoom.browsePractice()) return vscode.commands.executeCommand('dhimantai.practice.focus');
+    }),
     command('dhimantai.courseCatalog', 'Loading course catalog', (course?:string) => catalog.open(typeof course==='string'?course:undefined)),
     vscode.commands.registerCommand('dhimantai.desktopWelcome', () => vscode.env.appName === 'dhimantAI' ? catalog.welcome(context.globalState) : undefined),
     vscode.commands.registerCommand('dhimantai.openPracticeQuestion', node =>

@@ -1,14 +1,26 @@
 /** Runtime releases come from the entitled course API; notebooks cannot provide image URLs or Compose files. */
+import type {Recipe} from './courseRecipe';
+import type {CourseConfiguration} from './courseConfiguration';
 export interface RuntimeSelection {image: string; compose?: string}
 export interface RuntimeRelease {
   version: 1; course_id: string; title: string; source_sha256: string;
-  recipe: {language: string; services: string[]; imports?: string[]; torch?: string; labs?: boolean};
+  recipe: Recipe & {language:string;services:string[]};
+  configuration?:CourseConfiguration;
   images: Record<string, string>; default: RuntimeSelection;
   lessons: Record<string, RuntimeSelection>; labs: Record<string, RuntimeSelection>;
   composes: Record<string, {default_service: string; compose: {services: Record<string, any>; networks?: Record<string, any>; volumes?: Record<string, any>}}>;
 }
 const pin = /^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9_./-]+@sha256:[a-f0-9]{64}$/;
 const name = /^[a-z][a-z0-9-]{0,62}$/;
+/** The local TURN relay needs the port advertised in the server's ICE configuration.
+ * Only this authored local lab receives these fixed loopback bindings. One lab per host.
+ */
+export function courseMediaPublishArgs(configuration:Pick<CourseConfiguration,'ports'>):string[] {
+  return configuration.ports.flatMap(p=>{
+    if(!Number.isInteger(p.port)||p.port<1024||p.port>65535||!['tcp','udp'].includes(p.protocol))throw new Error('Invalid course preview port.');
+    return ['--publish',`127.0.0.1:${p.port}:${p.port}/${p.protocol}`];
+  });
+}
 export function runtimeRelease(value: unknown): RuntimeRelease {
   const r = value as RuntimeRelease;
   if (!r || r.version !== 1 || !name.test(r.course_id) || !/^[a-f0-9]{64}$/.test(r.source_sha256)

@@ -103,9 +103,9 @@ export async function skillingAction(message:SkillingMessage,api:Api,course:stri
     const markdown=type==='interview'?`# Interview practice · ${topic.topic}\n\n${topic.interview.map((q,i)=>`${i+1}. ${q}`).join('\n\n')}\n\nAllow 20 minutes for the implementation task. Record your elapsed time, assumptions, results and assistance. This is interview practice, not certification evidence.`
       :`# ${challenge?.title}\n\n${challenge?.prompt}\n\nRecord your prediction, implementation, actual output and explanation. Use Ask about This Notebook for help. This supplementary task does not automatically award course marks.`;
     if(type!=='interview'&&!challenge) throw new Error('Choose an available challenge.');
-    const stack=data?.pathway.profile?.technology_stack??[];const language=stack.includes('Java')?'java':stack.includes('C17')?'c':stack.includes('SQL')||stack.includes('PostgreSQL')?'sql':'python';
+    const stack=data?.pathway.profile?.technology_stack??[];const language=stack.includes('C++17')?'cpp':stack.includes('Java')?'java':stack.includes('C17')?'c':stack.includes('SQL')||stack.includes('PostgreSQL')?'sql':'python';
     if(await stillCurrent()) {
-      const courseTitle=data!.pathway.profile!.title;
+      const courseTitle=data!.course_titles?.[course] ?? data!.pathway.profile!.title;
       await vscode.commands.executeCommand('dhimantai.openPracticeNotebook','',owner,courseTitle,{assessment:'practice_only',
         title:type==='interview'?`Interview practice · ${topic.topic}`:challenge!.title,question:markdown,course:courseTitle,language});
       if(type==='interview'&&await stillCurrent())startInterviewTimer(context);
@@ -128,6 +128,11 @@ export function registerProjectPreview(courses:CourseWorkspaces) {
       const response=await fetch(url,{signal:AbortSignal.timeout(4000),redirect:'manual'}).catch(()=>undefined);
       if(!response) throw new Error('The application is not responding. Start it in the course terminal, or rebuild an older runtime to enable preview ports.');
       await response.body?.cancel();
+      // Microphone permission is owned by the system browser; Simple Browser embeds an iframe.
+      if(courses.recordFor(root)?.course === 'Building Voice Agents with LiveKit') {
+        await vscode.env.openExternal(vscode.Uri.parse(url));
+        return;
+      }
       await vscode.commands.executeCommand('simpleBrowser.show',url,{viewColumn:vscode.ViewColumn.Beside,preserveFocus:true});
     } catch(error) {void vscode.window.showErrorMessage(error instanceof Error?error.message:'Project preview is unavailable.');}
   });

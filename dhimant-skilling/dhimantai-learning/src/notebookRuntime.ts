@@ -8,12 +8,13 @@ export function notebookRuntimeControls(webview: vscode.Webview, media: vscode.U
   return `<section class="notebook-runtime" aria-label="Notebook runtime">
 <div class="runtime-row"><label for="runtime">Notebook runtime</label><select id="runtime" aria-describedby="runtime-target runtime-help runtime-status" disabled>
 <option value="">Set up or change runtime…</option><option value="podman">Course container</option>
-<option value="colab">Google Colab · remote Python</option>
+<option value="colab">Google Colab · GPU labs</option>
+<option value="cloud">Cloud GPU / Jupyter server</option>
 <option value="jupyter">Your GPU / Jupyter server</option>
 <option value="terminal">Open course terminal</option><option value="setup">Set up / rebuild course</option>
 </select><button id="new-notebook" class="secondary">New notebook</button></div>
 <p id="runtime-target" class="muted">Choose a course to prepare its workstation or open its terminal. Source files use Run code.</p>
-<p class="muted">Course container setup takes several minutes and needs internet access. Choose Set up / rebuild course to prepare it. For GPU labs, select Colab or your Jupyter server and run the course preflight.</p>
+<p class="muted">Course container setup takes several minutes and needs internet access. Choose Set up / rebuild course to prepare it. For GPU labs, use Google Colab and run the course preflight. Cloud GPU and your own Jupyter server are also available. Inference Engineering students provide their own GPU access; compute costs are separate from the course fee.</p>
 <details><summary>How do I open the course terminal?</summary><p id="runtime-help">Course code and tests run in the course container. DhimantAI downloads and installs Podman, prepares course dependencies and checks execution. Follow any operating-system installation prompts. The Course Runtime terminal runs commands inside that container for every course language. Use the same container commands on Windows, macOS and Linux. Python notebooks can also connect to Google Colab or your own GPU through Jupyter. You write and save notebooks in VS Code; the selected kernel supplies execution. Select Another Kernel → Existing Jupyter Server connects your machine. Runtime selection alone does not verify a GPU.</p></details>
 <p id="runtime-status" role="status">No notebook selected.</p>
 </section><script nonce="${nonce}" src="${webview.asWebviewUri(vscode.Uri.joinPath(media, 'notebookRuntime.js'))}"></script>`;
@@ -55,11 +56,11 @@ export function bindNotebookRuntime(webview: vscode.Webview, podman: (doc: vscod
       if (!['runtime', 'newNotebook'].includes(message?.type) || busy) return;
       const doc = notebook;
       if (message.type === 'runtime' && (!(typeof message.runtime === 'string' &&
-          (['colab', 'jupyter', 'podman', 'terminal', 'setup'].includes(message.runtime) || /^machine:[a-z][a-z0-9-]{0,62}$/.test(message.runtime))) ||
-          (doc ? doc.isClosed || message.uri !== doc.uri.toString() : message.uri || ['colab', 'jupyter'].includes(message.runtime)))) return;
+          (['colab', 'cloud', 'jupyter', 'podman', 'terminal', 'setup'].includes(message.runtime) || /^machine:[a-z][a-z0-9-]{0,62}$/.test(message.runtime))) ||
+          (doc ? doc.isClosed || message.uri !== doc.uri.toString() : message.uri || ['colab', 'cloud', 'jupyter'].includes(message.runtime)))) return;
       busy = true; status = message.type === 'newNotebook' ? 'Creating a notebook…' :
         message.runtime === 'colab' ? 'Opening Google Colab runtime setup…' :
-        message.runtime === 'jupyter' ? 'Opening your Jupyter kernel selector…' : 'Preparing the course container…';
+        ['cloud', 'jupyter'].includes(message.runtime) ? 'Opening your Jupyter kernel selector…' : 'Preparing the course container…';
       post();
       try {
         status = '';
@@ -74,7 +75,7 @@ export function bindNotebookRuntime(webview: vscode.Webview, podman: (doc: vscod
         }
         else if (message.type === 'newNotebook') await newNotebook();
         else if (message.runtime === 'colab') status = await useColabForNotebook(doc) ?? '';
-        else if (message.runtime === 'jupyter') {
+        else if (['cloud', 'jupyter'].includes(message.runtime)) {
           void vscode.window.showInformationMessage('Choose Select Another Kernel → Existing Jupyter Server for your GPU machine, or select its local Python environment. Run the course GPU preflight to verify execution.');
           status = await openNotebookKernelPicker(doc!);
         }

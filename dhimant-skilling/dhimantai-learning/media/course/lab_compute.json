@@ -1,0 +1,972 @@
+{
+  "version": 1,
+  "cloud": {
+    "purchaseModel": "spot",
+    "selection": "lowest-quoted-compatible-cost",
+    "onDemandFallback": false,
+    "teardownOnCompletion": true,
+    "saveBeforeTeardown": true,
+    "ownedResourcesOnly": true,
+    "maxRecoveryAttempts": 2,
+    "maxRuntimeMinutes": 180,
+    "providerRegionPolicy": "indian-providers-only",
+    "automaticProviders": [
+      "jarvis"
+    ],
+    "automaticRegions": [
+      "IN1",
+      "IN2"
+    ]
+  },
+  "courses": {
+    "python": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "python programming": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "golang": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "c programming": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "java programming": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "data science": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "data science with python": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "machine learning": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "machine learning with scikit-learn": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "deep learning with pytorch": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored teaching labs use CPU; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "large language models": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored teaching labs use CPU; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "reinforcement learning": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "algorithms with python": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "data structures with python": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "databases with postgresql": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "postgresql administration (dba)": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "ai-assisted postgresql dba": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "cyber security apprenticeship": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "ai at work": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "ai for teachers": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "engineering essentials": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "build ai agents with python": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "agentic ai applications": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "agentic ai engineering": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "building voice agents with livekit": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "transformers foundations": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Core teaching labs run on CPU (0 GPUs). Optional larger experiments may use 1 GPU; allocate only when explicitly starting that experiment.",
+        "optionalGpus": 1
+      },
+      "labs": {}
+    },
+    "build an llm from scratch": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Core teaching labs run on CPU (0 GPUs). Optional larger experiments may use 1 GPU; allocate only when explicitly starting that experiment.",
+        "optionalGpus": 1
+      },
+      "labs": {}
+    },
+    "erpnext": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "inference engineering": {
+      "default": null,
+      "labs": {
+        "Chapter 1: Inference Engines and GPU Runtimes": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "One Linux NVIDIA GPU; memory must pass the lab preflight."
+        },
+        "Chapter 2: Running vLLM Offline": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "One Linux NVIDIA GPU; memory must pass the lab preflight."
+        },
+        "Chapter 3: Model Memory and KV Cache": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "One Linux NVIDIA GPU; memory must pass the lab preflight."
+        },
+        "Chapter 4: Batching and Benchmarking": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "One Linux NVIDIA GPU; memory must pass the lab preflight."
+        },
+        "Chapter 5: Prefix Caching and Precision": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "One Linux NVIDIA GPU; memory must pass the lab preflight."
+        },
+        "Chapter 6: DeepInfer Architecture and Deployment": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "Source and deployment planning: 0 GPUs. Live DeepInfer requires its own supported-hardware recipe; do not provision the vLLM lab cluster."
+        },
+        "Chapter 7: GPU Clusters and Parallelism": {
+          "nodes": 2,
+          "gpusPerNode": 1,
+          "totalGpus": 2,
+          "note": "2 GPUs total: 1 machine with 2 GPUs works for tensor parallelism. Use 2 machines with 1 GPU each for the cross-machine networking exercise. Compare costs only between layouts that meet the selected exercise.",
+          "layouts": [
+            {
+              "nodes": 1,
+              "gpusPerNode": 2
+            },
+            {
+              "nodes": 2,
+              "gpusPerNode": 1
+            }
+          ]
+        },
+        "Chapter 8: Reproducible Inference Capstone": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "One Linux NVIDIA GPU; memory must pass the lab preflight."
+        }
+      }
+    },
+    "developing tts models with indicspeak": {
+      "default": null,
+      "labs": {
+        "Chapter 1: TTS Models and the IndicSpeak Workflow": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "1 NVIDIA GPU with compute capability >= 8.0 for the reviewed bf16/FlashAttention recipe. T4 is unsupported. Model access and memory are checked separately."
+        },
+        "Chapter 2: Building a Speech Dataset": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The authored lab runs on CPU. No GPU rental is required."
+        },
+        "Chapter 3: Text, Voices and Prompt Contracts": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The authored lab runs on CPU. No GPU rental is required."
+        },
+        "Chapter 4: Speech Codecs and SNAC Tokens": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "One Linux NVIDIA GPU; memory must pass the lab preflight."
+        },
+        "Chapter 5: Compiling and Packing Training Sequences": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The authored lab runs on CPU. No GPU rental is required."
+        },
+        "Chapter 6: Fine-Tuning IndicSpeak with LoRA": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "1 bf16/FlashAttention-compatible NVIDIA GPU. Measure peak memory for the authored LoRA configuration; no multi-node cluster is required."
+        },
+        "Chapter 7: Full Training and Reproducible Experiments": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The configuration and comparison exercise uses 0 GPUs. An optional full-training smoke run needs 1 compatible GPU, but its memory capacity has not been validated; automatic rental for that experiment is disabled.",
+          "optionalGpus": 1
+        },
+        "Chapter 8: Evaluating Speech Quality": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The authored lab runs on CPU. No GPU rental is required."
+        },
+        "Chapter 9: Inference, Streaming and Deployment": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "One Linux NVIDIA GPU; memory must pass the lab preflight."
+        },
+        "Chapter 10: IndicSpeak Model Development Capstone": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "1 compatible NVIDIA GPU for training, reload and audio generation. CPU-only preparation does not complete GPU acceptance."
+        }
+      }
+    },
+    "developing speech-to-text models": {
+      "default": null,
+      "labs": {
+        "Chapter 1: Speech Recognition and the Development Loop": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The authored lab runs on CPU. No GPU rental is required."
+        },
+        "Chapter 2: Audio, Transcripts and Leakage-Free Splits": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The authored lab runs on CPU. No GPU rental is required."
+        },
+        "Chapter 3: Build and Train a CTC Recognizer": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The authored lab runs on CPU. No GPU rental is required."
+        },
+        "Chapter 4: Establish an IndicTranscribe Baseline": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "1 compatible NVIDIA GPU for IndicTranscribe. Model access, driver and measured memory must pass its preflight."
+        },
+        "Chapter 5: Train and Adapt on Real Speech": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The authored lab runs on CPU. No GPU rental is required."
+        },
+        "Chapter 6: IndicSpeak as a Controlled Data Experiment": {
+          "nodes": 1,
+          "gpusPerNode": 1,
+          "totalGpus": 1,
+          "note": "1 compatible NVIDIA GPU for IndicSpeak synthetic audio. Run ASR and TTS sequentially; this lab does not require a cluster."
+        },
+        "Chapter 7: Evaluate Recognition Without Hiding Errors": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The authored lab runs on CPU. No GPU rental is required."
+        },
+        "Chapter 8: Deployment Measurements and the Capstone": {
+          "nodes": 1,
+          "gpusPerNode": 0,
+          "totalGpus": 0,
+          "note": "The authored lab runs on CPU. No GPU rental is required."
+        }
+      }
+    },
+    "terminal and linux basics": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "vs code for everyday engineering": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "git for everyday engineering": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "read an unfamiliar codebase": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "find the answer yourself": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "choose the right data structure": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "debug with evidence": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "write tests that catch bugs": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "review code for correctness": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "frame problems before coding": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "refactor without changing behavior": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "http and api contracts": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "sql and data integrity": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "security habits for every engineer": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "measure before optimizing": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "reproducible builds and ci": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "logs, reliability, and incidents": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "technical writing and team handoffs": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "use ai coding help with verification": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU lab; no GPU rental is required."
+      },
+      "labs": {}
+    },
+    "llm apis, tool calling & mcp": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Local teaching labs use CPU. Hosted model API charges, where used, are separate from course fees."
+      },
+      "labs": {}
+    },
+    "retrieval, context & memory engineering": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Local teaching labs use CPU. Hosted model API charges, where used, are separate from course fees."
+      },
+      "labs": {}
+    },
+    "reliable agent workflows": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Local teaching labs use CPU. Hosted model API charges, where used, are separate from course fees."
+      },
+      "labs": {}
+    },
+    "agent evaluation & production engineering": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Local teaching labs use CPU. Hosted model API charges, where used, are separate from course fees."
+      },
+      "labs": {}
+    },
+    "erpnext essentials": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "No student GPU is required for the authored course activities."
+      },
+      "labs": {}
+    },
+    "ai as my teaching assistant": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "No student GPU is required for the authored course activities."
+      },
+      "labs": {}
+    },
+    "teaching computational thinking and ai (classes 6–8)": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "No student GPU is required for the authored course activities."
+      },
+      "labs": {}
+    },
+    "apache kafka and event streaming": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU-only local Kafka lab; no cloud account or GPU is required. Chapter 7 runs three local containers; allocate at least 4 GB RAM to the container engine."
+      },
+      "labs": {}
+    },
+    "ai-assisted kafka": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "CPU Kafka lab; allocate at least 4 GB engine RAM for the three-broker lesson."
+      },
+      "labs": {}
+    },
+    "quantum computing with python and qiskit": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Local CPU quantum simulations; no quantum hardware account or GPU is required. Allocate 2 GB to the container engine and keep authored experiments at eight qubits or fewer."
+      },
+      "labs": {}
+    },
+    "ai research methods & reproducible experiments": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Authored miniature experiments use CPU only. No account or model download is needed. Larger real-data/model research is a separate learner-provisioned experiment with its own measured compute budget."
+      },
+      "labs": {}
+    },
+    "llm post-training: preferences & reinforcement learning": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Authored miniature experiments use CPU only. No account or model download is needed. Larger real-data/model research is a separate learner-provisioned experiment with its own measured compute budget."
+      },
+      "labs": {}
+    },
+    "document vision, ocr & multimodal ai": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Authored miniature experiments use CPU only. No account or model download is needed. Larger real-data/model research is a separate learner-provisioned experiment with its own measured compute budget."
+      },
+      "labs": {}
+    },
+    "speech diagnostics & responsible evaluation": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Authored miniature experiments use CPU only. No account or model download is needed. Larger real-data/model research is a separate learner-provisioned experiment with its own measured compute budget."
+      },
+      "labs": {}
+    },
+    "production llm engineering": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included contract and miniature-model labs run on CPU with no model download. Real LLM/TTS adaptation, serving, listening and device projects use separately provisioned learner compute and evidence."
+      },
+      "labs": {}
+    },
+    "educational tts & real-time speech": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included contract and miniature-model labs run on CPU with no model download. Real LLM/TTS adaptation, serving, listening and device projects use separately provisioned learner compute and evidence."
+      },
+      "labs": {}
+    },
+    "linux systems administration & reliability": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included exercises and simulations run on CPU. Live administration projects use a separately authorized learner sandbox; no automatic cloud allocation is required."
+      },
+      "labs": {}
+    },
+    "cloud resource administration with gcp": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included exercises and simulations run on CPU. Live administration projects use a separately authorized learner sandbox; no automatic cloud allocation is required."
+      },
+      "labs": {}
+    },
+    "cloud finops, billing & gpu capacity planning": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included exercises and simulations run on CPU. Live administration projects use a separately authorized learner sandbox; no automatic cloud allocation is required."
+      },
+      "labs": {}
+    },
+    "agent security & safety for edtech": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Standard-library CPU fixtures need no account, model download or GPU. Real-model, fluent-reviewer and native-isolation project acceptance uses separate learner-provided resources."
+      },
+      "labs": {}
+    },
+    "multilingual agent evaluation": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Standard-library CPU fixtures need no account, model download or GPU. Real-model, fluent-reviewer and native-isolation project acceptance uses separate learner-provided resources."
+      },
+      "labs": {}
+    },
+    "enterprise rag engineering": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included retrieval, gateway-contract and transactional-ledger labs run locally on CPU. Optional native Envoy uses local containers. Real models, cloud deployment, provider test mode and distributed scale require separate learner resources and acceptance."
+      },
+      "labs": {}
+    },
+    "api gateways with envoy": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included retrieval, gateway-contract and transactional-ledger labs run locally on CPU. Optional native Envoy uses local containers. Real models, cloud deployment, provider test mode and distributed scale require separate learner resources and acceptance."
+      },
+      "labs": {}
+    },
+    "metered api platforms & reliability": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included retrieval, gateway-contract and transactional-ledger labs run locally on CPU. Optional native Envoy uses local containers. Real models, cloud deployment, provider test mode and distributed scale require separate learner resources and acceptance."
+      },
+      "labs": {}
+    },
+    "production python backends with fastapi": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included labs use one CPU course runtime. Redis and Celery run locally in the jobs runtime. Kubernetes clusters and cloud/VM projects require separate learner-provided resources and acceptance evidence."
+      },
+      "labs": {}
+    },
+    "redis caching & reliable background jobs": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included labs use one CPU course runtime. Redis and Celery run locally in the jobs runtime. Kubernetes clusters and cloud/VM projects require separate learner-provided resources and acceptance evidence."
+      },
+      "labs": {}
+    },
+    "distributed backend system design": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included labs use one CPU course runtime. Redis and Celery run locally in the jobs runtime. Kubernetes clusters and cloud/VM projects require separate learner-provided resources and acceptance evidence."
+      },
+      "labs": {}
+    },
+    "kubernetes & backend reliability": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Included labs use one CPU course runtime. Redis and Celery run locally in the jobs runtime. Kubernetes clusters and cloud/VM projects require separate learner-provided resources and acceptance evidence."
+      },
+      "labs": {}
+    },
+    "react, next.js & typescript": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Local teaching examples run on CPU. VM deployment tasks use a learner-owned cloud environment; the course does not allocate it."
+      },
+      "labs": {}
+    },
+    "node.js services, redis & real-time systems": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Local teaching examples run on CPU. VM deployment tasks use a learner-owned cloud environment; the course does not allocate it."
+      },
+      "labs": {}
+    },
+    "full-stack cloud deployment & operations": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "Local teaching examples run on CPU. VM deployment tasks use a learner-owned cloud environment; the course does not allocate it."
+      },
+      "labs": {}
+    },
+    "c++ programming": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "data structures with c++": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "data structures with java": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored lab runs on CPU. No GPU rental is required."
+      },
+      "labs": {}
+    },
+    "mathematics for machine learning": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored experiments run locally on CPU using the Python standard library."
+      },
+      "labs": {}
+    },
+    "classical ai search, reasoning & planning": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored experiments run locally on CPU using the Python standard library."
+      },
+      "labs": {}
+    },
+    "data & feature engineering for machine learning": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored experiments run locally on CPU using the Python standard library."
+      },
+      "labs": {}
+    },
+    "mlops for predictive models": {
+      "default": {
+        "nodes": 1,
+        "gpusPerNode": 0,
+        "totalGpus": 0,
+        "note": "The authored experiments run locally on CPU using the Python standard library."
+      },
+      "labs": {}
+    }
+  }
+}

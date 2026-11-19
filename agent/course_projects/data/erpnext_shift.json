@@ -1,0 +1,52 @@
+{
+  "id": "first-business-shift",
+  "title": "Your first business shift",
+  "minutes": 30,
+  "brief": "You are covering operations at {{company}} this morning. Receive a supplier delivery, fulfil the customer’s order, record the bills, and hand over what remains for tomorrow. The parties and orders are already prepared. No money changes hands during this shift.",
+  "prepared": ["customer", "supplier", "item", "buying", "selling"],
+  "live": ["stock", "payables", "delivery", "receivables"],
+  "finale": "Your shift at {{company}}: use your records to hand over to the owner.",
+  "handover": "Give the owner a short handover: what arrived, what was delivered, what remains in stock and on order, what the customer owes, what we owe the supplier, and what needs attention tomorrow. Explain why profit and cash differ. Use your records as evidence.",
+  "situations": {
+    "stock": {
+      "title": "The supplier has arrived",
+      "brief": "The van is here. Compare the purchase order with the warehouse’s count and record what the business actually received. Keep the unfulfilled part of the order visible.",
+      "documents": [
+        {"title": "Purchase order", "text": "{{buying.supplier}} · {{buying.items.0.qty}} units of {{buying.items.0.item_code}} at INR {{buying.items.0.rate}} each. Order: {{ref:buying}}."},
+        {"title": "Delivery slip · warehouse count", "text": "{{stock.items.0.qty}} units physically received into {{stock.items.0.warehouse}}. The remaining units are back-ordered; they have not arrived."}
+      ],
+      "clue": "Compare the warehouse’s count with your receipt. The order records what was requested; the delivery slip records what arrived. Keep the receipt linked to that order.",
+      "explain": "What did you receive, what is still due from the supplier, and which records support your answer?"
+    },
+    "payables": {
+      "title": "The supplier’s bill is here",
+      "brief": "Match the supplier’s bill to the delivery you recorded. Recognise what the business owes. The owner will arrange payment after your shift.",
+      "documents": [
+        {"title": "Supplier’s bill", "text": "{{payables.supplier}} bills {{payables.items.0.qty}} units at INR {{payables.items.0.rate}} each. Payment is still due."},
+        {"title": "Goods received", "text": "Use your saved receipt {{ref:stock}} as the evidence for this bill. These goods have already entered stock."}
+      ],
+      "clue": "Compare the bill’s quantity and price with the receipt. Check that you are recording an amount owed to this supplier and linking the bill to the receipt, without receiving the stock again.",
+      "explain": "What do we owe the supplier now? Explain why recording this bill does not mean we paid it or received another delivery."
+    },
+    "delivery": {
+      "title": "The customer needs their order",
+      "brief": "The customer is waiting. Use the stock you actually received to fulfil their order. Account for what leaves the warehouse and what remains.",
+      "documents": [
+        {"title": "Customer request", "text": "{{selling.customer}} needs {{selling.items.0.qty}} units of {{selling.items.0.item_code}} today, at the agreed price of INR {{selling.items.0.rate}} each. Order: {{ref:selling}}."},
+        {"title": "Warehouse instruction", "text": "Dispatch from {{delivery.items.0.warehouse}}. Check your receipt {{ref:stock}} and the stock in ERPNext before recording the dispatch."}
+      ],
+      "clue": "Compare the customer’s order with the dispatch. Check the quantity, the warehouse, and the link to the sales order. Receiving goods and delivering them are separate events.",
+      "explain": "What went to the customer and what remains in stock? Use your records to explain the stock movement and its cost."
+    },
+    "receivables": {
+      "title": "Bill for the completed delivery",
+      "brief": "Record what the customer owes for the goods delivered. They will pay later. Then prepare your handover to the owner.",
+      "documents": [
+        {"title": "Agreed sale", "text": "{{selling.customer}} agreed INR {{selling.items.0.rate}} per unit. Bill the goods in your delivery {{ref:delivery}}."},
+        {"title": "Owner’s note", "text": "No customer payment has arrived. Leave the invoice outstanding so tomorrow’s colleague can follow up."}
+      ],
+      "clue": "Trace the invoice to your delivery. Check the customer, agreed price, quantity delivered, and receivable account. An invoice records money owed; it is not a payment.",
+      "explain": "What does the customer owe now, and where can the owner see it? Explain why the sale has not increased cash."
+    }
+  }
+}

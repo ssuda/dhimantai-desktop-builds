@@ -38,20 +38,113 @@ test('saved-record checks reject wrong parties, extra rows, unsent drafts and in
   assert.ok(!equal({...expected,items:[...expected.items,...expected.items]},expected));
   for(const value of [null,undefined,'']) assert.ok(!equal(value,0));
 });
-function fixture(user='learner-0123456789abcdef0123@training.invalid', published?:any) {
+const loadDeskRecord = async ({args}: {args: {doctype:string; name:string}}) => ({docs:[args]});
+function fixture(user='learner-0123456789abcdef0123@training.invalid', published?:any, stored?:any) {
   const dom=new JSDOM('<!doctype html><body><input id="currency"></body>',{url:'http://127.0.0.1:43210/desk',runScripts:'outside-only'});
   const w=dom.window as any, doc={doctype:'Company',name:'Training 0123456789',default_currency:'INR'};
   let saved:any={...doc}, dirty=false, fail=false, fills=0;
-  w.frappe={session:{user},ui:{form:{}},datetime:{get_today:()=> '2026-11-11'},set_route:async()=>{},new_doc:async()=>{}};
+  w.frappe={session:{user},ui:{form:{}},datetime:{get_today:()=> '2026-11-11'},call:loadDeskRecord,set_route:async()=>{},new_doc:async()=>{}};
   w.cur_frm={doctype:'Company',doc,fields_dict:{default_currency:{wrapper:w.document.querySelector('input')}},
     is_new:()=>false,is_dirty:()=>dirty,set_value:async()=>{fills++;}};
   if(published)w.sessionStorage.setItem('dhimantai-erpnext-instructor',JSON.stringify({origin:'http://127.0.0.1:40000',token:'a'.repeat(64),learner:'0123456789abcdef0123'}));
   w.fetch=async(path:string)=>path.includes('course.json')||path.endsWith('/course')?{ok:true,text:async()=>JSON.stringify(published??course)}:{ok:!fail,json:async()=>({data:saved})};
   w.AbortSignal={timeout:()=>undefined};
+  if(stored)w.localStorage.setItem(`dhimantai-browser:${course.id}:v${published?.version??course.version}:${user}`,JSON.stringify(stored));
   w.eval(source);
   return {w,dom,setSaved:(v:any)=>saved=v,setDirty:(v:boolean)=>dirty=v,setFail:(v:boolean)=>fail=v,fills:()=>fills};
 }
 const tick=()=>new Promise(resolve=>setTimeout(resolve,10));
+test('opening new and saved forms from the course asks Frappe to select a sidebar containing the destination',async()=>{
+  const f=fixture(),w=f.w,routes:any[]=[];
+  try {
+    await tick();
+    w.frappe.route_flags={custom_flag:true};
+    w.frappe.model={with_doctype:async()=>{},get_new_doc:(doctype:string)=>({name:'new-'+doctype})};
+    w.frappe.set_route=async(...args:any[])=>{
+      routes.push({args,jump:w.frappe.route_flags.jump,custom:w.frappe.route_flags.custom_flag});
+      w.cur_frm={...w.cur_frm,doctype:args[1],doc:{name:args[2]}};
+      w.frappe.route_flags={}; // Frappe consumes flags once per navigation.
+    };
+    await w.dhimantaiApp.openNew('Item');
+    assert.deepEqual(routes[0],{args:['Form','Item','new-Item'],jump:true,custom:true});
+    await w.dhimantaiApp.openRecord('Purchase Order','PUR-ORD-1');
+    assert.deepEqual(routes[1],{args:['Form','Purchase Order','PUR-ORD-1'],jump:true,custom:undefined});
+  } finally {f.dom.window.close();}
+});
+test('restart reopens the pending saved supplier for observation without resubmitting or completing it',async()=>{
+  const published=JSON.parse(JSON.stringify(course)),record='Training Supplier 0123456789';
+  const checkedAt='2026-11-14T03:00:00Z';
+  published.verified={company:{record:'Training 0123456789',explained:true},
+    customer:{record:'Training Customer 0123456789',explained:true},
+    supplier:{record,checkedAt,assisted:false,explained:false}};
+  const f=fixture(undefined,published),w=f.w,opened:any[]=[],observed:any[]=[],focused:any[]=[];
+  try {
+    w.cur_frm=undefined;
+    w.frappe.set_route=async(...route:any[])=>{
+      opened.push(route);
+      w.cur_frm={doctype:'Supplier',doc:{name:record,supplier_name:record,supplier_type:'Company',supplier_group:'All Supplier Groups'},
+        is_new:()=>false,is_dirty:()=>false};
+    };
+    w.frappe.get_route=()=>['Form','Supplier',record];
+    w.addEventListener('dhimantai-erp-focus',(e:any)=>focused.push(e.detail));
+    await tick();
+    const guide=w.dhimantaiErpGuide;
+    assert.deepEqual(opened,[['Form','Supplier',record]]);
+    assert.equal(guide.current().id,'supplier');
+    assert.equal(guide.question().id,'supplier:explanation:'+checkedAt);
+    assert.equal(focused.length,0,'reopen never submits or focuses an answer automatically');
+    const read=w.fetch;
+    w.fetch=async(url:string,options:any)=>{
+      if(!url.startsWith('http://127.0.0.1:40000'))return read(url,options);
+      if(url.endsWith('/observe'))observed.push(JSON.parse(options.body));
+      return {ok:true,json:async()=>({ok:true})};
+    };
+    w.eval(readFileSync(join(player,'live.js'),'utf8'));await tick();
+    assert.equal(observed[0].record,record);
+    assert.equal(observed[0].fields.supplier_name,record,'Instructor receives the reopened form, not only the question text');
+    assert.equal(guide.question().kind,'explanation');
+    assert.equal(f.fills(),0);
+    // Explicit handoff also reopens the checked record after browsing elsewhere.
+    w.cur_frm={doctype:'Customer',doc:{name:'another'},is_new:()=>false,is_dirty:()=>true};
+    await guide.root.querySelector('#open').onclick();
+    assert.equal(opened.length,1,'an unsaved different form is never replaced');
+    assert.equal(focused.length,0);
+    w.cur_frm.is_dirty=()=>false;
+    await guide.root.querySelector('#open').onclick();
+    assert.equal(opened.length,2);assert.equal(focused[0].id,guide.question().id);
+  }finally{f.dom.window.close();}
+});
+test('field guidance follows unfinished fields and clears on completion, panel close and navigation',async()=>{
+  const published=JSON.parse(JSON.stringify(course));
+  published.lessons[0].steps=published.lessons[0].steps.slice(0,2);
+  const f=fixture(undefined,published),w=f.w;
+  try {
+    const currency=w.document.querySelector('#currency'),account=w.document.createElement('input');
+    w.document.body.append(account);
+    for(const field of [currency,account])field.getBoundingClientRect=()=>({left:100,top:200,width:300,height:40});
+    w.cur_frm.fields_dict.default_receivable_account={wrapper:account};
+    w.cur_frm.doc.default_currency='USD';
+    await tick();
+    const root=w.dhimantaiErpGuide.root;
+    const refresh=()=>w.dispatchEvent(new w.Event('scroll'));
+    const marked=()=>[...w.document.querySelectorAll('.dhimantai-guide-field')];
+    assert.deepEqual(marked(),[currency],'only the unfinished field receives guidance');
+    assert.equal(w.document.querySelector('body > div[style*="position: fixed"]'),null,'no floating box above application dialogs');
+    w.cur_frm.doc.default_currency='INR';refresh();
+    assert.deepEqual(marked(),[account],'the previous field loses its highlight');
+    w.cur_frm.doc.default_receivable_account='Debtors - 0123456789';refresh();
+    assert.deepEqual(marked(),[],'matching fields have no remaining highlight');
+    w.cur_frm.doc.default_currency='USD';refresh();
+    assert.deepEqual(marked(),[currency]);
+    root.querySelector('#toggle').click();assert.deepEqual(marked(),[]);
+    root.querySelector('#show-task').click();assert.deepEqual(marked(),[currency]);
+    currency.remove();refresh();
+    assert.equal(currency.classList.contains('dhimantai-guide-field'),false,'detached fields are cleaned up');
+    w.document.body.append(currency);refresh();assert.deepEqual(marked(),[currency]);
+    w.cur_frm.doctype='Purchase Receipt';refresh();
+    assert.deepEqual(marked(),[],'navigating away clears the previous form');
+  } finally {f.dom.window.close();}
+});
 test('connected guide renders the published task definition instead of the bundled copy',async()=>{
   const updated=JSON.parse(JSON.stringify(course));updated.version='revision-2';
   updated.lessons[0].steps[0].text='Published course update: inspect the currency.';
@@ -93,7 +186,9 @@ test('Next task appears only after the saved record is verified',async()=>{
   f.setSaved(company);
   await f.w.dhimantaiErpGuide.continueTask('company');
   assert.equal(check.hidden,false,'the next action stays visible after a check');
-  assert.equal(check.textContent,'Answer in Instructor','a matching record is not the end: the learner explains it first');
+  assert.equal(check.textContent,'Check saved work','the saved-record check remains available while explanation is pending');
+  assert.equal(root.querySelector('#open').textContent,'Open answer box');
+  assert.match(root.querySelector('#verification-status').textContent,/Saved work verified.*Explanation pending/);
   const guide=f.w.dhimantaiErpGuide,q=guide.question();
   assert.equal(root.querySelector('#explain').hidden,true,'the answer box is never shown in the browser');
   assert.match(q.question,/receivable and the payable/);
@@ -143,7 +238,7 @@ test('the current step is the first field that does not yet hold the task value,
   w.cur_frm={doctype:'Customer',doc,is_new:()=>true,is_dirty:()=>true,fields_dict:{customer_group:{df:{label:'Customer Group'}}}};
   root.querySelector('#lesson').value='1';root.querySelector('#lesson').dispatchEvent(new w.Event('change'));
   assert.equal(w.dhimantaiErpGuide.step(),2);
-  assert.match(root.querySelector('[aria-current="step"]').textContent,/Customer Group/);
+  assert.match(root.querySelector('#steps [aria-current="step"]').textContent,/Customer Group/);
   assert.match(root.querySelector('#now').textContent,/Customer Group: Choose the group/);
   assert.doesNotMatch(root.querySelector('#now').textContent,/Commercial/,'a decision step does not give away its value');
   root.querySelector('#reveal').click();
@@ -158,10 +253,11 @@ test('the current step is the first field that does not yet hold the task value,
   f.dom.window.close();
 });
 test('dhimantAI-held verified tasks restore progress and start at the first unverified task',async()=>{
-  const published={...course,verified:{company:{record:'Training 0123456789',checkedAt:'2026-11-11T00:00:00Z',assisted:false,explained:true}}};
-  const f=fixture(undefined,published);await tick();const root=f.w.document.querySelector('#dhimantai-guide').shadowRoot;
-  assert.equal(root.querySelector('#lesson').value,'1');
-  assert.match(root.querySelector('#lesson option').textContent,/^✓ 1\./);
+  const published={...course,verified:Object.fromEntries(course.lessons.slice(0,4).map((task:any)=>[task.id,
+    {record:task.id+'-saved',checkedAt:'2026-11-11T00:00:00Z',assisted:false,explained:true}]))};
+  const f=fixture(undefined,published,{lesson:3,done:published.verified});await tick();const root=f.w.document.querySelector('#dhimantai-guide').shadowRoot;
+  assert.equal(root.querySelector('#lesson').value,'4');
+  assert.equal([...root.querySelectorAll('#lesson option')].filter((option:any)=>option.textContent.startsWith('✓')).length,4);
   f.dom.window.close();
 });
 test('the course is one business story: masters, buy-to-pay, sell-to-collect, then a recipe',()=>{
@@ -197,7 +293,7 @@ test('a task created from an earlier record waits for it, opens it, and links to
   // Reload with the saved state, as the learner reopening ERPNext would.
   const dom=new JSDOM('<!doctype html><body></body>',{url:'http://127.0.0.1:43210/desk',runScripts:'outside-only'});const x=dom.window as any;
   x.localStorage.setItem(key,JSON.stringify(state));
-  x.frappe={session:{user:'learner-0123456789abcdef0123@training.invalid'},ui:{form:{}},datetime:{get_today:()=> '2026-11-11'},set_route:async(...args:any[])=>{opened.push(args);}};
+  x.frappe={session:{user:'learner-0123456789abcdef0123@training.invalid'},ui:{form:{}},datetime:{get_today:()=> '2026-11-11'},call:loadDeskRecord,set_route:async(...args:any[])=>{opened.push(args);}};
   x.cur_frm={doctype:'Purchase Order',doc:{name:'PUR-ORD-1'},fields_dict:{},is_new:()=>false,is_dirty:()=>false};
   x.fetch=async()=>({ok:true,text:async()=>JSON.stringify(course)});x.AbortSignal={timeout:()=>undefined};x.eval(source);await tick();
   const root2=x.document.querySelector('#dhimantai-guide').shadowRoot;
@@ -225,11 +321,11 @@ test('a payment counts only when the invoice it settles is no longer outstanding
   assert.match(root.querySelector('#status').textContent,/not true yet: The supplier’s bill shows nothing outstanding/);
   outstanding=0;root.querySelector('#check').click();await tick();await tick();
   assert.match(root.querySelector('#status').textContent,/Saved work verified\. The supplier’s bill shows nothing outstanding\./);
-  assert.equal(root.querySelector('#check').textContent,'Answer in Instructor');
-  assert.equal(root.querySelector('#explain').hidden,true,'a skipped prediction comes before the explanation');
-  assert.match(root.querySelector('#predict-note').textContent,/finished before predicting/);
-  root.querySelector('input[name="prediction"][value="1"]').click();root.querySelector('#lock-prediction').click();await tick();await tick();
-  assert.match(root.querySelector('#result').textContent,/Not what you predicted\. You predicted “Cash goes down; Creditors goes up” \(after submitting\)\. The answer is “Cash goes down; Creditors goes down”/);
+  assert.equal(root.querySelector('#check').textContent,'Check saved work');
+  assert.equal(root.querySelector('#open').textContent,'Open answer box');
+  assert.equal(root.querySelector('#result').hidden,true,'verification never invents a late prediction');
+  assert.equal(root.querySelector('#task-sequence [aria-current]').textContent,'Explain');
+  assert.match(root.querySelector('#body').textContent,/Complete both the saved-record check and your explanation/);
   assert.equal(root.querySelector('#explain').hidden,true);
   assert.equal(x.dhimantaiErpGuide.question().kind,'explanation');
   dom.window.close();
@@ -288,10 +384,10 @@ test('a failed check or ERPNext error offers help but never asks the Instructor 
   };
   w.cur_frm.doc.default_currency='INR';w.cur_frm.doc.default_receivable_account='Debtors - 0123456789';w.cur_frm.doc.default_payable_account='Creditors - 0123456789';
   root.querySelector('#check').click();await tick();await tick();
-  assert.ok(!requests.some(r=>r.url.endsWith('/progress')),'a check alone does not complete the task');
+  assert.equal(requests.filter(r=>r.url.endsWith('/progress')).at(-1).body.explained,false,'a check retains evidence without completing the explanation');
   const box=root.querySelector('#explanation');box.value='Receivable is what customers owe us, payable is what we owe suppliers.';
   box.dispatchEvent(new w.Event('input'));root.querySelector('#send-explanation').click();await tick();await tick();
-  const progress=requests.find(r=>r.url.endsWith('/progress'));
+  const progress=requests.filter(r=>r.url.endsWith('/progress')).at(-1);
   assert.equal(progress.body.task,'company');assert.equal(progress.body.record,'Training 0123456789');assert.equal(progress.body.explained,true);
   const explanation=requests.filter(r=>r.url.endsWith('/help')).at(-1).body.message;
   assert.match(explanation,/My answer: Receivable is what customers owe us/);assert.match(explanation,/Question: In your own words/);
@@ -318,7 +414,9 @@ test('launch signs the learner in through dhimantAI, removes the secret from the
 test('reopening a master-data task opens the learner\'s existing record instead of creating a duplicate',async()=>{
   const f=fixture();await tick();const w=f.w,root=w.document.querySelector('#dhimantai-guide').shadowRoot;
   const routes:any[]=[],asked:string[]=[];
-  w.frappe.set_route=async(...args:any[])=>{routes.push(args);};
+  w.frappe.set_route=async(...args:any[])=>{
+    routes.push(args);w.cur_frm={...w.cur_frm,doctype:args[1],doc:{name:args[2]}};
+  };
   w.fetch=async(url:string)=>{asked.push(url);return {ok:true,json:async()=>({data:[{name:'CUST-0001'}]})};};
   w.cur_frm={doctype:'Company',doc:{},fields_dict:{},is_new:()=>false,is_dirty:()=>false};
   root.querySelector('#lesson').value='1';root.querySelector('#lesson').dispatchEvent(new w.Event('change'));
@@ -339,6 +437,73 @@ function lessonFixture(index:number, frm:any, fetcher?:(url:string)=>any, done:R
   x.eval(source);
   return {x,dom,key,root:()=>x.document.querySelector('#dhimantai-guide').shadowRoot};
 }
+test('Task 07 retries the verified receipt from a cached Desk error page at the same URL',async()=>{
+  const receipt='MAT-PRE-2026-00001',doctype='Purchase Receipt',route=['Form',doctype,receipt];
+  const receiptForm={doctype,doc:{name:receipt},fields_dict:{},is_dirty:()=>false,is_new:()=>false};
+  const f=lessonFixture(6,receiptForm,undefined,{stock:receipt,buying:'PUR-ORD-1'});
+  try {
+    const w=f.x,desk=w.frappe,page=w.document.createElement('div');
+    page.innerHTML='<div class="message-page"></div>';w.document.body.append(page);
+    desk.container={page};desk.get_route=()=>route;desk.get_route_str=()=>route.join('/');
+    desk.pages={[route.join('/')]:page};desk.after_ajax=async()=>{};
+    const calls:string[]=[],routes:any[]=[];
+    desk.call=async (request:any)=>{
+      calls.push(request.method);
+      assert.equal(request.type,'GET');assert.deepEqual({...request.args},{doctype,name:receipt});
+      return loadDeskRecord(request);
+    };
+    desk.set_route=async(...args:any[])=>routes.push(args); // Desk leaves the current URL alone.
+    desk.router={render:()=>{
+      assert.equal(desk.pages[route.join('/')],undefined);
+      desk.container.page={frm:receiptForm};
+    }};
+    await tick();
+    assert.equal(w.dhimantaiApp.current(),undefined);
+    assert.equal(w.dhimantaiApp.route(),'','an error page cannot tell Instructor that the receipt is open');
+    const open=f.root().querySelector('#open');
+    assert.equal(open.textContent,'Open Purchase Receipt');assert.equal(open.hidden,false);
+    await open.onclick();
+    assert.deepEqual(calls,['frappe.desk.form.load.getdoc']);assert.deepEqual(routes,[route]);
+    assert.equal(w.dhimantaiApp.current().id,receipt);assert.equal(w.dhimantaiApp.route(),route.join('/'));
+  } finally { f.dom.window.close(); }
+});
+test('unavailable Task 07 receipt links keep the learner on the current page and preserve the saved check',async()=>{
+  const receipt='MAT-PRE-2026-00001',order='PUR-ORD-00001';
+  const f=lessonFixture(6,{doctype:'Purchase Order',doc:{name:order},is_dirty:()=>false,is_new:()=>false},
+    undefined,{stock:receipt,buying:order});
+  try {
+    await tick();
+    const desk=f.x.frappe,root=f.root(),before=f.x.localStorage.getItem(f.key);
+    let routes=0;
+    desk.set_route=async()=>{routes++;};
+    desk.call=async()=>({message:[]}); // Desk returns HTTP 200 for a missing document.
+    await root.querySelector('#open').onclick();
+    assert.match(root.querySelector('#status').textContent,/could not find Purchase Receipt MAT-PRE-2026-00001.*6\. Receive what arrived/);
+    desk.call=async()=>{throw {status:403};};
+    await root.querySelector(`#trail [title="Open ${receipt}"]`).onclick();
+    assert.match(root.querySelector('#status').textContent,/session could not access Purchase Receipt MAT-PRE-2026-00001/);
+    assert.equal(routes,0);assert.equal(f.x.localStorage.getItem(f.key),before);
+  } finally { f.dom.window.close(); }
+});
+test('Task 06 can replace a stale receipt link only after the new receipt and its order pass their checks',async()=>{
+  const tag='0123456789',order='PUR-ORD-1',old='MAT-PRE-1',name='MAT-PRE-2';
+  const receipt={name,docstatus:1,company:'Training '+tag,supplier:'Training Supplier '+tag,
+    items:[{item_code:'TRAINING-WIDGET-'+tag,qty:4,warehouse:'Stores - '+tag,purchase_order:order}]};
+  let received=0;
+  const f=lessonFixture(5,{doctype:'Purchase Receipt',doc:receipt,is_dirty:()=>false,is_new:()=>false},
+    url=>url.includes('Purchase%20Order')?{per_received:received}:receipt,{buying:order,stock:old});
+  try {
+    await tick();
+    const check=f.root().querySelector('#check'), saved=()=>JSON.parse(f.x.localStorage.getItem(f.key)).done.stock;
+    assert.equal(check.textContent,'Check saved work');
+    check.click();await tick();
+    assert.equal(saved().record,old);
+    assert.match(f.root().querySelector('#status').textContent,/80% received/);
+    received=80;check.click();await tick();
+    assert.equal(saved().record,name);assert.equal(saved().explained,false);
+    assert.equal(f.x.dhimantaiErpGuide.question().kind,'explanation');
+  } finally { f.dom.window.close(); }
+});
 test('with situation-only guidance the bar shows no fields, values, highlights or example help, and never says the form matches',async()=>{
   const doc:any={company:'Training 0123456789',customer:'Training Customer 0123456789',delivery_date:'2026-11-11',docstatus:0,
     items:[{item_code:'TRAINING-WIDGET-0123456789',qty:2,rate:150,delivery_date:'2026-11-11'}]};
@@ -394,7 +559,7 @@ test('a challenge task created from an earlier record opens it without naming th
   assert.match(root.querySelector('#now').textContent,/Send Asha her 2 widgets/);
   f.dom.window.close();
 });
-test('after the prediction, a submitted document shows the ledger and stock entries ERPNext posted for it, inside its document flow',async()=>{
+test('a verified document shows its ledger evidence and explanation without reopening a skipped prediction',async()=>{
   const t='0123456789',doc:any={name:'MAT-PRE-1',company:'Training '+t,supplier:'Training Supplier '+t,docstatus:1,
     items:[{item_code:'TRAINING-WIDGET-'+t,qty:4,rate:100,warehouse:'Stores - '+t,purchase_order:'PUR-ORD-1'}]};
   const asked:string[]=[];
@@ -408,8 +573,7 @@ test('after the prediction, a submitted document shows the ledger and stock entr
   const root=f.root();
   assert.match(root.querySelector('#trail').textContent,/Document flow: Purchase Order PUR-ORD-1 → Purchase Receipt \(this task\)/);
   root.querySelector('#check').click();for(let i=0;i<6;i++)await tick();
-  assert.equal(root.querySelector('#posted').hidden,true,'what ERPNext posted is the answer: it waits for the prediction');
-  root.querySelector('input[name="prediction"][value="1"]').click();root.querySelector('#lock-prediction').click();for(let i=0;i<6;i++)await tick();
+  assert.equal(f.x.dhimantaiErpGuide.question().kind,'explanation');
   const posted=root.querySelector('#posted');
   assert.equal(posted.hidden,false);
   assert.ok(asked.some(u=>u.includes('["voucher_no","=","MAT-PRE-1"]')&&u.includes('["voucher_type","=","Purchase Receipt"]')));
@@ -431,7 +595,7 @@ test('a commitment says that nothing was posted',async()=>{
   const f=lessonFixture(4,{doctype:'Purchase Order',doc,fields_dict:{},is_new:()=>false,is_dirty:()=>false},url=>/GL%20Entry|Stock%20Ledger|\/Bin/.test(url)?[]:doc);await tick();
   const root=f.root();
   root.querySelector('#check').click();for(let i=0;i<6;i++)await tick();
-  root.querySelector('input[name="prediction"][value="0"]').click();root.querySelector('#lock-prediction').click();for(let i=0;i<6;i++)await tick();
+  assert.equal(f.x.dhimantaiErpGuide.question().kind,'explanation');
   assert.match(root.querySelector('#posted').textContent,/Nothing was posted.*A submitted Purchase Order is a commitment/);
   f.dom.window.close();
 });
@@ -465,6 +629,36 @@ test('the finished course closes the books from the general ledger and asks the 
   f.dom.window.close();
 });
 
+test('a restored explanation reconnects its host question while ERP is hidden',async(t)=>{
+  const f=fixture(undefined,course);t.after(()=>f.dom.window.close());await tick();
+  const w=f.w,guide=w.dhimantaiErpGuide,callbacks=new Map<number,Function>(),published:any[]=[];
+  Object.defineProperty(w.document,'hidden',{value:true});
+  w.setInterval=(fn:Function,ms:number)=>{callbacks.set(ms,fn);return ms;};
+  w.frappe.get_route=()=>['Form','Company',w.cur_frm.doc.name];
+  const company={name:'Training 0123456789',default_currency:'INR',default_receivable_account:'Debtors - 0123456789',default_payable_account:'Creditors - 0123456789'};
+  Object.assign(w.cur_frm.doc,company);f.setSaved(company);
+  await guide.continueTask('company');
+  const question=guide.question(),read=w.fetch;
+  let questionId:string|null=null,answer:any;
+  w.fetch=async(url:string,options:any)=>{
+    if(!url.startsWith('http://127.0.0.1:40000'))return read(url,options);
+    if(url.endsWith('/state'))return {ok:true,json:async()=>({connected:true,questionId,answer})};
+    if(url.endsWith('/question')){const q=JSON.parse(options.body).question;questionId=q?.id??null;published.push(q);}
+    return {ok:true,json:async()=>({ok:true})};
+  };
+  w.eval(readFileSync(join(player,'live.js'),'utf8'));await tick();await tick();
+  assert.equal(questionId,question.id,'startup publishes the restored question before visibility polling');
+  questionId=null; // Late pagehide or host reconnect cleared its accepted question.
+  await callbacks.get(3000)!();
+  assert.equal(questionId,question.id,'state reconciliation restores the exact pending question');
+  assert.equal(guide.question().id,question.id,'reconciliation never advances or answers the task');
+  const count=published.length;
+  await callbacks.get(3000)!();assert.equal(published.length,count,'a synchronized question is not resent');
+  answer={id:questionId,answer:'Receivables are what customers owe us; invoices increase the amount owed.'};
+  await callbacks.get(3000)!();await tick();
+  assert.equal(guide.question(),null,'the instructor acknowledgement completes the pending task');
+});
+
 test('Instructor answers and Continue complete the browser round trip without a second chat or a skipped task',async(t)=>{
   const f=fixture(undefined,course);t.after(()=>f.dom.window.close());await tick();
   const w=f.w,guide=w.dhimantaiErpGuide,callbacks=new Map<number,Function>(),requests:any[]=[];
@@ -484,9 +678,12 @@ test('Instructor answers and Continue complete the browser round trip without a 
   const question=requests.find(r=>r.url.endsWith('/question')&&r.body.question)?.body.question;
   assert.equal(question.kind,'explanation');
   const root=guide.root;
-  assert.equal(root.querySelector('#check').textContent,'Answer in Instructor');
-  assert.equal(root.querySelector('#open').hidden,true);
+  assert.equal(root.querySelector('#check').textContent,'Check saved work');
+  assert.equal(root.querySelector('#open').hidden,false);
+  const pendingId=guide.question().id;
   root.querySelector('#check').click();await tick();await tick();
+  assert.equal(guide.question().id,pendingId,'recheck preserves the question that owns the explanation draft');
+  root.querySelector('#open').click();await tick();await tick();
   assert.equal(requests.filter(r=>r.url.endsWith('/focus')).length,1);
   assert.equal(requests.find(r=>r.url.endsWith('/focus')).body.id,question.id);
   assert.equal(requests.some(r=>r.url.endsWith('/help')),false,'opening the reply box never sends a generic help request');
@@ -496,7 +693,7 @@ test('Instructor answers and Continue complete the browser round trip without a 
   assert.ok(root.querySelector('#follow-browser').closest('details'),'sharing settings stay under About this task');
   state={...state,answer:{id:question.id,answer:'Receivables are what customers owe us; an invoice increases the amount owed.'}};
   await callbacks.get(3000)!();await tick();
-  assert.equal(requests.filter(r=>r.url.endsWith('/progress')).length,1);
+  assert.equal(requests.filter(r=>r.url.endsWith('/progress')).at(-1).body.explained,true);
   assert.equal(requests.some(r=>r.url.endsWith('/help')),false,'Instructor already received this answer through chat');
   const opened:string[]=[];w.dhimantaiApp.openNew=async(name:string)=>{opened.push(name);};
   state={...state,taskAction:{id:'continue-1',task:'company'}};
@@ -527,4 +724,59 @@ test('skipping a chapter preserves incomplete tasks, protects unsaved forms and 
   assert.match(await guide.openTask('stock'),/needs an earlier record/);
   assert.match(guide.root.querySelector('#now').textContent,/Finish.*Order from your supplier.*first/);
   assert.deepEqual(opened,['Customer'],'a missing prerequisite is not silently created');
+});
+
+test('disconnected ERPNext reuses Ask Instructor for reconnect without changing saved work',async()=>{
+  const f=fixture(undefined,course);await tick();
+  const w=f.w,guide=w.dhimantaiErpGuide,callbacks=new Map<number,Function>(),requests:any[]=[];
+  try {
+    Object.defineProperty(w.document,'hidden',{value:false});
+    w.setInterval=(fn:Function,ms:number)=>{callbacks.set(ms,fn);return ms;};
+    const company={name:'Training 0123456789',default_currency:'INR',default_receivable_account:'Debtors - 0123456789',default_payable_account:'Creditors - 0123456789'};
+    Object.assign(w.cur_frm.doc,company);f.setSaved(company);
+    const read=w.fetch;
+    w.fetch=async(url:string,options:any)=>{
+      if(!url.startsWith('http://127.0.0.1:40000'))return read(url,options);
+      if(url.endsWith('/state'))return {ok:true,json:async()=>({connected:false,detail:'Browser observation is unavailable.'})};
+      requests.push({url,body:options?.body&&JSON.parse(options.body)});return {ok:true,json:async()=>({ok:true})};
+    };
+    w.eval(readFileSync(join(player,'live.js'),'utf8'));await tick();
+    await guide.continueTask('company');await callbacks.get(3000)!();
+    const q=guide.question(),saved=w.localStorage.getItem(w.localStorage.key(0)),root=guide.root;
+    const retry=root.querySelector('#ask-instructor');
+    assert.equal(retry.textContent,'Reconnect Instructor');assert.equal(retry.disabled,false);
+    assert.equal(root.querySelector('#check').disabled,false);
+    assert.match(root.querySelector('#verification-status').textContent,/Saved work verified.*Explanation pending/);
+    retry.click();await tick();await tick();
+    assert.equal(requests.filter(r=>r.url.endsWith('/reconnect')).length,1);
+    assert.equal(requests.some(r=>r.url.endsWith('/help')),false);
+    assert.equal(w.localStorage.getItem(w.localStorage.key(0)),saved);
+    assert.equal(guide.question().id,q.id);
+    assert.equal(f.fills(),0);
+  }finally{f.dom.window.close();}
+});
+
+test('slow saved-check persistence cannot overwrite a later explanation acknowledgement',async()=>{
+  const f=fixture(undefined,course);await tick();
+  const w=f.w,guide=w.dhimantaiErpGuide,progress:any[]=[];let release:()=>void=()=>{};
+  try {
+    const company={name:'Training 0123456789',default_currency:'INR',default_receivable_account:'Debtors - 0123456789',default_payable_account:'Creditors - 0123456789'};
+    Object.assign(w.cur_frm.doc,company);f.setSaved(company);
+    const read=w.fetch;
+    w.fetch=async(url:string,options:any)=>{
+      if(!url.startsWith('http://127.0.0.1:40000'))return read(url,options);
+      if(url.endsWith('/progress')) {
+        progress.push(JSON.parse(options.body));
+        if(progress.length===1)await new Promise<void>(resolve=>{release=resolve;});
+      }
+      return {ok:true,json:async()=>({ok:true,connected:true})};
+    };
+    w.eval(readFileSync(join(player,'live.js'),'utf8'));await tick();
+    await guide.continueTask('company');await tick();
+    await guide.answerQuestion(guide.question().id,'Receivables are what customers owe; payables are what we owe suppliers.');await tick();
+    assert.equal(progress.length,1);assert.equal(progress[0].explained,false);
+    release();await tick();
+    assert.equal(progress.length,2);assert.equal(progress[1].explained,true);
+    assert.equal(progress[1].checkedAt,progress[0].checkedAt);
+  }finally{release();f.dom.window.close();}
 });

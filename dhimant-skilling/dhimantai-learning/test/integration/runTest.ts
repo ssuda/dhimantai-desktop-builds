@@ -15,7 +15,8 @@ const VSCODE_VERSION = process.env.VSCODE_TEST_VERSION ?? '1.106.3';
 async function main() {
   const testCourses = ['suiteCourseRuntimes', 'suiteCourseRecovery'].includes(process.argv[2]);
   const testPractice = process.argv[2] === 'suiteExternalProgramming';
-  const server = ['suiteB2c', 'suiteCatalogWelcome', 'suiteSignup'].includes(process.argv[2]) ? new B2cServer() : new ContractServer(testCourses || process.argv[2] === 'suiteColab' ? ['Python','Build an LLM from Scratch'] : undefined);
+  const server = process.argv[2] === 'suiteFirstLesson' ? new B2cServer({id:'data-science-python',title:'Data Science with Python'}, [{id:'c-programming',title:'C Programming'}])
+    : ['suiteB2c', 'suiteCatalogWelcome', 'suiteSignup'].includes(process.argv[2]) ? new B2cServer() : new ContractServer(testCourses || process.argv[2] === 'suiteColab' ? ['Python','Build an LLM from Scratch'] : undefined);
   const url = await server.start();
   const root = resolve(__dirname, '../../..');
   const results = join(mkdtempSync(join(tmpdir(), 'dhimantai-vscode-')), 'results.json');
@@ -70,13 +71,13 @@ async function main() {
         '--user-data-dir', userData,
         '--use-inmemory-secretstorage', ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : []),
         // The UX audit drives the real window and screenshots it through Chrome's debugging protocol.
-        ...(['suiteComposerShortcut', 'suiteLearningVideo', 'suiteStudy', 'suiteStudyDocuments', 'suiteStudyRegressions', 'suiteStudyExperience', 'suiteStudyCrop', 'suiteStudyConversation', 'suitePracticeUx', 'suiteGeneratedPractice', 'suiteNotebookCoachHistory', 'suiteNotebookCoachChat', 'suiteProjectCoach', 'suiteProjectCompletion'].includes(process.argv[2]) ? ['--remote-debugging-port=' + (process.env.DHIMANTAI_CDP_PORT ?? '9339'), '--window-size=1440,900'] : [])],
+        ...(['suiteFirstLesson', 'suiteComposerShortcut', 'suiteLearningVideo', 'suiteStudy', 'suiteStudyDocuments', 'suiteStudyRegressions', 'suiteStudyExperience', 'suiteStudyCrop', 'suiteStudyConversation', 'suitePracticeUx', 'suiteGeneratedPractice', 'suiteNotebookCoachHistory', 'suiteNotebookCoachChat', 'suiteProjectCoach', 'suiteProjectCompletion'].includes(process.argv[2]) ? ['--remote-debugging-port=' + (process.env.DHIMANTAI_CDP_PORT ?? '9339'), '--window-size=1440,900'] : [])],
       extensionTestsEnv: {
         DHIMANTAI_TEST_ENVIRONMENT: JSON.stringify(process.argv[2] === 'suiteLearningVideo' ? ENVIRONMENTS.staging
           : { apiUrl: url, supabaseUrl: url, supabaseAnonKey: 'test-anon-key' }),
         DHIMANTAI_TEST_SERVER: url,
         DHIMANTAI_TEST_WELCOME: process.argv[2] === 'suiteCatalogWelcome' ? '1' : '0',
-        DHIMANTAI_TEST_COURSES: testCourses || testPractice ? '1' : '0',
+        DHIMANTAI_TEST_COURSES: testCourses || testPractice || process.argv[2] === 'suiteColab' ? '1' : '0',
         DHIMANTAI_TEST_LEARNING_WORKSPACE: testPractice ? '1' : '0',
         DHIMANTAI_TEST_RESULTS: results,
         DHIMANTAI_CDP_PORT: process.env.DHIMANTAI_CDP_PORT ?? '9339',

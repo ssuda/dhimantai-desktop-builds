@@ -41,11 +41,22 @@ test('loopback observation requires the exact ERP origin, launch token and curre
     assert.equal(saved.customer,undefined);
     assert.equal((await post(observation())).status,200);assert.equal(events.length,1);
     assert.equal(learning.latest('account-b','staging'),undefined);
+    assert.equal(learning.progress('account-b','staging'),undefined);
+    assert.equal(learning.progress('account-a','production'),undefined);
+    assert.equal(learning.progress('account-a','staging')?.tasks[0].status,'completed');
+    assert.equal(events.at(-1).progress.tasks[0].status,'completed','the Instructor receives verified task status with observations');
+    assert.equal(events.at(-1).progress.tasks[1].status,'not_started','a rejected record never becomes completion');
     const question={id:'company:explanation:check-1',task:'company',kind:'explanation',title:'Company accounts',
       question:'What changes when you bill a customer?',context:'Saved record: Training 0123456789',options:[],minLength:30,maxLength:500};
     const publish=(question:unknown)=>fetch(url+'/question',{method:'POST',headers,body:JSON.stringify({question})});
     assert.equal((await publish({...question,task:'unrelated'})).status,400);
     assert.equal((await publish(question)).status,200);
+    assert.equal((await (await fetch(url+'/state',{headers})).json() as any).questionId,question.id);
+    const reconnect=()=>fetch(url+'/reconnect',{method:'POST',headers,body:'{}'});
+    assert.equal((await reconnect()).status,200);
+    assert.equal(events.at(-1).reconnect,true);
+    assert.equal(learning.latest('account-a','staging')?.reconnect,undefined,'polling never replays a reconnect');
+    assert.equal(saved.company.explained,true,'reconnect preserves verified work');
     assert.equal(learning.latest('account-a','staging')?.question?.id,question.id);
     const focus=(id:string,extra={})=>fetch(url+'/focus',{method:'POST',headers:{...headers,...extra},body:JSON.stringify({id})});
     assert.equal((await focus('old-question')).status,409);
@@ -63,6 +74,7 @@ test('loopback observation requires the exact ERP origin, launch token and curre
     assert.equal((await publish(null)).status,200);
     assert.equal((await focus(question.id)).status,409);
     assert.equal((await (await fetch(url+'/state',{headers})).json() as any).answer,undefined);
+    assert.equal((await (await fetch(url+'/state',{headers})).json() as any).questionId,null);
     assert.equal(await learning.continueTask('account-b','staging','company'),false);
     assert.equal(await learning.continueTask('account-a','staging','old-task'),false);
     assert.equal(await learning.continueTask('account-a','staging','company'),true);
@@ -85,6 +97,33 @@ test('loopback observation requires the exact ERP origin, launch token and curre
     assert.equal((await post(observation(1))).status,409);
     current=false;assert.equal((await post(observation(3))).status,410);
     assert.equal((await fetch(url+'/course',{headers})).status,410);
-    assert.equal(events.length,6);
+    assert.equal(events.length,7);
   }finally{subscription.dispose();await learning.stop();}
+});
+
+test('customer brief identifies the training record and only verified saves produce a receipt',async()=>{
+  const learning=new BrowserLearning(), saved:Record<string,any>={};let accept=false;
+  try {
+    const params=new URLSearchParams(await learning.start({origin:'http://127.0.0.1:43210',account:'a',environment:'staging',
+      learner:'0123456789abcdef0123',tasks,current:async()=>true,verified:()=>saved,
+      recordVerified:async(task,record)=>{if(!accept)return false;saved[task]=record;return true;}}));
+    const url='http://127.0.0.1:'+params.get('bridge'),headers={Origin:'http://127.0.0.1:43210',
+      Authorization:'Bearer '+params.get('token'),'Content-Type':'application/json'};
+    const send=(path:string,body:unknown)=>fetch(url+path,{method:'POST',headers,body:JSON.stringify(body)});
+    const obs={...observation(),task:'customer',doctype:'Customer',record:'Training Customer 0123456789',
+      route:'Form/Customer/Training Customer 0123456789',fields:{customer_name:'Training Customer 0123456789'}};
+    await send('/observe',obs);
+    const brief=learning.latest('a','staging')!.brief!;
+    assert.match(brief.text,/Training Customer 0123456789/);assert.match(brief.text,/ERPNext's \*\*Customer\*\* view/);
+    assert.match(brief.text,/Continue to check/);assert.doesNotMatch(brief.text,/Commercial|customer_group/);
+    const claim={task:'customer',record:obs.record,checkedAt:'2026-11-13T10:00:00Z',assisted:false,explained:false};
+    assert.equal((await send('/progress',claim)).status,409);
+    assert.equal(learning.latest('a','staging')!.brief!.title,brief.title);
+    accept=true;assert.equal((await send('/progress',claim)).status,200);
+    const receipt=learning.latest('a','staging')!.brief!;
+    assert.equal(receipt.title,'Saved record verified');assert.match(receipt.text,/Customer: Training Customer 0123456789/);
+    assert.match(receipt.text,/Complete the explanation/);
+    await send('/observe',{...obs,sequence:2,dirty:true});
+    assert.notEqual(learning.latest('a','staging')!.brief!.title,'Saved record verified');
+  } finally {await learning.stop();}
 });

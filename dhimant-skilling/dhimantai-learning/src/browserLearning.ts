@@ -3,23 +3,32 @@ import {createServer, IncomingMessage, Server, ServerResponse} from 'node:http';
 import {createHash, randomBytes, timingSafeEqual} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import type {EnvironmentName} from './environments';
+import type {BusinessShift} from './erpShift';
+import {BrowserDemonstration,DemonstrationResult,validDemonstration,validDemonstrationResult} from './browserDemonstration';
+import {resolveTask} from './apps/verifier';
+import {browserCourseProgress, BrowserCourseProgress, ERP_COURSE} from './browserCourseProgress';
+export {ERP_COURSE} from './browserCourseProgress';
 
-export const ERP_COURSE = 'ERPNext Essentials';
 /** Guided ERPNext tasks in the bundled course. */
 export const ERP_TASK_TOTAL = 18;
-export interface BrowserTask {id:string; doctype:string; instructorChapter:string; steps:{field:string; value:unknown}[]}
+export interface BrowserTask {id:string; doctype:string; instructorChapter:string; steps:{field:string; value:unknown}[];
+  title?:string; scenario?:string; readOnly?:boolean; guidance?:string}
 export interface BrowserObservation {
   sequence:number; course:string; task:string; step:number; training_tag:string;
   route:string; doctype:string; record:string; dirty:boolean; docstatus:number|null;
   fields:Record<string,unknown>; errors:string[];
   action:'view'|'edit'|'check'|'help'|'save'|'next'; result:'matched'|'mismatch'|'not_saved'|null;
+  shift?: {id:'first-business-shift'; snapshot:string; failures:number; helpRequests:number; support:'brief'|'evidence'|'navigation'; completed:string[]};
 }
-export interface BrowserUpdate {account:string; environment:EnvironmentName; chapter:string; observation:BrowserObservation|null; help?:string; question?:BrowserQuestion|null; taskStatus?:string; focusQuestion?:string}
+export interface BrowserUpdate {account:string; environment:EnvironmentName; chapter:string; observation:BrowserObservation|null; progress?:BrowserCourseProgress; help?:string; question?:BrowserQuestion|null; taskStatus?:string; focusQuestion?:string; reconnect?:boolean; brief?:{id:string; title:string; text:string}}
 /** A task whose saved record matched; explained once the learner has also explained their decision. */
 export interface VerifiedTask {record:string; checkedAt:string; assisted:boolean; explained:boolean}
 interface Scope {origin:string; account:string; environment:EnvironmentName; learner:string; tasks:BrowserTask[]; current:()=>Promise<boolean>;
   /** The practical course these tasks belong to; ERPNext Essentials when omitted. */
-  course?:{id:string; title:string; /** Replaces the closing statement's title; {{company}} is the learner's company. */ finale?:string};
+  course?:{id:string; title:string; /** Replaces the closing statement's title; {{company}} is the learner's company. */ finale?:string; shift?:BusinessShift};
+  handover?:()=>{text:string; recorded:string; at:string}|undefined;
+  recordHandover?:(text:string,recorded:string)=>Promise<boolean>;
+  recordAction?:(action:BrowserDemonstration,result:DemonstrationResult)=>void;
   /** The learner's own training login, handed only to the launch page on the training origin. */
   signIn?:{usr:string; pwd:string};
   verified?:()=>Record<string,VerifiedTask>;
@@ -31,7 +40,7 @@ const scalar = (x:unknown) => x===null || typeof x==='boolean' || typeof x==='nu
 
 /** Only authored training fields can leave the ERPNext page; never arbitrary DOM, cookies or passwords. */
 export function browserObservation(raw:unknown,tasks:BrowserTask[],course='erpnext-essentials'):BrowserObservation|undefined {
-  if(!object(raw) || Object.keys(raw).sort().join(',')!==['sequence','course','task','step','training_tag','route','doctype','record','dirty','docstatus','fields','errors','action','result'].sort().join(','))return;
+  if(!object(raw) || Object.keys(raw).sort().join(',')!==['sequence','course','task','step','training_tag','route','doctype','record','dirty','docstatus','fields','errors','action','result',...(raw.shift===undefined?[]:['shift'])].sort().join(','))return;
   const task=tasks.find(t=>t.id===raw.task);
   if(!task || raw.course!==course || !Number.isSafeInteger(raw.sequence) || raw.sequence<1
       || !Number.isInteger(raw.step) || raw.step<0 || raw.step>=task.steps.length
@@ -39,6 +48,15 @@ export function browserObservation(raw:unknown,tasks:BrowserTask[],course='erpne
       || ![null,0,1,2].includes(raw.docstatus) || !['view','edit','check','help','save','next'].includes(raw.action)
       || ![null,'matched','mismatch','not_saved'].includes(raw.result) || !object(raw.fields)
       || !Array.isArray(raw.errors) || raw.errors.length>3 || !raw.errors.every((v:unknown)=>text(v,500)))return;
+  if(raw.shift!==undefined) {
+    const s=raw.shift;
+    if(course!=='erpnext-essentials' || !object(s) || Object.keys(s).sort().join(',')!=='completed,failures,helpRequests,id,snapshot,support'
+      || s.id!=='first-business-shift' || !['stock','payables','delivery','receivables'].includes(raw.task)
+      || typeof s.snapshot!=='string' || !/^[a-f0-9]{32}$/.test(s.snapshot)
+      || ![s.failures,s.helpRequests].every(n=>Number.isInteger(n)&&n>=0&&n<=99)
+      || !['brief','evidence','navigation'].includes(s.support) || !Array.isArray(s.completed) || s.completed.length>4
+      || new Set(s.completed).size!==s.completed.length || !s.completed.every(id=>['stock','payables','delivery','receivables'].includes(id)))return;
+  }
   for(const [name,value] of Object.entries(raw.fields)) {
     const field=task.steps.find(s=>s.field===name);
     if(!field)return;
@@ -62,10 +80,42 @@ export class BrowserLearning {
   private answer?:{id:string; answer:string};
   private taskAction?:{id:string; task:string; kind?:'open'};
   private taskStatus='';
+  private demonstration?:{command:BrowserDemonstration&{expiresAt:number};finish:(result:DemonstrationResult)=>void};
+  private demonstrations=new Map<string,Promise<DemonstrationResult>>();
   private connection={connected:false,detail:'Open Instructor to begin live help.'};
   private events=new EventEmitter();
   onUpdate(listener:(event:BrowserUpdate)=>void) {this.events.on('update',listener);return {dispose:()=>this.events.off('update',listener)};}
   latest(account:string,environment:EnvironmentName) {return this.update?.account===account && this.update.environment===environment?this.update:undefined;}
+  progress(account:string,environment:EnvironmentName) {
+    const scope=this.scope;
+    return scope?.account===account && scope.environment===environment
+      ? browserCourseProgress(scope.tasks,scope.verified?.()??{}) : undefined;
+  }
+  async demonstrate(account:string,environment:EnvironmentName,request:unknown):Promise<DemonstrationResult> {
+    const reject=(message:string):DemonstrationResult=>({status:'rejected',message});
+    const scope=this.scope;
+    if(!scope||scope.account!==account||scope.environment!==environment||!scope.course?.shift||!validDemonstration(request))return reject('No active business shift for this action.');
+    if(!await scope.current()||this.scope!==scope)return reject('The training account changed.');
+    const previous=this.demonstrations.get(request.id);if(previous)return previous;
+    if(this.demonstrations.size>=64)return reject('The demonstration budget for this launch is exhausted. Reopen the shift to continue.');
+    const observed=this.update?.observation;
+    if(this.demonstration||this.taskAction||!this.connection.connected||observed?.task!==request.task||observed.shift?.snapshot!==request.snapshot)
+      return reject('The current form or connection changed. Use the latest observation.');
+    let complete!:(result:DemonstrationResult)=>void;
+    const promise=new Promise<DemonstrationResult>(resolve=>{complete=resolve;});
+    this.demonstrations.set(request.id,promise);
+    const started=Date.now();
+    const timer=setTimeout(()=>finish({status:'uncertain',message:'The demonstration timed out. Inspect the form; the action will not be retried automatically.'}),10000);
+    const finish=(result:DemonstrationResult)=>{
+      if(this.demonstration?.command.id!==request.id)return;
+      clearTimeout(timer);this.demonstration=undefined;
+      const measured={...result,duration_ms:Date.now()-started};
+      try{scope.recordAction?.(request,measured);}catch{}
+      complete(measured);
+    };
+    this.demonstration={command:{...request,expiresAt:started+8500},finish};
+    return promise;
+  }
   async answerQuestion(account:string,environment:EnvironmentName,id:string,answer:unknown) {
     const scope=this.scope, question=this.question;
     if(!scope || scope.account!==account || scope.environment!==environment || question?.id!==id
@@ -75,21 +125,24 @@ export class BrowserLearning {
   }
   async continueTask(account:string,environment:EnvironmentName,task:string) {
     const scope=this.scope;
-    if(!scope || scope.account!==account || scope.environment!==environment || this.update?.observation?.task!==task
+    if(!scope || this.demonstration || scope.account!==account || scope.environment!==environment || this.update?.observation?.task!==task
       || !await scope.current() || this.scope!==scope || this.update?.observation?.task!==task)return false;
     if(!this.taskAction)this.taskAction={id:randomBytes(16).toString('hex'),task};
     return this.taskAction.task===task;
   }
   async chooseChapter(account:string,environment:EnvironmentName,chapter:string) {
     const scope=this.scope,task=scope?.tasks.find(t=>t.instructorChapter===chapter);
-    if(!scope || !task || scope.account!==account || scope.environment!==environment || this.taskAction
+    if(!scope || !task || this.demonstration || scope.account!==account || scope.environment!==environment || this.taskAction
         || !await scope.current() || this.scope!==scope || this.taskAction)return false;
     // Navigation changes neither saved evidence nor completion. The player checks
     // for unsaved work before moving both panels to the selected chapter.
     this.taskAction={id:randomBytes(16).toString('hex'),task:task.id,kind:'open'};return true;
   }
   setConnection(account:string,environment:EnvironmentName,connected:boolean,detail:string) {
-    if(this.scope?.account===account && this.scope.environment===environment)this.connection={connected,detail:detail.slice(0,180)};
+    if(this.scope?.account===account && this.scope.environment===environment) {
+      this.connection={connected,detail:detail.slice(0,180)};
+      if(!connected)this.demonstration?.finish({status:'interrupted',message:'Instructor disconnected. Control is with the student.'});
+    }
   }
   async start(scope:Scope) {
     if(!/^http:\/\/127\.0\.0\.1:\d+$/.test(scope.origin) || !/^[a-f0-9]{20}$/.test(scope.learner))throw new Error('Invalid training origin.');
@@ -104,7 +157,30 @@ export class BrowserLearning {
   private emit(observation:BrowserObservation|null,help?:string) {
     const scope=this.scope;if(!scope)return;
     const task=scope.tasks.find(t=>t.id===observation?.task);
-    this.update={account:scope.account,environment:scope.environment,chapter:task?.instructorChapter??this.update?.chapter??scope.tasks[0].instructorChapter,observation,question:this.question,taskStatus:this.taskStatus,...(help?{help}:{})};
+    const situation=scope.course?.shift&&task?(task as BrowserTask&{business?:BusinessShift['situations'][string]}).business:undefined;
+    const personalized=situation&&resolveTask(situation,scope.learner.slice(0,10),Object.fromEntries(Object.entries(scope.verified?.()||{}).map(([k,v])=>[k,v.record])));
+    let brief=personalized?{id:scope.learner+':'+task!.id,title:personalized.title,
+      text:[scope.course!.shift!.brief.replaceAll('{{company}}','Training '+scope.learner.slice(0,10)),personalized.brief,
+        ...personalized.documents.map(d=>`**${d.title}:** ${d.text}`),'Work in ERPNext. Ask Instructor to demonstrate when needed; use Continue here to review your saved work.'].join('\n\n')}:undefined;
+    if (!brief && task?.scenario && (!scope.course || scope.course.id === 'erpnext-essentials')) {
+      const scenario = task.scenario.replaceAll('{{tag}}', scope.learner.slice(0,10))
+        .replaceAll('{{company}}', 'Training ' + scope.learner.slice(0,10));
+      brief = {id:scope.learner+':'+task.id, title:task.title || task.doctype,
+        text:scenario + '\n\n' + (task.guidance === 'none' ? '' : `Work in ERPNext's **${task.doctype}** view. `)
+          + (task.readOnly ? 'Inspect the existing record; this task does not need a new record.'
+            : 'Complete the record described above and save it. Submit only when the task asks for a submitted transaction.')
+          + ' Return to Instructor and use Continue to check the saved result.'};
+    }
+    const verified = task && scope.verified?.()[task.id];
+    if (task && verified && observation?.record === verified.record && !observation.dirty) {
+      brief = {id:scope.learner+':'+task.id+':verified:'+verified.record, title:'Saved record verified',
+        text:`**${task.doctype}: ${verified.record}** matched this task's saved-record checks at ${verified.checkedAt}. `
+          + (verified.explained ? 'Your explanation is recorded. Continue when ready.' : 'The record check passed. Complete the explanation with Instructor before continuing.')};
+    }
+    const handover=scope.course?.shift&&scope.handover?.();
+    if(handover&&task?.id===scope.course!.shift!.live.at(-1))brief={id:scope.learner+':handover:'+handover.at,title:'Your saved handover',
+      text:handover.text+'\n\n**ERPNext evidence at handover:**\n\n'+handover.recorded+'\n\nSaved as practice evidence. Review Instructor’s feedback on your reasoning.'};
+    this.update={account:scope.account,environment:scope.environment,chapter:task?.instructorChapter??this.update?.chapter??scope.tasks[0].instructorChapter,observation,progress:this.progress(scope.account,scope.environment),question:this.question,taskStatus:this.taskStatus,...(help?{help}:{}),...(brief?{brief}:{})};
     this.events.emit('update',this.update);
   }
   private async handle(req:IncomingMessage,res:ServerResponse) {
@@ -119,14 +195,36 @@ export class BrowserLearning {
     if(!await scope.current() || this.scope!==scope)return reply(410);
     if(req.method==='GET' && req.url==='/course')return reply(200,{id:scope.course?.id??'erpnext-essentials',title:scope.course?.title??ERP_COURSE,
       version:createHash('sha256').update(JSON.stringify(scope.tasks)).digest('hex').slice(0,16),lessons:scope.tasks,verified:scope.verified?.()??{},
-      ...(scope.course?.finale?{finale:scope.course.finale}:{})});
+      ...(scope.course?.finale?{finale:scope.course.finale}:{}),...(scope.course?.shift?{shift:scope.course.shift,handover:scope.handover?.()}: {})});
     if(req.method==='POST' && req.url==='/signin')return scope.signIn?reply(200,scope.signIn):reply(404);
-    if(req.method==='GET' && req.url==='/state')return reply(200,{...this.connection,...(this.answer?{answer:this.answer}:{}),...(this.taskAction?{taskAction:this.taskAction}:{})});
-    if(req.method!=='POST' || !['/observe','/help','/progress','/question','/focus','/continue-result'].includes(req.url??''))return reply(404);
+    if(req.method==='GET' && req.url==='/state')return reply(200,{...this.connection,questionId:this.question?.id??null,...(this.answer?{answer:this.answer}:{}),...(this.taskAction?{taskAction:this.taskAction}:{}),...(this.demonstration?{demonstration:this.demonstration.command}:{})});
+    if(req.method!=='POST' || !['/observe','/help','/progress','/question','/focus','/reconnect','/continue-result','/handover','/status','/demonstration-result'].includes(req.url??''))return reply(404);
     let size=0;const chunks:Buffer[]=[];
     for await(const chunk of req) {size+=chunk.length;if(size>16000)return reply(413);chunks.push(chunk);}
     let body;try{body=JSON.parse(Buffer.concat(chunks).toString());}catch{return reply(400);}
     if(!await scope.current() || this.scope!==scope)return reply(410);
+    if(req.url==='/status') {
+      if(!scope.course?.shift||!object(body)||Object.keys(body).join()!=='status'||!text(body.status,600))return reply(400);
+      this.taskStatus=body.status;this.emit(this.update?.observation??null);return reply(200,{ok:true});
+    }
+    if(req.url==='/demonstration-result') {
+      if(!object(body)||!text(body.id,32))return reply(400);
+      const {id,...result}=body;
+      if(!validDemonstrationResult(result))return reply(400);
+      if(this.demonstration?.command.id===id)this.demonstration.finish(result);
+      // Late acknowledgements never replay an action or change a timeout into success.
+      return this.demonstrations.has(id)?reply(200,{ok:true}):reply(409);
+    }
+    if(req.url==='/handover') {
+      if(!scope.course?.shift || !scope.recordHandover || !object(body) || Object.keys(body).sort().join(',')!=='recorded,text'
+        || !text(body.text,800) || body.text.trim().length<40 || !text(body.recorded,2000))return reply(400);
+      return await scope.recordHandover(body.text.trim(),body.recorded)?reply(200,{ok:true}):reply(409,{verified:false});
+    }
+    if(req.url==='/reconnect') {
+      if(!object(body) || Object.keys(body).length || !this.update?.observation)return reply(409);
+      // An explicit request changes only the Instructor transport. Saved ERPNext work stays intact.
+      this.events.emit('update',{...this.update,reconnect:true});return reply(200,{ok:true});
+    }
     if(req.url==='/focus') {
       if(!object(body) || Object.keys(body).join()!=='id' || !this.question || body.id!==this.question.id
           || !this.update?.observation || this.question.task!==this.update.observation.task)return reply(409);
@@ -150,6 +248,9 @@ export class BrowserLearning {
           || !text(body.record,160) || !body.record || !text(body.checkedAt,40) || Number.isNaN(Date.parse(body.checkedAt))
           || typeof body.assisted!=='boolean' || typeof body.explained!=='boolean')return reply(400);
       const accepted=await scope.recordVerified?.(body.task,{record:body.record,checkedAt:body.checkedAt,assisted:body.assisted,explained:body.explained});
+      if(!await scope.current() || this.scope!==scope)return reply(410);
+      const observed = this.update?.observation;
+      if (accepted !== false && observed && observed.task === body.task) this.emit(observed);
       return accepted===false?reply(409,{verified:false}):reply(200,{ok:true});
     }
     if(req.url==='/help') {
@@ -162,11 +263,13 @@ export class BrowserLearning {
     }
     const observation=browserObservation(body,scope.tasks,scope.course?.id);
     if(!observation || observation.training_tag!==scope.learner.slice(0,10))return reply(400);
+    if(!!observation.shift!==!!scope.course?.shift)return reply(400);
     if(observation.sequence<=this.sequence)return reply(409);
     if(this.question?.task!==observation.task){this.question=null;this.answer=undefined;this.taskStatus='';}
     this.sequence=observation.sequence;this.emit(observation);return reply(200,{ok:true});
   }
   async stop() {
+    this.demonstration?.finish({status:'interrupted',message:'The training session ended. Control is with the student.'});this.demonstrations.clear();
     this.question=null;this.answer=undefined;this.taskAction=undefined;this.taskStatus='';this.emit(null);this.scope=undefined;this.token='';this.update=undefined;
     this.connection={connected:false,detail:'Instructor is not connected.'};
     const server=this.server;this.server=undefined;

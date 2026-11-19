@@ -32,7 +32,7 @@ export function registerCapstone(context: vscode.ExtensionContext) {
     if (!project) return;
     let destination = '';
     try {
-      const parent = await vscode.commands.executeCommand<vscode.Uri>('dhimantai.setupCourse');
+      const parent = await vscode.commands.executeCommand<vscode.Uri>('dhimantai.setupCourse', {kind: 'bundledProject', projectId: project.id});
       if (!parent) return;
       destination = join(parent.fsPath, project.id === 'shelf' ? 'shelf-capstone' : project.id === 'course-agent' ? 'course-research-agent' : project.id);
       const media = vscode.Uri.joinPath(context.extensionUri, 'media').fsPath;

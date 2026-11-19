@@ -6,6 +6,7 @@
   async function boot() {
     const guide=window.dhimantaiErpGuide;
     if(!guide)return setTimeout(boot,500);
+    if(guide.headless)return; // The business shift owns its transport; no controls are added to ERPNext.
     let connection;
     try{connection=JSON.parse(sessionStorage.getItem('dhimantai-erpnext-instructor')||'null');}catch{}
     if(!connection || !/^http:\/\/127\.0\.0\.1:\d+$/.test(connection.origin)
@@ -15,6 +16,7 @@
     (root.getElementById('connection-options')||area).insertAdjacentHTML('beforeend','<label><input id="follow-browser" type="checkbox" checked> Share this task’s fields with Instructor</label>');
     const follow=root.getElementById('follow-browser'),status=root.getElementById('live-status'),ask=root.getElementById('ask-instructor');
     let enabled=true,connected=false,sequence=0,latestHash='',lastSent=0,lastError='',problem=false,action='view',result=null;
+    let progress=Promise.resolve();
     let pending=Promise.resolve(),closed=false,questionHash='',questionSync=Promise.resolve(),lastTaskAction,readingState=false;
     const nextSequence=()=>{sequence=Math.max(sequence+1,Date.now()*1000);return sequence;};
     const request=async(path,body)=>{
@@ -56,13 +58,13 @@
       void pending.catch(error=>{connected=false;status.textContent=error.message;});
       return pending;
     }
-    function publishQuestion() {
+    function publishQuestion(force=false) {
       if(!enabled || closed || !guide.question)return Promise.resolve();
       questionSync=questionSync.catch(()=>{}).then(async()=>{
         await observe();
         if(!enabled || closed)return;
         const question=guide.question(),hash=JSON.stringify(question);
-        if(hash===questionHash)return;
+        if(!force && hash===questionHash)return;
         await request('/question',{question});questionHash=hash;
       });
       return questionSync;
@@ -70,7 +72,7 @@
     /** Help is always the learner's choice. A problem only changes what the button offers. */
     function offer(active) {
       problem=active;
-      ask.textContent=active?'Ask Instructor about this':'Ask Instructor';
+      ask.textContent=!connected?'Reconnect Instructor':active?'Ask Instructor about this':'Ask Instructor';
     }
     async function help() {
       if(!enabled || !connected || closed)return;
@@ -82,22 +84,33 @@
         if(!enabled || closed)return;
         await request('/help',{message});
         offer(false);guide.reportStatus('Instructor is answering in the Instructor panel.');
-      }catch(error){guide.reportStatus(error.message);}finally{ask.disabled=!connected||!enabled;}
+      }catch(error){guide.reportStatus(error.message);}finally{offer(problem);ask.disabled=!enabled||reconnecting;}
     }
-    ask.onclick=()=>{void help();};
+    let reconnecting=false;
+    ask.onclick=async()=>{
+      if(connected)return help();
+      if(!enabled || closed || reconnecting)return;
+      reconnecting=true;ask.disabled=true;
+      try {
+        await observe(true);await publishQuestion();
+        await request('/reconnect',{});
+        guide.reportStatus('Reconnecting Instructor. Your draft and verified work are kept; send your answer when connected.');
+      }catch(error){guide.reportStatus(error.message);}
+      finally{reconnecting=false;ask.disabled=!enabled;}
+    };
     window.addEventListener('dhimantai-erp-focus',event=>{
       void (async()=>{
         if(!enabled) {guide.reportStatus('Turn on “Share this task’s fields with Instructor” in About this task to continue.');return;}
         try {
-          await publishQuestion();
+          await publishQuestion(true);
           if(guide.question()?.id!==event.detail.id)return;
           await request('/focus',{id:event.detail.id});
-          guide.reportStatus('Answer in the Instructor message box. Your saved work stays here.');
+          guide.reportStatus('Write your answer in Instructor, then use the send arrow for feedback.');
         }catch(error){guide.reportStatus(error.message);}
       })();
     });
     follow.onchange=()=>{
-      enabled=follow.checked;latestHash='';questionHash='';ask.disabled=!enabled||!connected;
+      enabled=follow.checked;latestHash='';questionHash='';ask.disabled=!enabled||reconnecting;
       if(enabled)void observe(true);
       else {
         status.textContent='Observation paused. No form updates are sent.';
@@ -113,7 +126,9 @@
     });
     window.addEventListener('dhimantai-erp-verified',event=>{
       const {task,record,checkedAt,assisted,explained}=event.detail;
-      void request('/progress',{task,record,checkedAt,assisted,explained:explained===true}).catch(()=>{});
+      // A slow check acknowledgement must never overwrite a later explanation acknowledgement.
+      progress=progress.catch(()=>{}).then(()=>request('/progress',{task,record,checkedAt,assisted,explained:explained===true}));
+      void progress.catch(()=>{guide.reportStatus('Saved on this computer. Reconnect Instructor and check saved work to sync progress.');});
     });
     // The learner's own explanation, in their words, for the Instructor to check: the course's teach-back.
     window.addEventListener('dhimantai-erp-explained',event=>{
@@ -136,6 +151,13 @@
     const stateTimer=setInterval(async()=>{
       if(readingState || closed)return;readingState=true;
       try{const state=await request('/state');connected=state.connected===true;
+        // Navigation and reconnect can clear the host's question after this
+        // page published it. Restore that link even while ERP is behind the
+        // Instructor tab, so an answer remains a task submission.
+        if(enabled && Object.hasOwn(state,'questionId') && state.questionId!==(guide.question()?.id??null)) {
+          await observe(true);
+          await publishQuestion(true);
+        }
         if(enabled && state.answer && guide.answerQuestion) {
           await guide.answerQuestion(state.answer.id,state.answer.answer);
           await publishQuestion();
@@ -152,7 +174,7 @@
         if(enabled)status.textContent=connected?'':typeof state.detail==='string'?state.detail:'Instructor connection changed.';
       }catch(error){connected=false;if(enabled)status.textContent=error.message;}
       finally{readingState=false;}
-      ask.disabled=!connected||!enabled;
+      offer(problem);ask.disabled=!enabled||reconnecting;
     },3000);
     window.addEventListener('pagehide',()=>{
       closed=true;clearInterval(observationTimer);clearInterval(stateTimer);
@@ -161,6 +183,7 @@
         body:JSON.stringify({sequence:nextSequence(),clear:true})}).catch(()=>{});
     });
     void observe(true).catch(()=>{});
+    void publishQuestion().catch(()=>{});
   }
   boot().catch(()=>{});
 })();

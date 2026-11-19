@@ -241,7 +241,7 @@ export function checkQuery(sql: string): {ok: true; sql: string} | {ok: false; r
 
 // ---- Course data --------------------------------------------------------------------------------------------------------
 
-/** The about card shipped with a sample (media/datalab/about.json), or written for an imported file. */
+/** The about card published with a sample in course configuration, or written for an imported file. */
 export interface About {title: string; summary: string; tables?: {name: string; description: string; columns: Record<string, string>}[]; gaps?: string[]; try?: string[]}
 /** One dataset in the course's read-only lab database: a preloaded sample or a learner's imported file. */
 export interface CourseDataset {id: string; title: string; source: 'sample' | 'import'; about: About; tables: TableSchema[]}

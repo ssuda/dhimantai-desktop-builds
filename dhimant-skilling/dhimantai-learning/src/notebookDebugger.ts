@@ -198,7 +198,7 @@ export class NotebookDebugger implements vscode.Disposable {
       if (snapshot.language === 'javascript' || snapshot.language === 'typescript') {
         launch.type = 'pwa-node'; launch.outFiles = [join(folder,'*.js')];
       }
-      if (engine && ['c','rust'].includes(snapshot.language)) {
+      if (engine && ['c','cpp','rust'].includes(snapshot.language)) {
         const wrapper = join(folder,'debug-input.sh');
         await writeFile(wrapper,'#!/bin/sh\nexec "$@" < ' + quote(o.remote + '/stdin.txt') + '\n'); await chmod(wrapper,0o755);
         launch.setupCommands = [{text:'set exec-wrapper ' + quote(o.remote + '/debug-input.sh')}]; launch.stopAtEntry = true;

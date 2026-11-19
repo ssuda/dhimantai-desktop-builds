@@ -5,6 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectContextProblem, publicContextPath, redactSecrets, selectProjectContext } from '../src/projectContext';
 
+test('native mobile source is reviewable while keys and build artifacts stay excluded', () => {
+  for (const path of ['src/Main.kt', 'build.gradle.kts', 'ios/LessonView.swift', 'app/src/main/AndroidManifest.xml'])
+    assert.equal(publicContextPath(path), true, path);
+  for (const path of ['signing.jks', 'local.properties', 'keys/release.xml', 'credentials.kts', 'app.aab', 'app.apk'])
+    assert.equal(publicContextPath(path), false, path);
+});
+
 test('a question retrieves source, matching tests, imported helpers and data ahead of unrelated milestone files', () => {
   const all = new Map<string, string>(Array.from({length: 18}, (_, i) => [`course_agent/unrelated${i}.py`, '# another milestone']));
   all.set('README.md', 'Project brief');
@@ -121,4 +128,11 @@ test('snapshot failures name the file or limit in plain words', async () => {
     assert.match(await projectContextProblem(new Error('Too many public project source, test and fixture files.'), root, undefined),
       /more public source, test and data files than Coach can read \(64\)/);
   } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+test('web service source and named deployment files are reviewable without admitting private files', () => {
+  for (const path of ['node/server.mjs', 'node/tool.cjs', 'ops/Dockerfile.api', 'Dockerfile', 'ops/Caddyfile', 'api/alembic.ini'])
+    assert.equal(publicContextPath(path), true, path);
+  for (const path of ['ops/.env', 'keys/Dockerfile', 'private/Caddyfile', 'secrets/server.mjs', '../Dockerfile', 'ops/Dockerfile.pem', 'ops/Dockerfile.PEM', 'ops/Dockerfile.ENV', 'config.ini', 'node/server.exe'])
+    assert.equal(publicContextPath(path), false, path);
 });

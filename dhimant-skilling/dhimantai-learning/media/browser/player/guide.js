@@ -42,6 +42,11 @@
     if (!response.ok) return;
     const template = await response.text(), tag = match[1].slice(0,10);
     const course = JSON.parse(template.replaceAll('{{tag}}',tag).replaceAll('{{company}}','Training ' + tag));
+    // Business shifts run without any injected UI. The existing Instructor owns their brief and controls.
+    if(course.shift) {
+      if(connected && window.dhimantaiBusinessShift)await window.dhimantaiBusinessShift.start({app,course,connection,user,tag});
+      return;
+    }
     const key = 'dhimantai-browser:' + course.id + ':v' + course.version + ':' + user;
     let state;
     try { state = JSON.parse(localStorage.getItem(key) || '{}'); } catch { state = {}; }
@@ -55,8 +60,11 @@
     const product = app.title || 'the application';
     const resolve = value => JSON.parse(JSON.stringify(value).replaceAll('{{today}}',today)
       .replace(/\{\{ref:([a-z0-9-]+)\}\}/g,(_,id)=>JSON.stringify(state.done[id]?.record ?? '').slice(1,-1)));
-    const firstOpen = Math.max(0, course.lessons.findIndex(l => !finished(l.id)));
-    let index = Number.isInteger(state.lesson) ? Math.max(0,Math.min(course.lessons.length - 1,state.lesson)) : firstOpen;
+    const firstOpen = course.lessons.findIndex(l => !finished(l.id));
+    // Match the Instructor's resume target; a remembered completed task must not
+    // pull it back to an earlier chapter when the first browser observation arrives.
+    let index = connected && firstOpen >= 0 ? firstOpen
+      : Number.isInteger(state.lesson) ? Math.max(0,Math.min(course.lessons.length - 1,state.lesson)) : Math.max(0,firstOpen);
     let revision = 0, checking = false, filling = false, advancing = false, focusStep, lastSignature = '';
     const status = {textContent:''};
     const save = () => { state.lesson = index; try { localStorage.setItem(key,JSON.stringify(state)); } catch { setStatus(`Browser storage is unavailable. Your ${product} records are still saved.`); } };
@@ -64,7 +72,7 @@
     const shadow = host.attachShadow({mode:'open'});
     // Colours come from the application's theme variables when it has them (Frappe names), with neutral fallbacks.
     shadow.innerHTML = `<style>
-      :host{position:fixed;left:0;right:0;bottom:0;z-index:10020;font:13px/1.45 var(--font-stack,system-ui);color:var(--text-color,#171717)}
+      :host{position:fixed;left:0;right:0;bottom:0;z-index:1040;font:13px/1.45 var(--font-stack,system-ui);color:var(--text-color,#171717)}
       :host([data-closed="true"]){left:auto;right:16px;bottom:12px}
       *{box-sizing:border-box}
       section{background:var(--fg-color,#fff);border-top:1px solid var(--border-color,#ededed);box-shadow:0 -4px 16px rgba(0,0,0,.08);padding:8px 16px;max-height:45vh;overflow:auto}
@@ -72,7 +80,7 @@
       .brand{font-weight:600;white-space:nowrap}#count{color:var(--text-muted,#525252);font-size:12px}
       #show-task{border-radius:999px;padding:7px 14px;background:var(--fg-color,#fff);box-shadow:0 2px 12px #0002}
       select,button,textarea{font:inherit;color:inherit;border-radius:var(--border-radius,6px)}
-      select{padding:4px 8px;border:1px solid var(--border-color,#ededed);background:var(--control-bg,#f3f3f3);max-width:280px}
+      select{padding:4px 8px;border:1px solid var(--border-color,#ededed);background:var(--control-bg,#f3f3f3);max-width:min(280px,100%)}
       button{border:1px solid var(--border-color,#ededed);padding:4px 10px;background:var(--btn-default-bg,#f3f3f3);cursor:pointer;white-space:nowrap}
       button.primary{background:var(--btn-primary,var(--primary,#171717));color:var(--neutral,#fff);border-color:transparent}
       button.link{border:0;background:none;padding:0 2px;text-decoration:underline;color:var(--text-muted,#525252)}
@@ -82,11 +90,11 @@
       ol button{border-radius:999px;padding:1px 10px;background:transparent;color:var(--text-muted,#525252)}
       ol button[aria-current="step"]{border-color:var(--primary,#171717);color:var(--text-color,#171717);font-weight:600}
       #now{margin:6px 0 0}#now strong{font-weight:600}#example{font-family:var(--font-stack-monospace,ui-monospace,monospace);overflow-wrap:anywhere}
-      #status{margin:4px 0 0}#status:empty{display:none}
+      #status,#verification-status{margin:4px 0 0}#status:empty,#verification-status:empty{display:none}
       #explain{margin-top:8px;padding:8px 10px;border:1px solid var(--border-color,#ededed);border-radius:var(--border-radius,6px)}
       #explain label{display:block;font-weight:600;margin-bottom:4px}#explain textarea{width:100%;min-height:56px;padding:6px 8px;border:1px solid var(--border-color,#ededed);background:var(--control-bg,#f3f3f3);resize:vertical}
       #explain .row{margin-top:4px}#explain small{color:var(--text-muted,#525252)}
-      details{margin-top:6px;color:var(--text-muted,#525252)}summary{cursor:pointer;width:max-content}details p{margin:4px 0}
+      details{margin-top:6px;color:var(--text-muted,#525252)}summary{cursor:pointer;width:fit-content;max-width:100%}details p{margin:4px 0}
       fieldset{margin:8px 0 0;padding:8px 10px;border:1px solid var(--border-color,#ededed);border-radius:var(--border-radius,6px)}
       legend{font-weight:600;padding:0 4px}fieldset label{display:block;margin:2px 0;cursor:pointer}fieldset .row{margin-top:4px}
       #result{margin:8px 0 0;padding:8px 10px;border-left:3px solid var(--border-color,#ededed)}#result.right{border-color:var(--green-500,#2f9e44)}#result.wrong{border-color:var(--orange-500,#e8590c)}
@@ -105,8 +113,8 @@
       <select id="lesson" aria-label="Course task"></select>
       <span id="count"></span>
       <span class="actions"><button id="toggle" title="Close this panel; your saved progress stays here" aria-controls="task-panel">Close panel ×</button></span></div>
-      <div id="body"><p id="now"></p><p id="trail" hidden></p><details id="field-details"><summary>Fields to check</summary><ol id="steps" aria-label="Fields in this task"></ol></details>
-      <p id="status" role="status" aria-live="polite"></p>
+      <div id="body"><p id="task-sequence" aria-label="Task stages"></p><small>Complete both the saved-record check and your explanation in Instructor. If disconnected, reconnect and retry your saved draft; verified work is kept.</small><p id="now"></p><p id="trail" hidden></p><details id="field-details"><summary>Fields to check</summary><ol id="steps" aria-label="Fields in this task"></ol></details>
+      <p id="verification-status" role="status" aria-live="polite"></p><p id="status" role="status" aria-live="polite"></p>
       <div class="row" style="margin-top:8px"><button id="open" class="primary">Open task</button><button id="check" class="primary">Check saved work</button><button id="fill">Fill this field</button><div id="live"></div></div>
       <fieldset id="predict" hidden><legend id="predict-question"></legend><div id="predict-options"></div>
         <div class="row"><button id="lock-prediction" class="primary" disabled>Lock in my prediction</button><small id="predict-note"></small></div></fieldset>
@@ -133,7 +141,7 @@
       if (scan || !scrollers.length) {
         scrollers = [document.scrollingElement || document.documentElement, ...document.querySelectorAll('.main-section, .layout-main, .page-container, .modal-body, .o_content, .o_action_manager')];
         for (const el of document.querySelectorAll('body *')) {
-          if (el === host || el === outline) continue;
+          if (el === host) continue;
           if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 4) scrollers.push(el);
         }
         scrollers = [...new Set(scrollers)];
@@ -146,9 +154,12 @@
       }
       document.body.style.paddingBottom = height + 'px';
     };
-    const outline = document.createElement('div');
-    Object.assign(outline.style,{position:'fixed',pointerEvents:'none',border:'2px solid var(--primary,#171717)',borderRadius:'6px',zIndex:'10019',display:'none'});
-    document.body.append(outline);
+    // Keep guidance on the field itself: a viewport overlay would paint above
+    // item editors/dialogs even when the highlighted field is behind them.
+    const highlightStyle = document.createElement('style');
+    highlightStyle.textContent = '.dhimantai-guide-field{outline:2px solid var(--primary,#171717);outline-offset:3px}';
+    document.head.append(highlightStyle);
+    let highlighted;
     const raw = () => course.lessons[index];
     const current = () => resolve(raw());
     const lessonOf = id => course.lessons.find(l => l.id === id);
@@ -186,16 +197,21 @@
     /** full: field-by-field help; goals: the situation only; none: an independent challenge. */
     const level = () => raw().guidance || 'full';
     const predicted = () => state.predictions[raw().id];
-    /** Prediction is still open: the task has one, it is unanswered, and either the record is not submitted yet or the check passed without one. */
-    const predicting = () => !!current().predict && !predicted() && (!!state.done[raw().id] || !!form() && !form().final);
+    /** Once evidence is verified, explain it; an after-the-fact guess is not a prediction. */
+    const predicting = () => !!current().predict && !predicted() && !state.done[raw().id] && !!form() && !form().final;
     function highlight(scroll=false) {
-      if (level() !== 'full') { outline.style.display='none'; return; }
       const s=current().steps[step()];
-      if(scroll && form())app.scrollTo(s?.field);
-      const element = form() && s ? app.element(s.field) : undefined, rect = element?.getBoundingClientRect();
-      if (!rect || !rect.width || !rect.height || $('body').hidden) { outline.style.display='none'; return; }
-      if (scroll) element.scrollIntoView({behavior:'smooth',block:'center'});
-      Object.assign(outline.style,{display:'block',left:rect.left-3+'px',top:rect.top-3+'px',width:rect.width+6+'px',height:rect.height+6+'px'});
+      const active = level() === 'full' && !$('body').hidden && form() && s && !complete();
+      if (scroll && active) app.scrollTo(s.field);
+      let element = active ? app.element(s.field) : undefined;
+      const rect = element?.getBoundingClientRect();
+      if (!element?.isConnected || !rect?.width || !rect.height) element=undefined;
+      if (highlighted !== element) {
+        highlighted?.classList.remove('dhimantai-guide-field');
+        highlighted=element;
+        highlighted?.classList.add('dhimantai-guide-field');
+      }
+      if (scroll && element) element.scrollIntoView({behavior:'smooth',block:'center'});
     }
     function render() {
       const lesson = current(), at = step(), s = lesson.steps[at], doc = form()?.values, done = state.done[lesson.id], blocked = missing();
@@ -256,14 +272,28 @@
       if (course.reference) { $('reference').href = course.reference; $('reference').hidden = false; }
       showResult(); showFinale(); if(app.postings)showPosted(); if(!$('finale').hidden)$('posted').hidden=true; showTrail();
       const pendingQuestion=question();
+      const stage = pendingQuestion?.kind==='prediction' ? 'Predict' : done ? 'Explain'
+        : complete() && !form()?.dirty && !form()?.isNew && (!needsFinal() || form()?.final) ? 'Verify' : 'Do';
+      $('task-sequence').replaceChildren();
+      for (const name of ['Predict','Do','Verify','Explain']) {
+        const item=document.createElement(name===stage&&!next?'strong':'span');item.textContent=name;
+        if(name===stage&&!next)item.setAttribute('aria-current','step');
+        if(name==='Predict'&&!lesson.predict)item.textContent='Predict (not required)';
+        if($('task-sequence').childNodes.length)$('task-sequence').append(' → ');
+        $('task-sequence').append(item);
+      }
       if(pendingQuestion && pendingQuestion.kind!=='prediction') {
         now.replaceChildren(pendingQuestion.kind==='reflection'?'One last step: reflect on your results in Instructor.':'Next: explain your decision in Instructor.');
       } else if(pendingQuestion) say(' Before checking, make your prediction in Instructor.');
       else if(next) now.replaceChildren(last?'All course tasks are complete. You can review your work any time.':'Task complete. Open the next task when you are ready.');
       now.hidden=false;
-      $('open').hidden=!!form() || onSource() || !!pendingQuestion || next;
+      const verified=done && done.record===activeRecord();
+      $('verification-status').textContent=verified ? 'Saved work verified · ' + (done.explained?'Explanation sent':'Explanation pending')
+        : done?'Saved work changed or another record is open. Check saved work again.':'';
+      $('open').hidden=!pendingQuestion && (!!form() || onSource() || next);
+      if(pendingQuestion){$('open').textContent='Open answer box';$('open').disabled=false;}
       $('check').hidden=!pendingQuestion && !next && !form();
-      $('check').textContent=advancing?'Opening next task…':checking?'Checking…':pendingQuestion?'Answer in Instructor':next?(last?'Course complete':'Next task'):'Check saved work';
+      $('check').textContent=advancing?'Opening next task…':checking?'Checking…':next?(last?'Course complete':'Next task'):'Check saved work';
       $('check').disabled=checking || advancing || blocked.length>0 || (!pendingQuestion && next && last);
       highlight(); reserve(true);
     }
@@ -274,7 +304,7 @@
       if (box.hidden) return;
       box.className = p.choice === lesson.predict.answer ? 'right' : 'wrong'; box.replaceChildren();
       const head=document.createElement('strong');
-      head.textContent = p.choice === lesson.predict.answer ? 'Your prediction was right. ' : 'Not what you predicted. ';
+      head.textContent = lesson.title + ' · ' + (p.choice === lesson.predict.answer ? 'Your prediction was right. ' : 'Not what you predicted. ');
       box.append(head, `You predicted “${lesson.predict.options[p.choice]}”${p.early?'':' (after submitting)'}. `,
         p.choice === lesson.predict.answer ? '' : `The answer is “${lesson.predict.options[lesson.predict.answer]}”. `, p.actual ? product + ' shows: ' + p.actual : '');
     }
@@ -323,7 +353,7 @@
       const done=state.done[lesson.id], parts=['Document flow: '];
       for(const l of chain){
         const record=state.done[l.id]?.record;
-        parts.push(record?el('button',{className:'link',title:'Open '+record,onclick:()=>{if(app.current()?.dirty){setStatus(`Save or discard your current form in ${product} first.`);return;}void app.openRecord(formOf(l),record);}},`${formOf(l)} ${record}`):`${formOf(l)} (not done)`,' → ');
+        parts.push(record?el('button',{className:'link',title:'Open '+record,onclick:()=>openSaved(l,record)},`${formOf(l)} ${record}`):`${formOf(l)} (not done)`,' → ');
       }
       parts.push(el('span',{className:'here'},formOf(lesson)+(done?' '+done.record:' (this task)')));
       const key=JSON.stringify(parts.map(x=>x.textContent??x));
@@ -416,7 +446,32 @@
       setStatus(connected?'Explanation sent. Your feedback is in Instructor.':'Explanation saved. Open the course from dhimantAI to get the Instructor’s feedback.');
       render();
     };
+    async function openSaved(lesson, record) {
+      const version=revision;
+      if(app.current()?.dirty) {setStatus(`Save or discard your current form in ${product} first.`);return false;}
+      setStatus('');
+      try {
+        await app.openRecord(formOf(lesson),record);
+        return version===revision;
+      } catch(error) {
+        if(version===revision) {
+          const detail=error?.message || `Could not open ${formOf(lesson)} ${record}.`;
+          const recovery=lesson.id!==raw().id ? ` To update the link, open the correct ${formOf(lesson)} and use Check saved work in “${lesson.title}”.` : '';
+          setStatus(detail+recovery);
+        }
+        return false;
+      }
+    }
     $('open').onclick=async()=>{
+      const q=question();
+      if(q) {
+        // After a restart the question survives, but Desk may be on Home. Read
+        // the saved form again so Instructor receives its fields with the answer.
+        if(q.kind==='explanation' && !await reopenCheckedRecord())return false;
+        if(connected)window.dispatchEvent(new CustomEvent('dhimantai-erp-focus',{detail:{id:q.id}}));
+        else setStatus('Open this course from dhimantAI to answer in Instructor. Your progress is saved.');
+        return;
+      }
       const lesson=current();
       if(missing().length)return render();
       if(app.current()?.dirty) {setStatus(`Save or discard your current form in ${product} before opening another task.`);return;}
@@ -424,15 +479,28 @@
       // Reopen the learner's own master record if they created it before, instead of making a duplicate.
       const identity=lesson.identity || ['customer_name','supplier_name','item_code'].find(name=>typeof lesson.expected[name]==='string');
       let record=state.done[lesson.id]?.record || lesson.record;
+      let found=false;
       if(!record && identity && typeof lesson.expected[identity]==='string') try {
         record=await app.find(formOf(lesson),identity,lesson.expected[identity]);
-        if(record)setStatus('You created this record before. It is open, so you can check or correct it.');
+        found=!!record;
       } catch {}
-      if(record) await app.openRecord(formOf(lesson),record);
-      else if(lesson.source) await app.openRecord(formOf(lessonOf(lesson.source.task)),state.done[lesson.source.task].record);
-      else await app.openNew(formOf(lesson));
+      if(record) {
+        if(!await openSaved(lesson,record))return false;
+        if(found)setStatus('You created this record before. It is open, so you can check or correct it.');
+      } else if(lesson.source) {
+        if(!await openSaved(lessonOf(lesson.source.task),state.done[lesson.source.task].record))return false;
+      } else await app.openNew(formOf(lesson));
       setTimeout(()=>{render();highlight(true);},400);
     };
+    async function reopenCheckedRecord() {
+      const lesson=current(),done=state.done[lesson.id],version=revision;
+      if(!done)return false;
+      if(app.current()?.dirty) {
+        setStatus(`Save or discard your current form in ${product} before reopening the checked record.`);return false;
+      }
+      if(activeRecord()!==done.record && !await openSaved(lesson,done.record))return false;
+      return version===revision;
+    }
     $('fill').onclick=async()=>{
       if(filling)return;
       const frm=form(), lesson=current(), at=step(), s=lesson.steps[at];
@@ -464,7 +532,7 @@
         const doc=await read(formOf(lesson), record, lesson.expected);
         if(version!==revision || record!==activeRecord())return false;
         if(!equal(doc,lesson.expected)) {
-          delete state.done[lesson.id];save();
+          if(state.done[lesson.id]?.record===record){delete state.done[lesson.id];save();}
           const wrong=lesson.steps.filter(s=>!stepDone(doc,s)).map(s=>label(s.field));
           if(level()==='none' && wrong.length) {
             setStatus(`Your record does not meet the brief yet (${wrong.length} ${wrong.length===1?'difference':'differences'}). Re-read the situation and compare it with your record.`);
@@ -481,10 +549,16 @@
         // A transaction also changes the records it settles or fulfils; confirm that consequence too.
         for(const extra of lesson.also||[]) {
           const linked=await read(extra.form||extra.doctype, extra.record, extra.expected);
-          if(version!==revision)return false;
-          if(!equal(linked,extra.expected)) {setStatus('Your record matches, but this is not true yet: '+extra.text+' Check the amounts and links, then check again.');activity('check','mismatch');return false;}
+          if(version!==revision || record!==activeRecord())return false;
+          if(!equal(linked,extra.expected)) {
+            if(state.done[lesson.id]?.record===record){delete state.done[lesson.id];save();}
+            setStatus('Your record matches, but this is not true yet: '+extra.text+' Check the amounts and links, then check again.');activity('check','mismatch');return false;
+          }
         }
-        state.done[lesson.id]={record,checkedAt:new Date().toISOString(),assisted:!!state.assisted[lesson.id],explained:false};save();
+        const previous=state.done[lesson.id];
+        // Rechecking the same matching record must not replace its pending question or erase an accepted answer.
+        state.done[lesson.id]=previous?.record===record?previous:{record,checkedAt:new Date().toISOString(),assisted:!!state.assisted[lesson.id],explained:false};save();
+        window.dispatchEvent(new CustomEvent('dhimantai-erp-verified',{detail:{task:lesson.id,...state.done[lesson.id]}}));
         if(predicted() && !predicted().actual){predicted().actual=await evidence(lesson, record);save();}
         const consequences=(lesson.also||[]).map(extra=>' '+extra.text).join('');
         setStatus('Saved work verified.'+consequences);
@@ -493,14 +567,10 @@
       finally{checking=false;render();}
     }
     $('check').onclick=()=>{
-      const q=question();
-      if(q) {
-        if(connected)window.dispatchEvent(new CustomEvent('dhimantai-erp-focus',{detail:{id:q.id}}));
-        else setStatus('Open this course from dhimantAI to answer in Instructor. Your progress is saved.');
-      } else {
-        const wasFinished=finished(raw().id);
-        void continueTask(raw().id).then(message=>{if(wasFinished)setStatus(message);});
-      }
+      const record=activeRecord();
+      if(question() || (record && record!==state.done[raw().id]?.record)){void checkSaved();return;}
+      const wasFinished=finished(raw().id);
+      void continueTask(raw().id).then(message=>{if(wasFinished)setStatus(message);});
     };
     let applyingInstructorAnswer=false;
     function question() {
@@ -545,7 +615,7 @@
         if(form() && activeRecord()!==state.done[task].record)return 'Reopen the checked record or check this record before continuing.';
         if(index===course.lessons.length-1)return 'You have completed the course tasks.';
         advancing=true;nextTask();setPanelClosed(false);
-        try {await $('open').onclick();}
+        try {if(await $('open').onclick()===false)return status.textContent;}
         catch {return 'Continue with '+current().title+'. Use Open task in the browser to open the form.';}
         finally {advancing=false;render();}
         return 'Continue with '+current().title+'.';
@@ -561,7 +631,7 @@
       advancing=true;index=target;focusStep=undefined;revision++;setStatus('');save();setPanelClosed(false);activity('view');
       try {
         if(missing().length)return 'Chapter opened. Its practical task needs an earlier record; see the browser instructions.';
-        await $('open').onclick();
+        if(await $('open').onclick()===false)return status.textContent;
         return 'Chapter opened. Your unfinished tasks remain available in the task list.';
       } catch {return 'Chapter opened. Choose Open task in the browser to retry opening its form.';}
       finally {advancing=false;render();}
@@ -575,6 +645,10 @@
       if(signature!==lastSignature){lastSignature=signature;render();} else {highlight();reserve();}
     },700);
     setPanelClosed(!!state.panelClosed);
+    // Restore only an already saved, pending explanation on an empty Desk.
+    // This opens no new record, sends no answer and never awards completion.
+    if(connected && !app.current() && question()?.kind==='explanation')
+      void reopenCheckedRecord().then(()=>render());
   }
   boot().catch(()=>{});
 })();

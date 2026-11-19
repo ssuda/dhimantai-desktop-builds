@@ -239,3 +239,21 @@ test('late pause acknowledgements and a pause at the final output boundary remai
     assert.equal(m.btn('audio-status').textContent, 'Spoken explanation complete');
   } finally { m.off(); m.dom.window.close(); }
 });
+
+test('Coach speed is sent on playback, and changing it preserves paused speech until the next reply', async () => {
+  const m = mount();
+  try {
+    const speed = m.win.document.querySelector<HTMLSelectElement>('.audio-speed select')!;
+    speed.value = '0.5'; speed.dispatchEvent(new m.win.Event('change')); await tick();
+    m.post({audioId:'one'}); m.btn('audio-toggle').click();
+    m.post({...m.sent.at(-1), type:'audioGrant'}); await m.subscribe();
+    assert.equal(m.sent.at(-1).speed, 0.5);
+    m.rendered('playing'); m.btn('audio-toggle').click(); m.rendered('paused');
+    const sent = m.sent.length;
+    speed.value = '2'; speed.dispatchEvent(new m.win.Event('change')); await tick();
+    assert.equal(m.sent.length, sent);
+    assert.equal(m.btn('audio-toggle').getAttribute('aria-label'), 'Resume spoken explanation');
+    m.post({audioId:'two'}); m.post({...m.sent.at(-1), type:'audioGrant'}); await m.subscribe();
+    assert.equal(m.sent.at(-1).speed, 2);
+  } finally { m.off(); m.dom.window.close(); }
+});

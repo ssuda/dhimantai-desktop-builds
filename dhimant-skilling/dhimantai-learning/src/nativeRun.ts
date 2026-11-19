@@ -32,6 +32,7 @@ export function nativePlan(language: string, argv: string[], tools: Toolchains =
       build: { command: tools.tsc ?? 'tsc', args: ['main.ts', '--strict', '--target', 'ES2022', '--module', 'commonjs', '--sourceMap'], matcher: ['$tsc'] },
       run: { command: tools.node ?? 'node', args: ['main.js', ...argv] },
     };
+    case 'cpp': return { build: { command: tools.cxx ?? 'g++', args: ['-std=c++17', '-Wall', '-Wextra', '-g', 'main.cpp', '-o', out], matcher: ['$gcc'] }, run: { command: exe, args: argv } };
     case 'c': return { build: { command: tools.cc ?? 'gcc', args: ['-std=c17', '-Wall', '-Wextra', '-g', 'main.c', '-o', out, '-lm'], matcher: ['$gcc'] }, run: { command: exe, args: argv } };
     case 'rust': return { build: { command: tools.rustc ?? 'rustc', args: ['--edition=2021', '-g', 'main.rs', '-o', out], matcher: ['$rustc'] }, run: { command: exe, args: argv } };
     case 'go': return { build: { command: tools.go ?? 'go', args: ['build', '-gcflags=all=-N -l', '-o', out, 'main.go'], matcher: ['$go'] }, run: { command: exe, args: argv } };

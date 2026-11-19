@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -35,6 +37,8 @@ root = Path.cwd().resolve()
 sys.path[:0] = ['', str(root)]
 namespace = {'__name__': '__main__'}
 databases = contextlib.ExitStack()
+python_shell = None
+python_profile = None
 lab = None
 lab_setup = None
 lab_failed = False
@@ -42,6 +46,101 @@ sql_db = None
 shell_env = dict(os.environ)
 uploaded_files = {}
 LIMIT = 200000
+
+
+class PythonRuntimeError(RuntimeError):
+    """The notebook could not start; learner code has not run."""
+
+
+class CompilationError(Exception):
+    """The compiler ran and rejected this cell; the program was never launched."""
+    def __init__(self, exit_code):
+        self.exit_code = exit_code
+        super().__init__(f'Compilation failed (exit code {exit_code}).')
+
+
+def notebook_error(error):
+    kafka = sys.modules.get('confluent_kafka')
+    if (isinstance(error, getattr(kafka, 'KafkaException', ())) and error.args
+            and isinstance(error.args[0], kafka.KafkaError)
+            and error.args[0].code() == kafka.KafkaError._ALL_BROKERS_DOWN and shutil.which('kafkalab')):
+        return ('Kafka could not reach a broker (_ALL_BROKERS_DOWN). Check the bootstrap address in your cell. '
+                'For the single-broker course lab, use localhost:9092. '
+                'Open Runtime → Open course terminal and run kafkalab check. '
+                'If the lab broker is stopped, run kafkalab start and wait for "ready": true before rerunning this cell.')
+    native_library = type(error) is OSError and re.search(r'\.so\b|\.dll\b|\.dylib\b|DLL load failed', str(error), re.I)
+    if isinstance(error, ImportError) or native_library:
+        detail = f'{type(error).__name__}: {error}'[:600]
+        # Put the cause first so bounded Instructor context retains the missing package name.
+        return ('Python dependency could not be loaded.\n' + detail + '\n'
+                'For the course container, open Runtime above the notebook → Set up / rebuild course and wait for setup to finish. '
+                'For a connected Python kernel, install the course requirements in that same environment. '
+                'Then use Notebook options (⋯) → Restart runtime and rerun the prerequisite cells and the failed cell. '
+                'If setup already failed, use Runtime → Open course terminal to inspect the setup error before rebuilding again.')
+    return None
+
+
+def notebook_shell():
+    global python_shell, python_profile
+    if python_shell is not None:
+        return python_shell
+    try:
+        from IPython.core.interactiveshell import InteractiveShell
+    except ModuleNotFoundError as error:
+        # Plain local Python remains supported; a broken IPython installation does not.
+        if error.name == 'IPython': return None
+        raise PythonRuntimeError('The Python notebook dependency is incomplete. Choose Set up / rebuild course '
+                                 'in the runtime dropdown, then restart the runtime.\n' + str(error)) from error
+    try:
+        from traitlets.config import Config
+        # Host-mounted homes can contain stale profiles or lack the filesystem
+        # operations IPython needs. Notebook history is already saved by the app.
+        python_profile = tempfile.TemporaryDirectory(prefix='dhimantai-ipython-')
+        config = Config()
+        config.HistoryManager.hist_file = ':memory:'
+        shell = InteractiveShell.instance(user_ns=namespace, ipython_dir=python_profile.name, config=config)
+        shell.colors = 'nocolor'
+        shell.enable_gui = lambda gui=None: None
+        shell.displayhook.write_output_prompt = lambda: None
+        shell.display_pub.publish = lambda data, *args, **kwargs: display(data, raw=True)
+        def formatted(data, *args, **kwargs):
+            if 'text/plain' in data: print(data['text/plain'])
+            if any(mime != 'text/plain' for mime in data): display(data, raw=True)
+        shell.displayhook.write_format_data = formatted
+        original_traceback = shell.showtraceback
+        def showtraceback(exc_tuple=None, *args, **kwargs):
+            error = (exc_tuple or sys.exc_info())[1]
+            message = notebook_error(error)
+            if message:
+                print(message, file=sys.stderr)
+            else:
+                original_traceback(exc_tuple, *args, **kwargs)
+        shell.showtraceback = showtraceback
+        def checked_system(cmd):
+            from IPython.utils.process import system
+            if cmd.rstrip().endswith('&'):
+                raise OSError('Background processes not supported.')
+            # Expand at the learner's frame, just as IPython does; an extra
+            # wrapper around shell.system would lose function-local variables.
+            expanded = shell.var_expand(cmd, depth=1)
+            code = system(expanded)
+            shell.user_ns['_exit_code'] = code
+            if code:
+                raise subprocess.CalledProcessError(code, expanded)
+        # IPython's !commands and %pip normally keep failures in _exit_code,
+        # which is not reflected in ExecutionResult.success.
+        shell.system = checked_system
+        python_shell = shell
+        return shell
+    except Exception as error:
+        InteractiveShell.clear_instance()
+        if python_profile is not None:
+            python_profile.cleanup(); python_profile = None
+        raise PythonRuntimeError(
+            'Python notebook could not start. Your code did not run.\n'
+            'Open Notebook options (⋯) → Restart runtime. If this continues, use Runtime → Set up / rebuild course. '
+            'Check that the runtime has writable temporary storage and free disk space.\n'
+            f'{type(error).__name__}: {error}'[:1000]) from error
 
 
 def emit(**value):
@@ -275,6 +374,102 @@ def database(language, setup=''):
     return sql
 
 
+def java_entrypoint(source):
+    """Choose the source filename and top-level entry class without editing learner code.
+
+    Ignore comments/literals and nested types; javac still validates the program.
+    A public helper can own the filename while another top-level type owns main.
+    """
+    lex = re.compile(r'//[^\r\n]*|/\*[\s\S]*?\*/|'
+                     r'"""(?:\\[\s\S]|(?!""")[\s\S])*"""|'
+                     r'"(?:\\[\s\S]|[^"\\])*"|\'(?:\\[\s\S]|[^\'\\])*\'|'
+                     r'[\w$]+|[^\s]')
+    tokens = [m[0] for m in lex.finditer(source)
+              if not m[0].startswith(('//', '/*', '"', "'"))]
+    types, header, member = [], [], []
+    depth, pending, current, package = 0, None, None, ''
+    identifier = lambda value: bool(re.fullmatch(r'(?:[^\W\d]|\$)[\w$]*', value))
+    for index, token in enumerate(tokens):
+        if depth == 0:
+            if token == 'package':
+                end = next((n for n in range(index + 1, len(tokens)) if tokens[n] == ';'), index)
+                parts = tokens[index + 1:end]
+                if parts and all(identifier(p) if n % 2 == 0 else p == '.' for n, p in enumerate(parts)):
+                    package = ''.join(parts) + '.'
+            if token in {'class', 'interface', 'enum', 'record'} and index + 1 < len(tokens):
+                name = tokens[index + 1]
+                if identifier(name):
+                    pending = {'name': name, 'public': 'public' in header, 'main': False}
+            if token == '{':
+                if pending:
+                    current = pending
+                    types.append(current)
+                pending, header = None, []
+            elif token == ';':
+                header = []
+            else:
+                header.append(token)
+        elif depth == 1 and current:
+            if token == '(' and member and member[-1] == 'main' and all(
+                    modifier in member for modifier in ('public', 'static', 'void')):
+                current['main'] = True
+            if token in {';', '{', '}'}:
+                member = []
+            else:
+                member.append(token)
+        if token == '{':
+            depth += 1
+        elif token == '}':
+            depth = max(0, depth - 1)
+            if depth == 0:
+                current, header, member = None, [], []
+            elif depth == 1:
+                member = []
+    public = next((item for item in types if item['public']), None)
+    entry = (next((item for item in types if item['public'] and item['main']), None)
+             or next((item for item in types if item['main']), None)
+             or public or next(iter(types), {'name': 'Main'}))
+    return (public or entry)['name'] + '.java', package + entry['name']
+
+
+def pip_command(args):
+    """Recognize pip launchers without mistaking arbitrary subprocesses for installs."""
+    try:
+        tokens = shlex.split(args) if isinstance(args, str) else [os.fsdecode(arg) for arg in args]
+    except (ValueError, TypeError):
+        return False
+    if not tokens:
+        return False
+    name = Path(tokens[0]).name
+    if re.fullmatch(r'pip(?:3(?:\.\d+)?)?', name):
+        return True
+    return bool(re.fullmatch(r'python(?:3(?:\.\d+)?)?', name) and
+                any(tokens[i:i+2] == ['-m', 'pip'] for i in range(1, len(tokens)-1)))
+
+
+@contextlib.contextmanager
+def installation_failures():
+    """An unchecked pip subprocess must not turn an installation failure into success.
+
+    Preserve Python subprocess semantics and expected nonzero results from other
+    programs. The cell result records pip failures even when check=False is used.
+    """
+    failures = []
+    original = subprocess.Popen
+    class InstallProcess(original):
+        def wait(self, *args, **kwargs):
+            code = super().wait(*args, **kwargs)
+            if code and pip_command(self.args) and not getattr(self, '_reported_install_failure', False):
+                self._reported_install_failure = True
+                failures.append(code)
+            return code
+    subprocess.Popen = InstallProcess
+    try:
+        yield failures
+    finally:
+        subprocess.Popen = original
+
+
 def execute(data):
     language, source = data['language'], data['source']
     if data.get('database') == 'lab': database('pglab', data.get('setup', ''))
@@ -340,25 +535,22 @@ def execute(data):
         sys.argv = ['<notebook cell>', *data.get('argv', [])]
         namespace['display'] = display
         try:
-            try:
-                from IPython.core.interactiveshell import InteractiveShell
-                shell = InteractiveShell.instance(user_ns=namespace)
-                shell.colors='NoColor'
-                # This is a headless notebook; inline figures do not need a GUI event loop.
-                shell.enable_gui=lambda gui=None: None
-                shell.displayhook.write_output_prompt=lambda: None
-                shell.display_pub.publish = lambda data, *args, **kwargs: display(data, raw=True)
-                def formatted(data, *args, **kwargs):
-                    if 'text/plain' in data: print(data['text/plain'])
-                    if any(mime != 'text/plain' for mime in data): display(data, raw=True)
-                shell.displayhook.write_format_data = formatted
+            shell = notebook_shell()
+            if shell is not None:
                 if 'matplotlib' in source or 'plt.' in source:
                     try: shell.run_line_magic('matplotlib','inline')
                     except (ImportError, KeyError): pass
-                outcome = shell.run_cell(source, store_history=True)
+                with installation_failures() as failures:
+                    outcome = shell.run_cell(source, store_history=True)
+                if failures:
+                    print(f'Package installation failed (exit code {failures[0]}). Read the pip error above; '
+                          'fix it before running dependent cells.', file=sys.stderr)
+                    return failures[0]
+                error = outcome.error_in_exec or outcome.error_before_exec
+                if isinstance(error, subprocess.CalledProcessError):
+                    return error.returncode
                 return 0 if outcome.success else 1
-            except ModuleNotFoundError as error:
-                if error.name not in ('IPython','IPython.core','IPython.core.interactiveshell'): raise
+            else:
                 if source.startswith('!'): return command(['bash', '-c', source[1:]], data)
                 tree = ast.parse(source, '<notebook cell>')
                 last = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
@@ -373,20 +565,24 @@ def execute(data):
     plans = {
         'javascript': ('main.js', [], ['node', 'main.js']),
         'typescript': ('main.ts', ['tsc', 'main.ts', '--target', 'ES2022', '--module', 'commonjs', '--noEmitOnError'], ['node', 'main.js']),
+        'cpp': ('main.cpp', ['g++', '-std=c++17', '-Wall', '-Wextra', 'main.cpp', '-o', 'main'], ['./main']),
         'c': ('main.c', ['cc', '-std=c17', 'main.c', '-o', 'main', '-lm'], ['./main']),
         'rust': ('main.rs', ['rustc', '--edition=2021', 'main.rs', '-o', 'main'], ['./main']),
         'go': ('main.go', ['go', 'build', '-o', 'main', 'main.go'], ['./main']),
-        'java': ('Main.java', ['javac', 'Main.java'], ['java', '-cp', '.', 'Main']),
     }
-    filename, build, run = plans[language]
+    if language == 'java':
+        filename, entry = java_entrypoint(source)
+        build, run = ['javac', '-encoding', 'UTF-8', '-d', '.', filename], ['java', '-cp', '.', entry]
+    else:
+        filename, build, run = plans[language]
     tools=data.get('tools', {})
-    if build: build=[tools.get({'cc':'cc','rustc':'rustc','go':'go','javac':'javac','tsc':'tsc'}[build[0]],build[0]), *build[1:]]
+    if build: build=[tools.get({'cc':'cc','g++':'cxx','rustc':'rustc','go':'go','javac':'javac','tsc':'tsc'}[build[0]],build[0]), *build[1:]]
     if run[0] in ('node','java'): run=[tools.get(run[0],run[0]), *run[1:]]
-    Path(filename).write_text(source)
+    Path(filename).write_text(source, encoding='utf-8')
     if language=='typescript' and Path('/usr/local/lib/node_modules/@types').is_dir(): build += ['--typeRoots','/usr/local/lib/node_modules/@types']
     if build:
         code = command(build, {})
-        if code: return code
+        if code: raise CompilationError(code)
     # stdbuf makes prompts/logs observable even for programs with fully buffered C stdio.
     if os.name == 'posix' and shutil.which('stdbuf'): run = ['stdbuf', '-oL', '-eL', *run]
     return command([*run, *data.get('argv', [])], data)
@@ -406,21 +602,27 @@ def main():
             started = time.monotonic()
             with capture(result):
                 try: result['exit_code'] = execute(data)
+                except CompilationError as error:
+                    result.update(status='compile_error', exit_code=error.exit_code)
                 except KeyboardInterrupt:
                     result.update(status='cancelled', exit_code=None)
                     print('Stopped.', file=sys.stderr)
-                except PostgresRuntimeError as error:
+                except (PostgresRuntimeError, PythonRuntimeError) as error:
                     result['exit_code'] = 1
                     print(str(error), file=sys.stderr)
-                except BaseException:
+                except BaseException as error:
                     result['exit_code'] = 1
-                    traceback.print_exc()
+                    message = notebook_error(error)
+                    if message: print(message, file=sys.stderr)
+                    else: traceback.print_exc()
             if stopping == active: result.update(status='cancelled', exit_code=None)
             result.update(duration_seconds=round(time.monotonic()-started, 3), command=data['language']+' notebook cell')
             emit(id=active, kind='done', execution=result)
             active = None
     finally:
         databases.close()
+        if python_shell is not None: python_shell.atexit_operations()
+        if python_profile is not None: python_profile.cleanup()
 
 
 if __name__ == '__main__':

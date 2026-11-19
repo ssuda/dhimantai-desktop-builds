@@ -8,6 +8,29 @@ import { chapterId, lessonPicker, selectLesson } from './lessonPicker';
 const asset = (path: string) => readFileSync(resolve(__dirname, '../../media', path), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('voice speed works without device enumeration, persists, and rolls back a rejected change', async () => {
+  const dom = new JSDOM('<button id="sound"></button><button id="second"></button>', {runScripts:'outside-only', url:'https://webview.example'});
+  const w = dom.window, speeds: number[] = [];
+  let reject = false;
+  try {
+    w.eval(asset('learning-room/audioControls.js'));
+    const options = {supported:() => false, select:async () => {}, playback:async (speed:number) => {
+      if (reject) throw new Error('Not accepted'); speeds.push(speed);
+    }};
+    const control = new w.DhimantAudio.SpeakerControl(w.document.getElementById('sound'), options);
+    w.document.querySelector<HTMLButtonElement>('.audio-chevron')!.click(); await tick();
+    const select = w.document.querySelector<HTMLSelectElement>('.audio-speed select')!;
+    assert.deepEqual([...select.options].map(o => o.textContent), ['0.5x','1x','1.5x','2x']);
+    select.value = '1.5'; select.dispatchEvent(new w.Event('change')); await tick();
+    assert.equal(control.playbackSpeed, 1.5); assert.deepEqual(speeds, [1.5]);
+    const second = new w.DhimantAudio.SpeakerControl(w.document.getElementById('second'), options);
+    assert.equal(second.playbackSpeed, 1.5);
+    reject = true; select.value = '2'; select.dispatchEvent(new w.Event('change')); await tick();
+    assert.equal(select.value, '1.5'); assert.equal(control.playbackSpeed, 1.5);
+    assert.match(w.document.querySelector('.audio-picker')!.textContent!, /Could not change voice speed/);
+  } finally { w.close(); }
+});
+
 test('speaker picker switches outputs, retains the prior selection on failure, and falls back when unplugged', async () => {
   const dom = new JSDOM('<button id="sound">Mute</button><button id="outside">Outside</button>', {runScripts: 'outside-only'});
   const w = dom.window, calls: string[] = [];
@@ -60,14 +83,15 @@ test('speaker picker switches outputs, retains the prior selection on failure, a
 test('learning room mutes locally, remembers each agent, and applies the chosen output to new sessions', async () => {
   const dom = new JSDOM('<button id="wide"></button><button id="latest"></button><button id="tutor"></button><button id="doubt_solver"></button><button id="end" disabled></button><button id="sound"></button><span id="status"></span><input id="follow-code"><input id="stuck-hints"><small id="code-observer-status"></small><main id="feed"></main><form id="composer"><textarea id="message"></textarea><button id="send"></button><button id="teach-back"></button><button id="video"></button></form>',
     {runScripts: 'outside-only', url: 'https://webview.example'});
-  const w = dom.window, sent: any[] = [], rooms: Room[] = [], rpcs: string[] = [];
+  const w = dom.window, sent: any[] = [], rooms: Room[] = [], rpcs: string[] = [], speeds:number[] = [];
   w.document.body.insertAdjacentHTML('afterbegin', lessonPicker);
   const peer = {identity: 'worker', isAgent: true, trackPublications: new Map()};
   let rejectPlayback: ((error: Error) => void) | undefined, pendingPlayback=false;
   class Room {
     listeners = new Map<string, Function>();
     remoteParticipants = new Map([['worker', peer]]);
-    localParticipant = {registerRpcMethod() {}, performRpc: async ({method}: {method: string}) => { rpcs.push(method); return 'ok'; }};
+    localParticipant = {registerRpcMethod() {}, performRpc: async ({method, payload}: {method: string; payload:string}) => {
+      rpcs.push(method); if(method === 'set_speech_playback_speed')speeds.push(JSON.parse(payload).speed); return 'ok'; }};
     outputs: string[] = [];
     canPlaybackAudio=true;
     constructor(readonly options: any) { rooms.push(this); }
@@ -88,7 +112,7 @@ test('learning room mutes locally, remembers each agent, and applies the chosen 
     // Use the same direct mode selection as the Catalog and Command Palette.
     // The hidden Instructor button is a retry for the current mode, not navigation.
     w.dispatchEvent(new w.MessageEvent('message', {origin:w.location.origin, data:{type:'openTutor',mode}}));
-    if (mode === 'tutor') selectLesson(w, sent.at(-1).attempt);
+    selectLesson(w, sent.at(-1).attempt);
     w.dispatchEvent(new w.MessageEvent('message', {origin: w.location.origin,
       data: {type: 'grant', attempt: sent.at(-1).attempt, url: 'unused', token: 'unused', ...(mode === 'tutor' ? {chapterId} : {})}}));
     await tick();
@@ -103,6 +127,11 @@ test('learning room mutes locally, remembers each agent, and applies the chosen 
     w.eval(asset('learning-room/room.js'));
     await join('tutor');
     const track = subscribe();
+    assert.deepEqual(speeds, [1]);
+    const speedSelect = w.document.querySelector<HTMLSelectElement>('.audio-speed select')!;
+    speedSelect.value = '2'; speedSelect.dispatchEvent(new w.Event('change')); await tick();
+    assert.equal(speeds.at(-1), 2);
+    assert.equal(track.playbackRate, 1, 'MediaStream rate stays untouched; tempo changes before server pacing');
     rooms[0].canPlaybackAudio=false;rooms[0].listeners.get('AudioPlaybackStatusChanged')!();
     assert.equal(btn('sound').getAttribute('aria-label'),'Enable speaker','blocked browser playback cannot look enabled');
     btn('sound').click();await tick();
@@ -130,6 +159,7 @@ test('learning room mutes locally, remembers each agent, and applies the chosen 
     assert.deepEqual(rooms[0].outputs, ['usb']);
     assert.equal(track.muted, true);
     await join('doubt_solver');
+    assert.equal(speeds.at(-1), 2, 'a new session restores the selected speech speed');
     assert.equal(rooms[1].options.audioOutput.deviceId, 'usb');
     assert.equal(subscribe().muted, false, 'Doubt Solver has its own mute choice');
     await join('tutor');

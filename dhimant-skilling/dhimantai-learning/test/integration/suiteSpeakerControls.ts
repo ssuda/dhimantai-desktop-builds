@@ -37,12 +37,17 @@ window.addEventListener('load', async () => {
     if (picker.hidden || arrow.getAttribute('aria-expanded') !== 'true') throw new Error('Output picker did not open');
     const rect = picker.getBoundingClientRect();
     if (rect.width < 100 || rect.right > window.innerWidth || rect.left < 0) throw new Error('Output picker exceeds the panel');
+    const speed = picker.querySelector('select[aria-label="Voice playback speed"]');
+    if (!speed || [...speed.options].map(option => option.value).join(',') !== '0.5,1,1.5,2') throw new Error('Voice speeds unavailable');
+    speed.value = '1.5'; speed.dispatchEvent(new Event('change'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (speed.disabled || speed.value !== '1.5' || main.getAttribute('aria-pressed') !== 'true') throw new Error('Speed selection changed playback state');
     picker.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
     if (!picker.hidden || document.activeElement !== arrow) throw new Error('Keyboard dismissal failed');
     arrow.click();
     group.querySelector('.audio-actions button:last-child').click();
     if (main.getAttribute('aria-pressed') !== 'false' || group.dataset.muted !== 'true') throw new Error('Off state not rendered');
-    api.postMessage({ok: true, splitButton: true, disabledMicrophone: true, outputPicker: true, keyboard: true,
+    api.postMessage({ok: true, splitButton: true, disabledMicrophone: true, outputPicker: true, voiceSpeeds: true, keyboard: true,
       sinkSelectionSupported: 'setSinkId' in AudioContext.prototype});
   } catch (error) { api.postMessage({ok: false, error: String(error)}); }
 });

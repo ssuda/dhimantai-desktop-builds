@@ -1,4 +1,5 @@
-import { cellLanguage as codeLanguage, cellLanguages as codeLanguages, observedRun, validCellInputs } from '../src/roomCode';
+import {pythonCompleteness} from '../src/pythonCompleteness';
+import { cellLanguage as codeLanguage, cellLanguages as codeLanguages, cellLanguageMismatch, observedRun, validCellInputs } from '../src/roomCode';
 import type { CodeAction, CodeResult, CodeSnapshot, Execution } from '../src/roomCode';
 import { splitArgs } from '../src/practiceIpynb';
 import { CodeBuffer } from './codeBuffer';
@@ -10,6 +11,7 @@ import type { LearnerTestCase, SkillStage } from '../src/skillPractice';
 import { SkillPractice } from './skillPractice';
 import { NativeDebugControls } from './nativeDebugControls';
 import type { DebugEvidence, NativeDebugAction, NativeDebugReply, NativeDebugState } from '../src/debugEvidence';
+import { runInputs } from './lessonOutput';
 
 // Unrequested hints interrupt thinking, so they are opt-in and wait for signs of being stuck.
 export const STUCK_PAUSE_MS = 90000, FAILED_RUN_PAUSE_MS = 30000, HINT_GAP_MS = 120000;
@@ -22,6 +24,7 @@ type Hooks = {
   submit: (text: string, display: string) => Promise<boolean>;
   tutor?: (snapshot: CodeSnapshot, run: ReturnType<typeof observedRun> | undefined, message: string, prediction: string, stage?: SkillStage, debuggerState?: DebugEvidence) => Promise<boolean>;
   changed?: () => void;
+  executionFinished?: (key: string, snapshot: CodeSnapshot, run?: Execution, error?: string) => void;
   debug?: (snapshot:CodeSnapshot, action:NativeDebugAction) => Promise<NativeDebugReply>;
   /** Practice tools that only run code: sample tests, a Python step-through and a new input. */
   tool?: (snapshot: CodeSnapshot, tool: PracticeTool, cases?: LearnerTestCase[]) => Promise<ToolReply>;
@@ -33,12 +36,13 @@ export type ToolReply = {error?: string; tests?: TestRow[]; variation?: Variatio
   trace?: {steps: TraceStepView[]; stdout: string; stopped: string | null; error: string | null}};
 
 type TextbookTask = {question_id: string; checkpoint_id: string; language: string; starter: string; question: string; source: string};
+
 function textbookTask(value: any): value is TextbookTask {
   return value && ['question_id', 'checkpoint_id'].every(key => typeof value[key] === 'string' && value[key].length > 0 && value[key].length <= 100)
     && typeof value.language === 'string' && !!codeLanguage(value.language)
     && typeof value.starter === 'string' && value.starter.length <= 12000
     && typeof value.question === 'string' && !!value.question.trim() && value.question.length <= 6000
-    && ['Textbook exercise', 'Practice exercise'].includes(value.source);
+    && ['Textbook exercise', 'Practice exercise', 'Your turn'].includes(value.source);
 }
 
 /** Embedded Practice surface. Edits, input, run output and guidance live only in this panel. */
@@ -63,7 +67,33 @@ export class PracticeCodeEditors {
   selection() { return (this.focused ?? this.editors.find(editor => !!editor.task) ?? this.editors[0])?.context(); }
   contexts() { return this.editors.map(editor => editor.context()); }
   focusLine(id: string, line: number) { this.editors.find(editor => editor.id === id)?.focusLine(line); }
-  drafts() { return this.editors.map(editor => editor.draft()); }
+  // Written checkpoints may have code drafts from older versions of the notebook.
+  private writtenDrafts = new Map<string, NotebookDraft>();
+  drafts() {
+    const drafts = new Map(this.writtenDrafts);
+    for (const editor of this.editors) drafts.set(editor.key, editor.draft());
+    return [...drafts.values()];
+  }
+  writtenQuestion(body: HTMLElement, cellId: string, checkpoint: string) {
+    // A verified resume (or a repeated checkpoint) can correct a mounted legacy editor.
+    for (const editor of [...this.editors]) {
+      if (editor.key !== 'checkpoint:' + checkpoint && !editor.key.startsWith(cellId + ':')) continue;
+      this.restored.set(editor.key, editor.draft());
+      editor.cancelPending(); editor.destroy(); editor.element.remove();
+      this.editors.splice(this.editors.indexOf(editor), 1);
+      if (this.focused === editor) this.focused = undefined;
+    }
+    for (const [key, draft] of this.restored) {
+      if (key !== 'checkpoint:' + checkpoint && !key.startsWith(cellId + ':')) continue;
+      this.writtenDrafts.set(key, draft);
+      if (!(draft.source.trim() || draft.explanation.trim() || draft.prediction.trim())) continue;
+      const saved = document.createElement('details'), title = document.createElement('summary');
+      title.textContent = 'Previously saved work';
+      const text = document.createElement('pre');
+      text.textContent = [draft.source, draft.prediction, draft.explanation].filter(Boolean).join('\n');
+      saved.append(title, text); body.append(saved);
+    }
+  }
   removeCell(cellId: string) {
     const removed = this.editors.filter(editor => editor.key.startsWith(cellId + ':'));
     for (const editor of removed) {
@@ -88,7 +118,9 @@ export class PracticeCodeEditors {
   connected = false;
   tutorBusy = false;
   aiEnabled = true;
-  runtime = 'Local language tools';
+  private runtimeName = 'Local language tools';
+  get runtime() { return this.runtimeName; }
+  set runtime(value: string) { this.runtimeName = value; for (const editor of this.editors) editor.update(); }
   following = true;
   stuckHints = false;
   attempt = 0;
@@ -118,9 +150,10 @@ export class PracticeCodeEditors {
     for (const code of body.querySelectorAll<HTMLElement>('pre > code')) {
       const label = Array.from(code.classList).find(c => c.startsWith('language-'))?.slice(9) ?? '';
       const language = codeLanguage(label);
+      if (code.closest('.code-reading-only'))continue;
       if (!language || !code.textContent?.trim() || code.textContent.length > 12000) continue;
       const key = cellId + ':' + index++, draft = this.restored.get(key);
-      const editor = new PracticeCodeEditor(this, draft?.snippet ?? 'code-' + ++this.counter, language, draft?.source ?? code.textContent, question.slice(0, 6000), undefined, key, draft);
+      const editor = new PracticeCodeEditor(this, draft?.snippet ?? 'code-' + ++this.counter, draft?.language ?? language, draft?.source ?? code.textContent, question.slice(0, 6000), undefined, key, draft);
       this.editors.push(editor);
       code.parentElement!.replaceWith(editor.element);
     }
@@ -138,7 +171,7 @@ export class PracticeCodeEditors {
     this.stuckHints = value;
     for (const editor of this.editors) editor.update();
   }
-  clear() { this.editors.forEach(e => e.destroy()); this.editors = []; this.focused = undefined; this.activeCheckpoint = ''; }
+  clear() { this.writtenDrafts.clear(); this.editors.forEach(e => e.destroy()); this.editors = []; this.focused = undefined; this.activeCheckpoint = ''; }
   receiveDebug(message: {snippet:string;revision:number;state:NativeDebugState}) {
     this.editors.find(e => e.id === message.snippet)?.receiveDebug(message.revision,message.state);
   }
@@ -164,9 +197,18 @@ class PracticeCodeEditor {
   private inputControls = document.createElement('div');
   private prediction = document.createElement('textarea');
   private skipPrediction = -1;
+  private resultBlock = document.createElement('section');
+  private runTitle = document.createElement('strong');
+  private runInput = document.createElement('code');
+  private runCount = 0;
   private output = document.createElement('pre');
   private feedback = document.createElement('div');
   private status = document.createElement('p');
+  private languagePicker = document.createElement('select');
+  private completeness = document.createElement('p');
+  private mismatch = document.createElement('div');
+  private mismatchText = document.createElement('span');
+  private switchLanguage = document.createElement('button');
   private resizeButton = document.createElement('button');
   private actions: HTMLButtonElement[] = [];
   private revision = 0;
@@ -201,7 +243,17 @@ class PracticeCodeEditor {
     this.born = owner.attempt;
     this.element.className = 'practice-code-editor';
     this.element.setAttribute('aria-label', codeLanguages[language] + ' practice editor');
-    const title = document.createElement('strong'); title.textContent = codeLanguages[language] + ' · Code cell';
+    const title = document.createElement('strong');
+    this.languagePicker.setAttribute('aria-label', 'Code cell language');
+    for (const [value, label] of Object.entries(codeLanguages)) {
+      const option = document.createElement('option'); option.value = value; option.textContent = label;
+      this.languagePicker.append(option);
+    }
+    this.languagePicker.value = language;
+    this.languagePicker.title = task ? 'This exercise uses ' + codeLanguages[language] : 'Language used to edit and run this cell';
+    this.languagePicker.onchange = () => this.setLanguage(this.languagePicker.value);
+    if (task) title.textContent = codeLanguages[language] + ' · ' + task.source;
+    else title.append(this.languagePicker, ' · Code cell');
     const heading = document.createElement('div'); heading.className = 'practice-editor-heading';
     heading.append(title, this.resizeButton);
     const note = document.createElement('small'); note.textContent = owner.runtime + (language === 'python' ? '. Python cells share variables until the runtime restarts.' : '. Cells share files. Use shell cells for project builds and package setup.');
@@ -264,16 +316,25 @@ class PracticeCodeEditor {
     predictionLabel.append(this.prediction);
     this.status.className = 'practice-status'; this.status.setAttribute('role', 'status');
     this.output.className = 'practice-output'; this.output.hidden = true;
+    this.resultBlock.className = 'execution-result'; this.resultBlock.hidden = true;
+    this.resultBlock.append(this.runTitle, this.runInput, this.output, this.rich);
     this.feedback.className = 'practice-feedback'; this.feedback.setAttribute('aria-live', 'polite'); this.feedback.hidden = true;
     const reflectionTitle = document.createElement('summary');
     reflectionTitle.textContent = 'More';
     this.reflection.className = 'practice-more';
     this.reflection.append(reflectionTitle);
     if (extraActions.childElementCount) this.reflection.append(extraActions);
-    this.element.append(heading, note, buffer, inputs, predictionLabel, bar, this.reflection, this.status, this.output, this.rich, this.feedback);
+    this.mismatch.className = 'cell-language-mismatch'; this.mismatch.setAttribute('role', 'status');
+    this.switchLanguage.type = 'button'; this.switchLanguage.className = 'quiet';
+    this.switchLanguage.onclick = () => {
+      const language = cellLanguageMismatch(this.language, this.code.value);
+      if (language) this.setLanguage(language);
+    };
+    this.mismatch.append(this.mismatchText, this.switchLanguage);
+    this.completeness.className='code-completeness';this.completeness.setAttribute('role','status');
+    this.element.append(heading, note, this.completeness, this.mismatch, buffer, inputs, predictionLabel, bar, this.reflection, this.status, this.resultBlock, this.feedback);
     this.bar = bar;
     if (task) {
-      title.textContent = codeLanguages[language] + ' · ' + task.source;
       this.explanation.rows = 2; this.explanation.maxLength = 600;
       const label = document.createElement('label'); label.textContent = practiceTask ? 'In a sentence or two, how does your solution work?' : 'Explain your approach (optional)'; label.append(this.explanation);
       this.submitButton = document.createElement('button'); this.submitButton.type = 'button';
@@ -314,6 +375,7 @@ class PracticeCodeEditor {
       },
       run: async cases => {
         if (!this.owner.hooks.tool || !this.current() || this.busy || this.toolBusy) return {error:'Wait for the current action to finish.'};
+        if (!this.languageMatches()) return {error:this.mismatchText.textContent ?? 'Check the cell language.'};
         this.toolBusy = true; this.update();
         try { return await this.owner.hooks.tool(this.snapshot(), 'my_tests', cases); }
         finally { this.toolBusy = false; this.update(); }
@@ -348,7 +410,10 @@ class PracticeCodeEditor {
   invalidateRun() {
     this.skills.invalidate();
     this.execution = undefined;
-    if (!this.output.hidden) this.status.textContent = 'Notebook code or runtime changed. This is an earlier output; run the required cells again.';
+    if (!this.resultBlock.hidden) {
+      this.markEarlierRun();
+      this.status.textContent = 'Notebook code or runtime changed. This is an earlier output; run the required cells again.';
+    }
   }
   markHelped() {
     this.helped = true;
@@ -362,8 +427,9 @@ class PracticeCodeEditor {
     if (this.attemptVariation) this.attemptVariation.assisted = true;
     try {
       const ok = await this.owner.hooks.tutor(this.snapshot(), this.execution && observedRun(this.execution),
-        skillMessage || (this.busy === 'check' ? 'Review my current attempt using this run. Help me reason about what to try next.' : 'Help me understand this code. Give me one focused hint or question.'), this.prediction.value, stage, debuggerState);
-      if (this.revision === revision) this.status.textContent = ok ? `${this.assistant()} will respond here in the notebook.` : `Your request was not sent. Ask ${this.assistant()} again.`;
+        skillMessage || (this.busy === 'check' ? 'Review my current attempt using this run. Help me reason about what to try next.' : 'Explain what this code does, starting with the selected line.'),
+        this.prediction.value, stage, debuggerState);
+      if (this.revision === revision) this.status.textContent = ok ? `Request sent to ${this.assistant()}.` : `Your request was not sent. Ask ${this.assistant()} again.`;
     } finally { if (this.revision === revision) { this.busy = undefined; this.update(); } }
   }
   receiveDebug(revision:number,state:NativeDebugState) {
@@ -375,8 +441,9 @@ class PracticeCodeEditor {
   }
   private async runTestCode() {
     if (!this.owner.hooks.tool || !this.current() || this.busy || this.toolBusy || this.debugBusy) return;
+    if (!this.languageMatches()) return;
     const revision = this.revision, request = ++this.request;
-    this.owner.focus(this); this.toolBusy = true; this.execution = undefined; this.output.hidden = true; this.output.textContent=''; this.rich.replaceChildren(); this.update();
+    this.owner.focus(this); this.toolBusy = true; this.beginRun(); this.update();
     this.status.textContent = 'Running this cell’s test program in a fresh process…';
     try {
       const reply = await this.owner.hooks.tool(this.snapshot(),'test_code');
@@ -386,13 +453,14 @@ class PracticeCodeEditor {
         const run = this.execution = reply.execution;
         this.output.textContent = (run.status === 'exited' ? `Exited with code ${run.exit_code}.` : run.status.replace(/_/g,' ') + '.')
           + '\n' + (run.stdout || '(No standard output)') + (run.stderr ? '\n' + run.stderr : '') + (run.truncated ? '\nOutput was truncated.' : '');
-        this.output.hidden = false;
+        this.resultBlock.hidden = this.output.hidden = false;
         this.status.textContent = 'Read the test runner’s summary and any assertion failure. A clean exit alone does not prove tests ran. Ask for unit-test help to discuss this result.';
       }
     } finally { this.toolBusy = false; this.update(); }
   }
   private async debug(action:NativeDebugAction) {
     if (!this.owner.hooks.debug || !this.current() || this.debugBusy || this.busy || this.toolBusy || (action === 'inspect' && !this.owner.aiEnabled)) return;
+    if ((action === 'start' || action === 'open') && !this.languageMatches()) return;
     const revision = this.revision;
     this.debugBusy = true; this.owner.focus(this); this.update();
     try {
@@ -421,6 +489,10 @@ class PracticeCodeEditor {
       this.status.textContent = this.task.source === 'Practice exercise'
         ? (this.submitted ? 'Feedback is in your notebook.' : `${this.assistant()} could not reply. Your code is still here; try again.`)
         : (this.submitted ? `Solution sent to ${this.assistant()}. Waiting for feedback.` : 'Solution was not sent. Your draft is still here; try again.');
+    } catch (error) {
+      this.submitted = false;
+      this.status.textContent = (error instanceof Error ? error.message : this.assistant() + ' could not reply.')
+        + ' Your code is still here; try again.';
     } finally { this.submitting = false; this.update(); }
   }
   private current() { return this.owner.connected && this.owner.attempt === this.born; }
@@ -428,21 +500,59 @@ class PracticeCodeEditor {
     return {snippet: this.id, revision: this.revision, language: this.language,
       source: this.code.value, stdin: this.input.value, question: this.question,argv:splitArgs(this.args.value),files:this.files,interactive:this.interactive.checked};
   }
+  private setLanguage(language: string) {
+    if (this.languagePicker.disabled || !codeLanguage(language) || language === this.language) {
+      this.languagePicker.value = this.language; return;
+    }
+    this.language = language; this.languagePicker.value = language;
+    this.code.setLanguage(language);
+    this.element.setAttribute('aria-label', codeLanguages[language] + ' practice editor');
+    this.element.querySelector('.predict-row')!.firstChild!.textContent = language === 'sql' ? 'Prediction (not executed)' : 'I expect it to print';
+    this.changed();
+    this.status.textContent = 'Cell language changed to ' + codeLanguages[language] + '. Run to see a current result.';
+  }
+  private incompleteCode() {
+    if(this.assistant()!=='Doubt Solver' || this.language!=='python' || this.task || this.question==='My notebook experiment')return '';
+    const result=pythonCompleteness(this.code.value);
+    return !result.syntax ? 'Complete the Python syntax before running this example.' : result.missing.length
+      ? 'Missing setup: '+result.missing.join(', ')+'. Include the required definitions and inputs in this cell before running.' : '';
+  }
+  private languageMatches() {
+    if (!cellLanguageMismatch(this.language, this.code.value)) return true;
+    this.status.textContent = this.mismatchText.textContent;
+    (this.task ? this.languagePicker : this.switchLanguage).focus();
+    return false;
+  }
+  private markEarlierRun() {
+    if (this.runTitle.textContent?.startsWith('Live run'))
+      this.runTitle.textContent = this.runTitle.textContent.replace('Live run', 'Earlier run');
+  }
+  private archiveResult() {
+    if (!this.resultBlock.hidden || !this.feedback.hidden) {
+      const earlier = document.createElement('div');
+      this.markEarlierRun();
+      if (!this.resultBlock.hidden) earlier.append(this.resultBlock.cloneNode(true));
+      if (!this.feedback.hidden) earlier.append(this.feedback.cloneNode(true));
+      this.historical.append(earlier); this.historical.hidden = false;
+      while (this.historical.children.length > 6) this.historical.children[1].remove();
+    }
+    this.resultBlock.hidden = this.output.hidden = this.feedback.hidden = true;
+    this.output.textContent = ''; this.rich.replaceChildren(); this.feedback.replaceChildren();
+  }
+  private beginRun() {
+    this.archiveResult();
+    this.cleanRun = -1; this.execution = undefined;
+    this.runTitle.textContent = `Live run · ${this.id} #${++this.runCount}`;
+    this.runInput.textContent = runInputs(this.snapshot());
+    this.runInput.hidden = !this.runInput.textContent;
+  }
   private changed() {
     this.owner.focus(this);
     if (this.task?.source === 'Practice exercise') this.submitted = false;
     ++this.revision; ++this.request; this.busy = undefined; this.execution = undefined;
-    if (!this.output.hidden || !this.feedback.hidden || this.rich.childElementCount) {
-      const earlier = document.createElement('div');
-      if (!this.output.hidden) earlier.append(this.output.cloneNode(true));
-      if (!this.feedback.hidden) earlier.append(this.feedback.cloneNode(true));
-      if(this.rich.childElementCount)earlier.append(this.rich.cloneNode(true));
-      this.historical.append(earlier); this.historical.hidden = false;
-      while (this.historical.children.length > 6) this.historical.children[1].remove();
-    }
+    this.archiveResult();
     this.owner.invalidateRuns();
     this.owner.hooks.changed?.();
-    this.output.hidden = true; this.output.textContent = ''; this.rich.replaceChildren(); this.feedback.hidden = true; this.feedback.replaceChildren();
     this.status.textContent = 'Edited. Predict, then Run to see a current result.';
     this.update();
     if (!this.current()) return;
@@ -465,6 +575,12 @@ class PracticeCodeEditor {
   }
   private act(action: CodeAction['action']) {
     if (!this.current() || this.busy || this.toolBusy || (action !== 'run' && (!this.owner.aiEnabled || this.owner.tutorBusy))) return;
+    if ((action === 'run' || action === 'check') && !this.languageMatches()) return;
+    const incomplete=this.incompleteCode();
+    if(incomplete && action==='run'){this.status.textContent=incomplete;return;}
+    if(incomplete && action==='check') {
+      this.busy='coach';void this.askTutor(undefined,'This lesson example is missing setup. '+incomplete+' Supply a complete runnable version using the exact lesson definitions. Preserve the exercise and do not reveal its answer.');return;
+    }
     if(!validCellInputs(this.snapshot())){this.status.textContent='Use at most 32 arguments and up to 1 MB of input files.';return;}
     this.owner.focus(this);
     // Predict before Check, as in Practice. A second press skips, so it never blocks.
@@ -481,9 +597,10 @@ class PracticeCodeEditor {
     }
     clearTimeout(this.guidanceTimer); clearTimeout(this.observationTimer);
     this.busy = action; ++this.request;
-    this.feedback.hidden = true; this.feedback.replaceChildren();
-    if (action === 'run' || action === 'check') { this.cleanRun = -1; this.execution = undefined; this.output.hidden = true; this.output.textContent=''; this.rich.replaceChildren(); this.element.querySelector('.run-machine-label')?.remove(); }
-    this.status.textContent = action === 'run' ? 'Running…' : action === 'check' ? `Running, then asking ${this.assistant()}…` : `Asking ${this.assistant()}…`;
+    if (action === 'run' || action === 'check') this.beginRun();
+    else { this.feedback.hidden = true; this.feedback.replaceChildren(); }
+    this.status.textContent = action === 'run' || action === 'check'
+      ? `Preparing container… ${codeLanguages[this.language]} · ${this.owner.runtime}` : `Asking ${this.assistant()}…`;
     this.observe(undefined, action === 'coach' || action === 'check');
     if (this.owner.hooks.tutor && (action === 'coach' || action === 'observe')) { void this.askTutor(); return; }
     this.owner.hooks.post({type: 'codeAction', attempt: this.born, request: this.request,
@@ -493,11 +610,16 @@ class PracticeCodeEditor {
   }
   receive(result: CodeResult) {
     if (!this.current() || result.revision !== this.revision || result.request !== this.request || !this.busy) return;
+    if (result.event?.kind === 'phase') {
+      this.status.textContent = `${result.event.phase === 'preparing' ? 'Preparing container… You can keep working in the lesson.' : 'Running code…'} ${codeLanguages[this.language]} · ${this.owner.runtime}`;
+      return;
+    }
     if (result.event) {
       const event=result.event;
-      if(event.kind==='stream'){this.output.hidden=false;this.output.textContent=(this.output.textContent+event.text).slice(-200000);}
+      if(event.kind==='stream'){this.resultBlock.hidden=this.output.hidden=false;this.output.textContent=(this.output.textContent+event.text).slice(-200000);}
       if(event.kind==='input'){this.inputControls.hidden=false;this.inputControls.closest('details')!.open=true;this.liveInput.focus();}
       if(event.kind==='display'){
+        this.resultBlock.hidden=false;
         const data=event.data;
         if(data['image/png'] || data['image/jpeg']){const mime=data['image/png']?'image/png':'image/jpeg';const img=document.createElement('img');img.src='data:'+mime+';base64,'+data[mime];img.alt='Cell output';img.style.maxWidth='100%';this.rich.append(img);}
         else if(data['text/html'] || data['image/svg+xml']){const frame=document.createElement('iframe');frame.setAttribute('sandbox','');frame.title='Cell display';frame.style.width='100%';frame.style.minHeight='12em';frame.srcdoc=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`+(data['text/html']??data['image/svg+xml']);this.rich.append(frame);}
@@ -505,26 +627,29 @@ class PracticeCodeEditor {
       }
       return;
     }
+    if ((this.busy === 'run' || this.busy === 'check') && (result.execution || result.error))
+      this.owner.hooks.executionFinished?.(this.key, this.snapshot(), result.execution, result.error);
     if (result.execution) {
       this.execution = result.execution;
       const run = result.execution;
       const failed = run.status !== 'exited' || run.exit_code !== 0;
-      if (run.runtime_target) {
-        let label = this.element.querySelector<HTMLElement>('.run-machine-label');
-        if (!label) {label=document.createElement('small');label.className='run-machine-label';this.output.before(label);}
-        label.textContent = run.runtime_target + ' · ' + this.language;
-      }
-      const label = run.status === 'exited' ? `Exited with code ${run.exit_code}.` : run.status.replace(/_/g, ' ') + '.';
+      if (run.runtime_target) this.runTitle.append(' · ' + run.runtime_target + ' · ' + this.language);
+      const label = run.status === 'compile_error' ? `Compilation failed (exit code ${run.exit_code}).`
+        : run.status === 'exited' ? `Exited with code ${run.exit_code}.` : run.status.replace(/_/g, ' ') + '.';
       const outputHeading = this.language === 'sql' ? (failed ? 'SQL execution failed\n' : 'Executed SQL output\n') : '';
       this.output.textContent = outputHeading + label + '\n' + (run.stdout || (this.language === 'sql' ? '(No query results)' : '(No standard output)'))
         + (run.stderr ? '\n' + run.stderr : '') + (run.truncated ? '\nOutput was truncated.' : '');
-      this.output.hidden = false;
+      this.resultBlock.hidden = this.output.hidden = false;
       this.observe();
       if (this.busy === 'check' && this.owner.hooks.tutor) { void this.askTutor(); return; }
       if (this.busy === 'run') {
         this.busy = undefined;
-        this.status.textContent = run.status==='cancelled' ? 'Stopped. You can edit or run another cell.' : failed ? `Run failed. Read the error below or ask ${this.assistant()} for help.`
+        this.status.textContent = run.status==='cancelled' ? 'Stopped. You can edit or run another cell.'
+          : run.status === 'compile_error' ? 'Compilation failed. Fix the compiler errors below, then run again.'
+          : failed ? `Run failed. Read the error below or ask ${this.assistant()} for help.`
           : run.truncated ? 'Run completed with truncated output. The full result is unavailable.'
+          : !run.stdout.trim() && !run.stderr.trim() && !this.rich.childElementCount
+            ? 'Run completed successfully with no output. Definitions, assignments and passing assertions can be silent. This confirms execution, not that every requirement was tested.'
           : `Run completed successfully. Ask ${this.assistant()} to discuss this result.`;
         if (failed && this.language === 'sql' && this.prediction.value.trim()) this.status.textContent += ' Your prediction has not been verified.';
         if (run.status === 'exited' && run.exit_code === 0 && !run.truncated) this.cleanRun = this.revision;
@@ -545,16 +670,36 @@ class PracticeCodeEditor {
     }
     if (result.error) {
       this.busy = undefined;
-      this.status.textContent = this.language === 'sql' ? 'SQL execution failed. No current query result. ' + result.error
-        + (this.prediction.value.trim() ? ' Your prediction has not been verified.' : '') : result.error;
+      if (result.failureStage === 'preparing') {
+        this.runTitle.textContent = `Setup attempt · ${this.id} #${this.runCount}`;
+        this.status.textContent = 'Code did not run. Your work is here. You can continue the lesson and retry Run after setup.';
+        this.output.textContent = result.error + '\n\nLesson diagrams and predicted output are lesson content, not output from this run.';
+        this.resultBlock.hidden = this.output.hidden = false;
+      } else {
+        this.status.textContent = this.language === 'sql' ? 'SQL execution failed. No current query result. ' + result.error
+          + (this.prediction.value.trim() ? ' Your prediction has not been verified.' : '') : result.error;
+      }
     }
     this.update();
   }
   update() {
     const active = this.current();
     const note = this.element.querySelector(':scope > small');
-    if (note) note.textContent = this.owner.runtime + (this.language === 'python' ? '. Python cells share variables until the runtime restarts.' : '. Cells share files; SQL and DBA cells keep database state until Restart runtime.');
+    if (note) note.textContent = codeLanguages[this.language] + ' · ' + this.owner.runtime
+      + (this.language === 'python' ? '. Python cells share variables until the runtime restarts.' : '. Cells share files; SQL and DBA cells keep database state until Restart runtime.');
     const writable = this.owner.attempt === this.born;
+    this.languagePicker.disabled = !writable || !!this.task || !!this.busy || this.toolBusy || this.debugBusy || this.debugging;
+    this.switchLanguage.disabled = this.languagePicker.disabled;
+    const incomplete=this.incompleteCode();this.completeness.hidden=!incomplete;
+    this.completeness.textContent=incomplete ? incomplete+' Choose Review with Doubt Solver to request the complete example.' : '';
+    const mismatch = cellLanguageMismatch(this.language, this.code.value);
+    this.mismatch.hidden = !mismatch;
+    if (mismatch) {
+      this.mismatchText.textContent = `This looks like ${codeLanguages[mismatch]} code, but this cell is set to ${codeLanguages[this.language]}. `
+        + (this.task ? `This exercise requires ${codeLanguages[this.language]}; use a separate ${codeLanguages[mismatch]} cell for this code.` : 'Switch the cell language before running.');
+      this.switchLanguage.textContent = 'Switch to ' + codeLanguages[mismatch];
+      this.switchLanguage.hidden = !!this.task;
+    }
     if (!this.owner.following && this.busy === 'observe') { ++this.request; this.busy = undefined; this.status.textContent = 'Automatic guidance is paused.'; }
     // A document-change callback runs inside CodeMirror's update; reconfigure only on a state change.
     this.code.disabled = !writable; this.input.disabled = this.prediction.disabled = !writable;
@@ -562,7 +707,7 @@ class PracticeCodeEditor {
     for (const button of this.actions) {
       const running=button.dataset.action==='run' && (this.busy==='run'||this.busy==='check');
       if(button.dataset.action==='run')button.textContent=running?'Stop':'Run';
-      button.disabled = !active || (!running && (!!this.busy || this.toolBusy))
+      button.disabled = (button.dataset.action==='run' && !running && !!incomplete) || !active || (!running && (!!this.busy || this.toolBusy))
         || (button.dataset.action !== 'run' && (!this.owner.aiEnabled || this.owner.tutorBusy)) || (button.dataset.action !== 'coach' && !this.code.value.trim());
     }
     this.explanation.disabled = !writable || this.submitting;
@@ -572,7 +717,7 @@ class PracticeCodeEditor {
       this.toolButtons.tests.textContent = tools.tests ? `Run sample tests (${tools.tests})` : 'Sample tests unavailable';
       this.toolButtons.tests.title = tools.tests ? 'Run the published sample tests on this code' : 'No runnable sample tests are supplied for this exercise.';
       const availability = this.element.querySelector<HTMLElement>('.sample-availability')!;
-      availability.textContent = tools.tests ? '' : 'No runnable sample tests are supplied. Use Run or your own tests under More tools.';
+      availability.textContent = tools.tests ? '' : 'No runnable sample tests are supplied. You can still Run, Review my code, or use your own tests under More tools.';
       availability.hidden = !!tools.tests;
       this.toolButtons.trace.hidden = !tools.trace;
       this.toolButtons.tests.disabled = !idle || !tools.tests; this.toolButtons.trace.disabled = !idle;
@@ -596,6 +741,7 @@ class PracticeCodeEditor {
   }
   private async runTool(tool: PracticeTool) {
     if (!this.owner.hooks.tool || this.toolBusy || this.busy || !this.current()) return;
+    if (!this.languageMatches()) return;
     const revision = this.revision;
     this.toolBusy = true; this.update();
     this.status.textContent = tool === 'tests' ? 'Running the sample tests…' : tool === 'trace' ? 'Recording each step…' : 'Making a new input…';
@@ -679,7 +825,7 @@ class PracticeCodeEditor {
   cancelPending() {
     this.skills.invalidate();
     ++this.request; this.busy = undefined; this.execution = undefined;
-    this.output.hidden = this.feedback.hidden = true;
+    this.resultBlock.hidden = this.output.hidden = this.feedback.hidden = true;
     this.status.textContent = 'Assistance settings changed. Run again for a current result.';
     this.dispose();
   }
@@ -689,6 +835,7 @@ class PracticeCodeEditor {
     this.nativeDebug.update(this.revision,false,false,false,false);
     this.dispose();
     this.resizeButton.disabled = true; this.resizeButton.onclick = null;
+    this.languagePicker.disabled = this.switchLanguage.disabled = true;
     const saved = document.createElement('pre'); saved.textContent = this.code.value;
     this.code.view.dom.replaceWith(saved); this.code.destroy();
   }

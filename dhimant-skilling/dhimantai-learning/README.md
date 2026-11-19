@@ -1,10 +1,27 @@
-# dhimantAI Learning 0.39.22
+# dhimantAI Learning 0.39.27
 
 Learn with **Instructor**, ask questions in **Doubt Solver**, and find your next course
 in **Course Catalog**, all inside VS Code. Write, save, debug, and test code in
 VS Code. Projects, tests and course terminals use the managed course container
 on Windows, macOS and Linux. Google Colab is available for supported Python notebooks. **Colab supplies the runtime;
 VS Code remains your coding workspace.**
+
+**Continue with Google**, **Continue with GitHub** and **Continue with Microsoft** on Sign in or Create account
+open your usual browser. Complete the provider prompt and allow the browser to
+return to the same Skilling window. Microsoft sign-in supports personal Outlook.com
+accounts and Microsoft work or school accounts. You can cancel on the account page.
+
+For each environment, apply the Skilling provider sign-in migration, register its
+Supabase Auth callback URL with Google, GitHub and Microsoft Entra ID, and enable the providers in
+Supabase Auth with their OAuth client IDs and secrets. Allow the three
+`/oauth-callback/*` desktop URLs in [the Supabase config](../../agent/supabase/config.toml).
+The client exchanges a one-time code with PKCE and stores the resulting
+dhimantAI session in the editor's secret storage. Provider credentials belong
+in Supabase. See the [Google setup](https://supabase.com/docs/guides/auth/social-sign-in/auth-google),
+[GitHub setup](https://supabase.com/docs/guides/auth/social-sign-in/auth-github)
+and [Microsoft setup](https://supabase.com/docs/guides/auth/social-sign-in/auth-azure).
+For Microsoft, select organizational and personal accounts, use the common tenant,
+and enable the documented email verification claims, including `xms_edov`.
 
 The password eye buttons show or hide what you type in Sign in and Create account.
 Passwords start masked and are masked again when you submit or retry.
@@ -268,7 +285,7 @@ in the existing runtime dropdown. Later runs reuse the prepared runtime.
 
 Opening a course notebook prepares its workstation automatically. Choose **Set up / rebuild course** in the runtime dropdown to rebuild it. DhimantAI writes the course **Dockerfile** and dependencies, downloads and verifies the official Podman installer when needed, starts the local Podman machine, builds the container, checks package imports and dependency compatibility, and executes a small program in the course language. Follow operating-system installation prompts; first setup needs internet access. A failed startup triggers one automatic repair: rebuild the course recipe, recreate its owned container, verify it and retry the waiting run. Course files and the saved notebook remain on disk. If repair also fails, the error remains visible with **Retry setup** and **Show setup log**; execution never falls back to this computer. Browsing the catalog or editing a source file does not start an installation. The first course source-file run prepares the container if needed; setup failures never silently switch to host tools.
 
-**Resources.** A Podman machine created by dhimantAI (macOS and Windows) is kept small: 2 CPUs, 2 GB of memory and a 30 GB disk image that only uses what it stores. An existing Podman machine is used as it is and never resized. Each course container is capped at 1.5 GB of memory (3 GB for PyTorch courses) and 1,024 processes, so a runaway program cannot take over the computer. When VS Code closes, course containers stop, and a Podman machine that dhimantAI started stops too when nothing else runs in it. The next run starts them again.
+**Resources.** Ordinary coding courses create a small Podman machine (macOS and Windows): 2 CPUs, 2 GB of memory and a 30 GB disk image that only uses what it stores. ERPNext creates its machine with 6 GB. On macOS, ERPNext also checks an existing machine and automatically increases an undersized allocation, preserving larger allocations and saved data. If containers are active, setup asks before restarting them. Automatic allocation requires at least 8 GB of computer RAM, leaving 2 GB for macOS and the desktop app; a fresh setup checks this before creating the machine. Each coding course container is capped at 1.5 GB of memory (3 GB for PyTorch courses) and 1,024 processes, so a runaway program cannot take over the computer. When VS Code closes, course containers stop, and a Podman machine that dhimantAI started stops too when nothing else runs in it. The next run starts them again.
 
 **Open Course Runtime** also opens a local notebook and selects the **dhimantAI Course · Podman** kernel. Python opens a starter notebook. **Build an LLM from Scratch** opens the first of seven authored labs with CPU PyTorch and NumPy installed. The left Explorer view continues to show your Practice courses and exercises. Course files live under the **dhimantai.exercisesFolder** setting (by default, `~/dhimantAI/courses`). Your saved edits survive a rebuild.
 
@@ -289,6 +306,12 @@ in the course terminal. No textbook is required. Find available courses with
 availability follows the selected DhimantAI environment.
 
 **Windows setup.** For the WSL 2 setup, use 64-bit Windows 10 build 19043 or later, or Windows 11, with virtualization enabled. Follow the installer’s WSL 2 and restart prompts. If automatic installation is unavailable, complete Podman Desktop’s onboarding, including the engine and machine. Restart VS Code and choose **Runtime → Set up / rebuild course**, then **Open course terminal**. [Official Windows installation guide](https://podman-desktop.io/docs/installation/windows-install)
+
+### Cloud spot GPUs
+
+In a lesson with a GPU setup recipe, choose **Runtime → Cloud · Spot GPUs**. Choose **AWS EC2**, **Google Compute Engine**, **Microsoft Azure**, or **JarvisLabs**. For **AWS EC2**, **Google Compute Engine** and **Microsoft Azure**, the desktop offers to install the provider CLI and SkyPilot, then prompts you to sign in with your student account. For GCE, Google Cloud CLI (`gcloud`) also sets up Application Default Credentials. If you have no active project, enter the ID of your existing lab project when prompted. Windows runs the cloud tools in the default WSL distribution. Review the cloud account, region, GPU layout and hourly estimate before choosing **Start spot runtime**.
+
+Review the region, VM type, GPUs per node, and total estimated hourly compute charge before starting. The catalog estimate is in USD for AWS, GCE and Azure. Storage, network traffic and taxes are billed separately. The app checks the GPUs over SSH before running cells. **Finish lab** archives the workspace locally and releases its cluster. Keep the desktop open for the three-hour limit. If the app closes or reports a cleanup failure, reconnect to the same provider and lab. The named cluster can also be inspected with `sky status`.
 
 ## Colab TPU in VS Code
 
@@ -312,6 +335,17 @@ CPU notebooks remain in `notebooks/`. Do not install their CPU PyTorch requireme
 on the Colab kernel.
 
 For another local Python notebook, choose **Use Colab Kernel** in its toolbar.
+For GPU setup notebooks, use the same control (under **…** if the toolbar is
+crowded), then **Select Another Kernel → Colab → New Colab Server → GPU** and
+select **Python 3 (ipykernel)**. If Colab is missing, enable or update **Google
+Colab** and **Microsoft Jupyter**, reload the app, and check their Output logs
+if activation still fails. Google's separate **Colab** toolbar menu manages
+servers; opening it is not required to register the kernel source.
+GPU connection notebooks and their course copies retain their external runtime
+and do not start Podman. A wrong-runtime error occurs before GPU validation and
+does not establish whether compatible hardware is available. After reconnecting,
+select the runtime again in Instructor to complete its hardware check.
+
 This selects the connection without changing your code: move model parameters
 and tensors to the appropriate device yourself. Google manages runtime
 availability, quotas and usage. Local datasets need an explicit **Upload to

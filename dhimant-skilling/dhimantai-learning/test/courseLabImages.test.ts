@@ -11,7 +11,7 @@ const root = process.env.DHIMANTAI_COURSE_LAB_ROOT;
 test('image scenario persists across cells, isolates attempts, rejects substitutions and resets',
   {skip: !container || !root, timeout: 240_000}, async () => {
     const engine = new CourseEngine(process.env.DHIMANTAI_CONTAINER_ENGINE || 'podman', container!, root!);
-    const catalog = JSON.parse(await readFile(resolve(__dirname, '../../media/course/scenarios/postgresql-dba.json'), 'utf8'));
+    const catalog = JSON.parse(await readFile(resolve(__dirname, '../../../../content/courses/runtime-assets/scenarios/postgresql-dba.json'), 'utf8'));
     const stopped = catalog.scenarios.find((s: any) => s.title === 'Bring the server back').setup;
     const other = catalog.scenarios.find((s: any) => s.title === 'Clear the configuration errors').setup;
     const make = () => new NotebookCells(() => ({}), async () => engine,
@@ -55,7 +55,7 @@ test('image scenario persists across cells, isolates attempts, rejects substitut
 test('every packaged DBA challenge prepares in the actual course image',
   {skip: !container || !root, timeout: 600_000}, async t => {
     const engine = new CourseEngine(process.env.DHIMANTAI_CONTAINER_ENGINE || 'podman', container!, root!);
-    const catalog = JSON.parse(await readFile(resolve(__dirname, '../../media/course/scenarios/postgresql-dba.json'), 'utf8'));
+    const catalog = JSON.parse(await readFile(resolve(__dirname, '../../../../content/courses/runtime-assets/scenarios/postgresql-dba.json'), 'utf8'));
     assert.equal(catalog.scenarios.length, 36);
     for (const scenario of catalog.scenarios) {
       const cells = new NotebookCells(() => ({}), async () => engine,

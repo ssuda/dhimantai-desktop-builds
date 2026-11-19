@@ -31,6 +31,9 @@ test('published notebooks and terminals execute as the learner after service boo
   const engine=new CourseEngine('podman','replica','/course files',true,'replica-1');
   const args=engine.execArgs('/course files','python',['-V']);
   assert.deepEqual(args.slice(2,4),['--user',`${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`]);
+  engine.pythonEnvironment=true;
+  assert.deepEqual(engine.execArgs('/course files','python',['-V']).slice(-4),
+    ['python','/course/.dhimantai/python_environment.py','python','-V']);
 });
 test('floating images and host privileges are rejected before any container starts',()=>{
   for(const patch of [{privileged:true},{network_mode:'host'},{ports:['5432:5432']},{volumes:['/etc:/etc']},

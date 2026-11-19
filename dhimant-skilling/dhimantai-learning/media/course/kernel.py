@@ -9,6 +9,7 @@ from ipykernel.kernelapp import IPKernelApp
 
 language = sys.argv.pop(1)
 commands = {
+    'cpp': ('main.cpp', ['g++', '-std=c++17', '-Wall', '-Wextra', '{src}', '-o', '{bin}'], ['{bin}']),
     'c': ('main.c', ['gcc', '-std=c17', '{src}', '-o', '{bin}'], ['{bin}']),
     'rust': ('main.rs', ['rustc', '--edition=2021', '{src}', '-o', '{bin}'], ['{bin}']),
     'go': ('main.go', ['go', 'build', '-o', '{bin}', '{src}'], ['{bin}']),

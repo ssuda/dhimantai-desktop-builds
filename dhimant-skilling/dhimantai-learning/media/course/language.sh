@@ -3,6 +3,26 @@ set -eu
 [ "$#" -eq 1 ] || exit 2
 case "$1" in
   python|bash|zsh) exit 0 ;;
+  redis)
+    exec 9>/var/lock/dhimantai-language.lock
+    flock 9
+    if ! command -v redis-server >/dev/null; then
+      apt-get update
+      apt-get install -y --no-install-recommends redis-server redis-tools
+    fi
+    redis-server --version >/dev/null
+    redis-cli --version >/dev/null
+    exit 0 ;;
+  audio)
+    # CPU dataset preparation in the STT and TTS courses uses the ffmpeg executable.
+    exec 9>/var/lock/dhimantai-language.lock
+    flock 9
+    if ! command -v ffmpeg >/dev/null; then
+      apt-get update
+      apt-get install -y --no-install-recommends ffmpeg
+    fi
+    ffmpeg -version >/dev/null
+    exit 0 ;;
   sql|pglab|postgres)
     # PostgreSQL 17 (also the "postgres" service, e.g. for the Ask your data lab in a non-SQL course), the version Practice's hidden tests use, from the PostgreSQL project's apt repository.
     # No default cluster: sql_runtime.py starts a private server per run from a cluster in the learner's home.
@@ -17,8 +37,9 @@ case "$1" in
     apt-get install -y --no-install-recommends postgresql-17 postgresql-client-17
     python -m pip install --no-cache-dir 'psycopg[binary]==3.2.3'
     exit 0 ;;
-  javascript|typescript) packages="nodejs npm";;
+  javascript|typescript) packages="";;
   java) packages="openjdk-17-jdk-headless maven";;
+  cpp) packages="g++ libc6-dev gdb make cmake pkg-config";;
   c) packages="gcc libc6-dev gdb make cmake pkg-config";;
   go) packages="golang-go delve";;
   rust) packages="rustc cargo gcc gdb";;
@@ -29,8 +50,11 @@ exec 9>/var/lock/dhimantai-language.lock
 flock 9
 target="/usr/local/share/jupyter/kernels/$1"
 [ ! -f "$target/kernel.json" ] || exit 0
-apt-get update
-apt-get install -y --no-install-recommends $packages
+if [ -n "$packages" ]; then
+  apt-get update
+  apt-get install -y --no-install-recommends $packages
+fi
+if [ "$1" = javascript ] || [ "$1" = typescript ]; then node --version; npm --version; fi
 if [ "$1" = typescript ]; then npm install -g typescript@5.9.3 @types/node@22.18.6; fi
 mkdir -p "$target"
 printf '{"argv":["/usr/local/bin/python","/opt/dhimantai/kernel.py","%s","-f","{connection_file}"],"display_name":"dhimantAI %s (program cells)","language":"%s"}\n' "$1" "$1" "$1" >"$target/kernel.tmp"

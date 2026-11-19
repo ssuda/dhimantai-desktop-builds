@@ -23,6 +23,13 @@ export class CopilotPolicy implements vscode.Disposable {
   }
 
   bindPanel(panel: vscode.WebviewPanel, course?: string, assistance = true) {
+    const existing = this.panels.get(panel);
+    if (existing) {
+      const select = (course?:string, assistance=true) => {
+        existing.course=course; existing.assistance=assistance; return this.enforce();
+      };
+      void select(course,assistance); return select;
+    }
     const state = { course, assistance };
     this.panels.set(panel, state);
     const visibility = panel.onDidChangeViewState(() => { void this.enforce(); });

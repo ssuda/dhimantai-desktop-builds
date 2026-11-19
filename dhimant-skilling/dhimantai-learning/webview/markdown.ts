@@ -1,7 +1,9 @@
 import MarkdownIt from 'markdown-it';
+import type Token from 'markdown-it/lib/token.mjs';
 import { diagram } from './diagram';
 import { learningMath } from './learningMath';
 import { imageMarkup } from './visual';
+import { diagramBlock, diagramLanguage } from './diagramBlocks';
 
 const markdown = new MarkdownIt({html: false, linkify: false, breaks: true});
 learningMath(markdown);
@@ -56,11 +58,55 @@ markdown.renderer.rules.board_markup = (tokens, i) => {
   }).join('') + '\n';
 };
 const fence = markdown.renderer.rules.fence!;
+const svgFence = (token: Token) => ['', 'svg', 'xml'].includes(token.info.trim().toLowerCase())
+  && /^\s*(?:<\?xml\b[^?]*\?>\s*)?<svg\b/i.test(token.content);
 markdown.renderer.rules.fence = (tokens, i, options, env, renderer) => {
   const token = tokens[i];
-  return token.info.trim().toLowerCase() === 'svg' && /^\s*<svg\b/i.test(token.content)
-    ? diagram(token.content) : fence(tokens, i, options, env, renderer);
+  const language = diagramLanguage(token.info, token.content);
+  if (language) return diagramBlock(language, token.content);
+  if(/\b(?:prediction-only|explanation-only)\b/.test(token.info)) {
+    const kind=token.info.includes('prediction-only')?'Prediction only':'Explanation only';
+    return '<div class="code-reading-only"><small>'+kind+' · not executable</small>'+fence(tokens,i,options,env,renderer)+'</div>';
+  }
+  return svgFence(token) ? diagram(token.content) : fence(tokens, i, options, env, renderer);
 };
+const codeBlock = markdown.renderer.rules.code_block!;
+markdown.renderer.rules.code_block = (tokens, i, options, env, renderer) => {
+  const language = diagramLanguage('', tokens[i].content);
+  return language ? diagramBlock(language, tokens[i].content) : codeBlock(tokens, i, options, env, renderer);
+};
+// Some Instructor replies omit the code fence. Stop at a blank line so the
+// following explanation stays ordinary Markdown. Programming-language fences stay literal.
+markdown.block.ruler.before('paragraph', 'text_diagram', (state, start, end, silent) => {
+  const first = state.src.slice(state.bMarks[start] + state.tShift[start], state.eMarks[start]);
+  const language = diagramLanguage('', first);
+  if (!language) return false;
+  if (silent) return true;
+  let next = start + 1;
+  while (next < end && !state.isEmpty(next)) next++;
+  const token = state.push('text_diagram', '', 0);
+  token.content = state.getLines(start, next, state.blkIndent, false); token.meta = language;
+  state.line = next;
+  return true;
+}, {alt:['paragraph', 'reference', 'blockquote']});
+markdown.renderer.rules.text_diagram = (tokens, i) => diagramBlock(tokens[i].meta, tokens[i].content);
 
 export const renderBoard = (text: string) => markdown.render(text);
 export const renderHeading = (text: string) => markdown.renderInline(text);
+
+/** Compact previews use parsed text so code and literal punctuation stay intact. */
+export function markdownPlainText(text: string): string {
+  const plain = (tokens: Token[]): string => tokens.map(token => {
+    if (token.type === 'text_diagram' || (['fence', 'code_block'].includes(token.type) && diagramLanguage(token.info, token.content))) return 'Diagram ';
+    if (token.type === 'board_markup') return token.meta === 'svg' ? 'Diagram ' : ' ';
+    if (token.type === 'fence' && svgFence(token)) return 'Diagram ';
+    if (token.type === 'softbreak' || token.type === 'hardbreak') return ' ';
+    const content = token.children ? plain(token.children) : token.content;
+    return content + (token.block ? ' ' : '');
+  }).join('');
+  return plain(markdown.parse(text, {}))
+    // Inline/escaped SVG and literal code may also reach a compact reply preview.
+    // Keep ordinary code intact, but never put a diagram's source in the message bar.
+    .replace(/(?:<\?xml\b[^?]*\?>\s*)?<svg\b[\s\S]*?(?:<\/svg\s*>|$)/gi, 'Diagram ')
+    .replace(/\s+/g, ' ').trim();
+}

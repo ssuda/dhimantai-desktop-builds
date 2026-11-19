@@ -1,4 +1,5 @@
 import { visualStyle } from './visual';
+import { fitDiagramLabels } from './diagramLabels';
 
 // Build a static SVG image in a fresh XML document. Only geometry, text and
 // local paint/marker references cross this boundary. No source node is adopted.
@@ -15,7 +16,7 @@ function safeValue(value: string) {
   return !/[\\:]/.test(value) && (!/url\s*\(/i.test(value) || /^url\(#[\w.-]+\)$/.test(value));
 }
 
-export function diagram(source: string): string {
+export function diagram(source: string, layout: 'authored' | 'automatic' = 'authored'): string {
   const unavailable = '<p class="diagram-unavailable">Diagram unavailable. Continue with the written explanation.</p>';
   // Accept the wrappers emitted by the plotting tool, but never entity declarations
   // or arbitrary DTDs. Parsing and copying below still applies to the entire SVG.
@@ -91,6 +92,7 @@ export function diagram(source: string): string {
   // palette its own light canvas; a transparent image must not inherit dark chrome.
   svg.setAttribute('style', 'background:#fff;color:#202124');
   if (!svg.hasAttribute('fill')) svg.setAttribute('fill', '#202124');
+  if (layout === 'authored' && svg instanceof SVGSVGElement) fitDiagramLabels(svg);
   const img = document.createElement('img');
   img.className = 'board-diagram';
   img.style.cssText = visualStyle + ';background:#fff;color:#202124;border:1px solid var(--vscode-panel-border,#ddd);border-radius:8px;padding:12px';

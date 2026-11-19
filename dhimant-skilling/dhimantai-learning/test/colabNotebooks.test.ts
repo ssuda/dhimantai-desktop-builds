@@ -1,9 +1,12 @@
+import {authoredConfiguration} from './authoredConfiguration';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { courseAccelerator, hasColabLabs, prepareColabNotebooks, tpuLessonCell, validateCourseLabs } from '../src/colabNotebooks';
+import { prepareColabNotebooks as prepare, tpuLessonCell, validateCourseLabs } from '../src/colabNotebooks';
+
+const prepareColabNotebooks:typeof prepare=(labs,dir,environment,course='Build an LLM from Scratch',provider='google.colab')=>{const c=authoredConfiguration(course);return prepare(labs,dir,environment,course,provider,c.preferred_accelerator??undefined,c.external_guidance??undefined);};
 
 test('Colab copies retain seven authored labs and Instructor scope, with no outputs or local CPU installs', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dhimantai-colab-'));
@@ -97,8 +100,89 @@ test('inference GPU notebooks retain authored code, all eight chapters, and lear
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 
-test('course accelerators use explicit course names, including normalized GPU names', () => {
-  assert.equal(courseAccelerator(' Inference Engineering '), 'gpu');
-  assert.equal(courseAccelerator('Build an LLM from Scratch'), 'tpu');
-  for (const course of ['constructor', '__proto__', 'deepinfra', 'Python']) assert.equal(hasColabLabs(course), false);
+test('published course configuration supplies the accelerator without a desktop course list', () => {
+  assert.equal(authoredConfiguration('Inference Engineering').preferred_accelerator, 'gpu');
+  assert.equal(authoredConfiguration('Developing Speech-to-Text Models').preferred_accelerator, 'gpu');
+  assert.equal(authoredConfiguration('Transformers Foundations').preferred_accelerator, 'gpu');
+  assert.equal(authoredConfiguration('Build an LLM from Scratch').preferred_accelerator, 'tpu');
+  assert.equal(authoredConfiguration('Developing TTS Models with IndicSpeak').preferred_accelerator, 'gpu');
+  for (const course of ['constructor', '__proto__', 'deepinfra', 'Python']) assert.equal(!!authoredConfiguration(course).preferred_accelerator, false);
+});
+
+test('IndicSpeak opens Colab GPU labs with its own setup and preserves learner work', async () => {
+  const {realpath} = await import('node:fs/promises');
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'indicspeak-colab-')));
+  try {
+    const directory = join(root, 'colab');
+    const source = {name:'01-foundations.ipynb', notebook:{nbformat:4, nbformat_minor:5, metadata:{}, cells:[
+      {id:'title', cell_type:'markdown', source:'# TTS foundations', metadata:{}},
+      {id:'setup', cell_type:'code', source:'from tts_runtime import setup\nsetup()', metadata:{}, outputs:['old'], execution_count:3}
+    ]}};
+    const names = await prepareColabNotebooks([source], directory, 'staging', 'Developing TTS Models with IndicSpeak');
+    assert.deepEqual(names, ['00-colab-gpu.ipynb','01-foundations.ipynb']);
+    const notebook = JSON.parse(await readFile(join(directory, source.name), 'utf8'));
+    assert.equal(notebook.metadata.dhimantai_runtime.provider, 'google.colab');
+    assert.equal(notebook.metadata.dhimantai_runtime.accelerator, 'gpu');
+    assert.match(notebook.cells[0].source, /Colab.*default/);
+    assert.doesNotMatch(JSON.stringify(notebook), /DeepInfer|TorchTPU|colab-tpu-setup/);
+    const code = notebook.cells.find((cell:any) => cell.id === 'setup');
+    assert.equal(code.source, source.notebook.cells[1].source);
+    assert.deepEqual(code.outputs, []);
+    await writeFile(join(directory, source.name), 'student edits');
+    await prepareColabNotebooks([source], directory, 'staging', 'Developing TTS Models with IndicSpeak');
+    assert.equal(await readFile(join(directory, source.name), 'utf8'), 'student edits');
+  } finally { await rm(root, {recursive:true, force:true}); }
+});
+
+test('STT Colab export uses speech guidance and preserves authored code and edits', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stt-colab-'));
+  try {
+    const {realpath} = await import('node:fs/promises');
+    const dir = join(await realpath(root), 'colab');
+    const labs = [{name:'04-indictranscribe.ipynb', notebook: {
+      nbformat:4, nbformat_minor:5, metadata:{}, cells:[
+        {id:'title',cell_type:'markdown',source:'# IndicTranscribe',metadata:{}},
+        {id:'run',cell_type:'code',source:'print("speech")',metadata:{},outputs:['old'],execution_count:1}
+      ]
+    }}];
+    const names = await prepareColabNotebooks(labs, dir, 'staging', 'Developing Speech-to-Text Models');
+    assert.deepEqual(names, ['00-colab-gpu.ipynb', '04-indictranscribe.ipynb']);
+    const path = join(dir, names[1]);
+    const result = JSON.parse(await readFile(path, 'utf8'));
+    assert.equal(result.metadata.dhimantai_runtime.provider, 'google.colab');
+    assert.equal(result.metadata.dhimantai_runtime.accelerator, 'gpu');
+    assert.match(result.cells[0].source, /Colab is the default/);
+    assert.match(result.cells[0].source, /IndicTranscribe/);
+    assert.doesNotMatch(result.cells[0].source, /DeepInfer|vLLM|TorchTPU/);
+    assert.equal(result.cells.find((c:any) => c.id === 'run').source, 'print("speech")');
+    assert.deepEqual(result.cells.find((c:any) => c.id === 'run').outputs, []);
+    await writeFile(path, 'student notes');
+    await prepareColabNotebooks(labs, dir, 'staging', 'Developing Speech-to-Text Models');
+    assert.equal(await readFile(path, 'utf8'), 'student notes');
+  } finally { await rm(root, {recursive:true, force:true}); }
+});
+
+test('Transformers export keeps CPU labs and the optional Colab GPU switch', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'transformers-colab-'));
+  try {
+    const {realpath} = await import('node:fs/promises');
+    const dir = join(await realpath(root), 'colab');
+    const sources = [{name:'04-training.ipynb', notebook:{nbformat:4, nbformat_minor:5, metadata:{}, cells:[
+      {id:'title', cell_type:'markdown', source:'# Tiny Transformer', metadata:{}},
+      {id:'optional', cell_type:'code', source:'RUN_COLAB_GPU = False', metadata:{}, outputs:['old'], execution_count:1}
+    ]}}];
+    const names = await prepareColabNotebooks(sources, dir, 'staging', 'Transformers Foundations');
+    assert.deepEqual(names, ['00-colab-gpu.ipynb', '04-training.ipynb']);
+    const lab = JSON.parse(await readFile(join(dir, names[1]), 'utf8'));
+    assert.equal(lab.metadata.dhimantai_runtime.provider, 'google.colab');
+    assert.equal(lab.metadata.dhimantai_runtime.accelerator, 'gpu');
+    assert.match(lab.cells[0].source, /core PyTorch labs run on CPU/);
+    assert.doesNotMatch(lab.cells[0].source, /vLLM|IndicSpeak|DeepInfer|TorchTPU/);
+    const cell = lab.cells.find((c:any) => c.id === 'optional');
+    assert.equal(cell.source, 'RUN_COLAB_GPU = False');
+    assert.deepEqual(cell.outputs, []);
+    await writeFile(join(dir, names[1]), 'student experiment');
+    await prepareColabNotebooks(sources, dir, 'staging', 'Transformers Foundations');
+    assert.equal(await readFile(join(dir, names[1]), 'utf8'), 'student experiment');
+  } finally { await rm(root, {recursive:true, force:true}); }
 });

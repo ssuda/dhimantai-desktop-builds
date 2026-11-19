@@ -53,7 +53,7 @@ export async function run() {
         (dom.window as any).acquireVsCodeApi = () => ({ postMessage: (message: any) => sent.push(message) });
         for (const script of dom.window.document.querySelectorAll('script')) dom.window.eval(script.textContent!);
         assert.equal(sent.length, 0);
-        assert.equal(dom.window.document.querySelector('input'), null, 'a short catalog needs no search box');
+        assert.ok(dom.window.document.querySelector('input[type="search"]'), 'courses and projects share one search');
         assert.equal(dom.window.document.querySelectorAll('main [data-course] button:not(.secondary)').length, 1, 'one primary action per course');
         const join = dom.window.document.querySelector('button[data-action="join"]') as HTMLButtonElement;
         join.click(); join.click();
@@ -117,7 +117,7 @@ export async function run() {
           assert.doesNotMatch(card.textContent!, /Locked|coming soon|First chapter free|Unlock all/);
           assert.equal(card.querySelectorAll('button[data-action="buy"]').length, 0);
           assert.deepEqual([...card.querySelectorAll<HTMLButtonElement>('.actions button')].map(b => b.dataset.action),
-            ['practice', 'study'], 'joined free courses offer Continue and Study');
+            ['practice'], 'joined free courses open their learning room');
         } finally { dom.window.close(); }
       } finally { catalog.dispose(); }
     });

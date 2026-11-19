@@ -10,19 +10,22 @@ import { ensurePodman, run, stopCourseRuntime, stream } from './podman';
 import { CourseEngine } from './courseEngine';
 import { repairable, withCourseRepair } from './courseRecovery';
 import { courseDebug, courseDebugPort } from './courseDebug';
-import { courseExamples, verifyCourseLanguage } from './courseReadiness';
+import { courseExamples, verifyCourseLanguage, verifyCourseNotebook } from './courseReadiness';
 import { courseTerminalOptions, openCourseTerminal } from './courseTerminal';
 import { chooseColabKernel, ensureColab } from './colab';
+import { externalNotebookRuntime } from './colabSetup';
 import { openNotebookKernelPicker } from './notebookKernelPicker';
-import { COURSE_LANGUAGES, courseDockerfile, courseRecipe, Recipe, recipeLanguage } from './courseRecipe';
-import { courseAccelerator, hasColabLabs, prepareColabNotebooks, validateCourseLabs, CourseLab } from './colabNotebooks';
-import {RuntimeRelease, runtimeRelease, runtimeSelection, runtimeMachines, composeRuntime} from './courseRuntime';
+import { COURSE_LANGUAGES, courseDockerfile, courseDockerfileServices, courseRecipe, courseRequirements, Recipe, PROGRAMMING_RUNTIME, programmingRecipe } from './courseRecipe';
+import { prepareColabNotebooks, validateCourseLabs, CourseLab } from './colabNotebooks';
+import {CourseConfiguration, CourseRuntimeResponse, courseConfiguration} from './courseConfiguration';
+import {RuntimeRelease, runtimeRelease, runtimeSelection, runtimeMachines, composeRuntime, courseMediaPublishArgs} from './courseRuntime';
 
 export interface CourseScope {
   course: string;
   account: string;
   environment: EnvironmentName;
   target?: {lesson?:string; lab?:string};
+  runtime?: 'programming';
 }
 interface CourseRecord extends CourseScope {
   root: string;
@@ -96,8 +99,7 @@ export function notebookFile(data: vscode.NotebookData) {
 export class CourseWorkspaces {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly recordPrefix = 'dhimantai.courseRuntime.';
-  private readonly recipes: Promise<Record<string, Recipe>>;
-  private loadedRecipes: Record<string, Recipe> = {};
+  private readonly configurations = new Map<string, CourseRuntimeResponse>();
   private readonly media: string;
   private readonly engines = new Map<string, CourseEngine>();
   private readonly releases = new Map<string, RuntimeRelease>();
@@ -111,11 +113,9 @@ export class CourseWorkspaces {
     private readonly output: vscode.OutputChannel,
     private readonly available: boolean,
     private readonly downloadLabs?: (scope: CourseScope) => Promise<CourseLab[]>,
-    private readonly downloadRuntime?: (scope: CourseScope) => Promise<RuntimeRelease | null>
+    private readonly downloadRuntime?: (scope: CourseScope) => Promise<CourseRuntimeResponse>
   ) {
     this.media = join(context.extensionPath, 'media', 'course');
-    this.recipes = readJson(join(this.media, 'profiles.json'));
-    void this.recipes.then(recipes => { this.loadedRecipes = recipes; }, () => {});
   }
   private get records() {
     return this.context.globalState
@@ -145,8 +145,8 @@ export class CourseWorkspaces {
   }
   /** The course's single language, when known without waiting (used to preset new notebook cells). */
   languageFor(uri: vscode.Uri): string | undefined {
-    const course = this.recordFor(uri)?.course;
-    return course ? recipeLanguage(this.loadedRecipes, course) : undefined;
+    const scope = this.recordFor(uri);
+    return scope?.runtime==='programming' ? 'python' : scope && this.configurations.get(this.configurationKey(scope))?.configuration.recipe.language;
   }
   private async check(s: CourseScope) {
     await this.checkAccount(s);
@@ -155,7 +155,24 @@ export class CourseWorkspaces {
   }
 
   private async recipe(s: CourseScope) {
-    return courseRecipe({...await this.recipes,...this.loadedRecipes}, s.course);
+    if (s.runtime === 'programming') return programmingRecipe();
+    const config = await this.configuration(s);
+    return courseRecipe({[s.course.toLowerCase()]:config.recipe}, s.course);
+  }
+
+  private configurationKey(scope:CourseScope) { return JSON.stringify([scope.environment,scope.account,scope.course]); }
+  async configuration(scope:CourseScope, refresh=false):Promise<CourseConfiguration> {
+    await this.checkAccount(scope);
+    const key=this.configurationKey(scope);
+    if(refresh||!this.configurations.has(key)) {
+      if(!this.downloadRuntime)throw new Error('Course configuration is unavailable. Reopen the course.');
+      const response=await this.downloadRuntime(scope);
+      await this.checkAccount(scope);
+      const configuration=courseConfiguration(response.configuration,scope.course);
+      if(response.runtime)runtimeRelease(response.runtime);
+      this.configurations.set(key,{...response,configuration});
+    }
+    return this.configurations.get(key)!.configuration;
   }
 
   private async writeRecipe(record: CourseRecord) {
@@ -167,7 +184,17 @@ export class CourseWorkspaces {
       throw new Error('The course runtime folder must be inside the course.');
     const template = await readFile(join(this.media, 'Dockerfile'), 'utf8');
     await createOnce(join(root, 'Dockerfile'), courseDockerfile(template, recipe));
-    await createOnce(join(root, 'requirements.txt'), (recipe.requirements ?? []).join('\n') + '\n');
+    const dockerfilePath = join(root, 'Dockerfile');
+    const currentDockerfile = await readFile(dockerfilePath, 'utf8');
+    const dockerfile = courseDockerfileServices(currentDockerfile, recipe.services);
+    if (dockerfile !== currentDockerfile) await atomic(dockerfilePath, dockerfile);
+    const requirementsFile = join(root, 'requirements.txt');
+    const currentRequirements = await readFile(requirementsFile, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      return undefined;
+    });
+    const requirements = courseRequirements(currentRequirements, recipe);
+    if (requirements !== currentRequirements) await atomic(requirementsFile, requirements);
     await createOnce(
       join(root, '.containerignore'),
       '*\n!Dockerfile\n!requirements.txt\n!runtime/\n!runtime/**\n'
@@ -195,9 +222,7 @@ export class CourseWorkspaces {
       if ((await readFile(target, 'utf8').catch(() => null)) !== text) await atomic(target, text);
     }
     const scenarioFile = join(generated, 'lab_scenarios.json');
-    const scenarios = recipe.scenarios
-      ? await readFile(join(this.media, 'scenarios', recipe.scenarios + '.json'), 'utf8')
-      : JSON.stringify({version:1, scenarios:[]});
+    const scenarios = JSON.stringify(record.runtime==='programming' ? {version:1, scenarios:[]} : (await this.configuration(record)).scenarios);
     if ((await readFile(scenarioFile, 'utf8').catch(() => null)) !== scenarios) await atomic(scenarioFile, scenarios);
     const hash = createHash('sha256');hash.update('preview-ports-v1');
     async function include(file: string) {
@@ -225,12 +250,23 @@ export class CourseWorkspaces {
     return result;
   }
 
+  private async preparePythonEnvironment(engine:CourseEngine) {
+    const folder = join(engine.root, '.dhimantai');
+    await mkdir(folder, {recursive:true});
+    if (await realpath(folder) !== folder) throw new Error('The runtime folder must be inside the course.');
+    await atomic(join(folder, 'python_environment.py'), await readFile(join(this.media, 'python_environment.py'), 'utf8'));
+    engine.pythonEnvironment = true;
+    await run(engine.bin, engine.execArgs(engine.root, 'python', ['-c',
+      'import sys; assert sys.prefix != sys.base_prefix, "Writable Python environment was not activated"']), 100000);
+  }
+
   private async courseDirectory(s: CourseScope, previous?: CourseRecord): Promise<CourseRecord> {
     const configured = vscode.workspace.getConfiguration('dhimantai').get<string>('exercisesFolder')?.trim();
     const parent = resolve(
       configured ? configured.replace(/^~(?=$|[\\/])/, homedir()) : join(homedir(), 'dhimantAI')
     );
-    const key = previous?.key ?? digest(JSON.stringify([s.environment, s.account, s.course, parent]));
+    const key = previous?.key ?? digest(JSON.stringify([s.environment, s.account, s.course, parent,
+      ...(s.runtime ? [s.runtime] : [])]));
     const slug =
       s.course
         .toLowerCase()
@@ -247,9 +283,10 @@ export class CourseWorkspaces {
     await this.check(s);
     const record = await this.courseDirectory(s, previous);
     if (s.target) record.target = s.target;
-    if (this.downloadRuntime) {
-      const published = await this.downloadRuntime(s);
+    if (this.downloadRuntime && s.runtime !== 'programming') {
+      await this.configuration(s, true);
       await this.check(s);
+      const published=this.configurations.get(this.configurationKey(s))!.runtime;
       if (published) return this.preparePublished(record, runtimeRelease(published), repair);
     }
     const { key } = record;
@@ -355,10 +392,12 @@ export class CourseWorkspaces {
           });
         })());
         else if (!existing.State.Running) await repairable(stream(bin, ['start', name], log));
-        const engine = new CourseEngine(bin, name, record.root);
+        const engine = new CourseEngine(bin, name, record.root, false,
+          s.runtime === 'programming' ? PROGRAMMING_RUNTIME : undefined);
         report('Preparing zsh and Oh My Zsh for the course terminal');
         await repairable(stream(bin, ['exec', '--user', '0', name, 'python', '/opt/dhimantai/user.py',
           String(process.getuid?.() ?? 1000), String(process.getgid?.() ?? 1000)], log));
+        await repairable(this.preparePythonEnvironment(engine));
         const recipe = await this.recipe(s);
         report('Checking the course packages');
         await repairable(run(
@@ -371,7 +410,11 @@ export class CourseWorkspaces {
         ));
         await repairable(run(bin, engine.execArgs(record.root, 'python', ['-m', 'pip', 'check']), 60000));
         report('Running a course readiness check');
-        await this.ensureLanguage(engine, recipe.language);
+        for (const language of recipe.languages ?? [recipe.language]) await this.ensureLanguage(engine, language);
+        if (recipe.language === 'python') {
+          const warning = await repairable(verifyCourseNotebook(engine, recipe.imports));
+          if (warning) void vscode.window.showWarningMessage(warning);
+        }
         await this.check(s);
         const port = await courseDebugPort(engine).catch(() => undefined);
         await this.context.globalState.update(this.recordPrefix + key, { ...record, prepared: true, debugger: port ? {bin, port} : undefined });
@@ -389,7 +432,6 @@ export class CourseWorkspaces {
     const machine = machines.includes(record.machine ?? '') ? record.machine! : selection.compose
       ? release.composes[selection.compose].default_service : 'course';
     this.releases.set(record.key, release);
-    this.loadedRecipes[record.course.toLowerCase()] = release.recipe;
     return vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:record.course}, async progress => {
       const report = (message:string) => {progress.report({message});this.output.appendLine(message);};
       const log = (message:string) => this.output.append(message);
@@ -401,7 +443,8 @@ export class CourseWorkspaces {
         report('Pausing the previous lab machines');
         await stream(bin, ['stop', '--time', '10', ...previous.names], log);
       }
-      const fingerprint = digest(JSON.stringify([release.source_sha256, selection, 'preview-ports-v1']));
+      const mediaPorts = courseMediaPublishArgs(await this.configuration(record));
+      const fingerprint = digest(JSON.stringify([release.source_sha256, selection, 'preview-ports-v1', ...mediaPorts]));
       let name:string;
       const activeNames:string[] = [];
       if (selection.compose) {
@@ -429,6 +472,7 @@ export class CourseWorkspaces {
             + '\nwhile not p.exists() and time.monotonic()<deadline: time.sleep(.2)\nassert p.exists(), "Lab initialization did not complete"',readyFile],125000);
           const engine = new CourseEngine(bin, id, record.root, true, target,
             release.composes[selection.compose].compose.services[target].environment?.DHIMANTAI_DATABASE_MODE === 'service');
+          await repairable(this.preparePythonEnvironment(engine));
           this.started.set(id, engine);
           activeNames.push(id);
           if (target === machine) name = id;
@@ -448,7 +492,7 @@ export class CourseWorkspaces {
             '--label', 'ai.dhimant.recipe=' + fingerprint, '--mount', 'type=bind,"source=' + source + '",target=/course' + (process.platform === 'linux' ? ',relabel=private' : ''),
             ...(process.platform === 'linux' ? ['--userns=keep-id'] : []), '--user', `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
             '--pids-limit','1024','--memory',release.recipe.torch ? '3g' : '1536m', '--cpus','2',
-            '--env','HOME=/course/.home','--env','SHELL=/bin/zsh','--publish','127.0.0.1::5678/tcp', ...previewPublishArgs,
+            '--env','HOME=/course/.home','--env','SHELL=/bin/zsh','--publish','127.0.0.1::5678/tcp', ...previewPublishArgs, ...mediaPorts,
             '--workdir','/course',selection.image,'sleep','infinity'], log);
         } else if (!info.State.Running) await stream(bin, ['start', name], log);
         await stream(bin, ['exec','--user','0',name,'python','/opt/dhimantai/user.py',
@@ -457,7 +501,12 @@ export class CourseWorkspaces {
       }
       const engine = new CourseEngine(bin, name!, record.root, true, machine,
         !!selection.compose && release.composes[selection.compose].compose.services[machine].environment?.DHIMANTAI_DATABASE_MODE === 'service');
+      await repairable(this.preparePythonEnvironment(engine));
       await repairable(verifyCourseLanguage(engine, engine.serviceDatabase ? 'bash' : release.recipe.language));
+      if (release.recipe.language === 'python') {
+        const warning = await repairable(verifyCourseNotebook(engine, release.recipe.imports));
+        if (warning) void vscode.window.showWarningMessage(warning);
+      }
       await this.check(record);
       this.started.set(engine.name, engine);
       this.activeMachines.set(record.key, {selection:selectionKey,names:activeNames});
@@ -556,6 +605,11 @@ export class CourseWorkspaces {
     });
   }
 
+  /** Doubt Solver shares all editor languages, independent of the selected course or its access. */
+  async programmingFolder(account: string, environment: EnvironmentName) {
+    return this.courseFolder({course:PROGRAMMING_RUNTIME, account, environment, runtime:'programming'});
+  }
+
   /** Register ownership without starting or installing anything while browsing/editing. */
   async courseFolder(scope: CourseScope) {
     await this.checkAccount(scope);
@@ -575,14 +629,15 @@ export class CourseWorkspaces {
 
   async enterColab(scope: CourseScope, provider: 'google.colab' | 'jupyter' = 'google.colab') {
     await this.checkAccount(scope);
-    if (!hasColabLabs(scope.course)) throw new Error('No Colab labs are available for this course.');
-    const accelerator = courseAccelerator(scope.course)!;
+    const config = await this.configuration(scope, true);
+    const accelerator = config.preferred_accelerator;
+    if (!accelerator) throw new Error('No external compute labs are configured for this course.');
     const labs = await this.courseLabs(scope);
     if (provider === 'google.colab' && !await ensureColab()) return;
     await this.checkAccount(scope);
     const root = (await this.courseFolder(scope)).fsPath;
     const directory = join(root, provider === 'google.colab' ? 'colab' : 'gpu');
-    const names = await prepareColabNotebooks(labs, directory, scope.environment, scope.course, provider);
+    const names = await prepareColabNotebooks(labs, directory, scope.environment, scope.course, provider, accelerator, config.external_guidance??undefined);
     const selected = await vscode.window.showQuickPick(names.map(name => ({
       label: name.replace(/\.ipynb$/, ''), name,
       description: name.startsWith('00-') ? `Start here — connect your ${accelerator.toUpperCase()} runtime` : 'Course lesson',
@@ -599,9 +654,30 @@ export class CourseWorkspaces {
     scope: CourseScope,
     action: { kind: 'start' } | { kind: 'notebook'; language: string; notebook: string } = { kind: 'start' }
   ) {
-    // GPU course labs can connect directly to student hardware or Colab; downloading
-    // them must not first provision a local CPU container or require Google sign-in.
-    if (action.kind === 'start' && courseAccelerator(scope.course) === 'gpu') return this.enterColab(scope, 'jupyter');
+    if (action.kind === 'notebook') {
+      const notebook = JSON.parse(action.notebook);
+      const runtime = externalNotebookRuntime(notebook.metadata ?? {}, (notebook.cells ?? [])
+        .filter((cell: any) => cell.cell_type === 'code')
+        .map((cell: any) => Array.isArray(cell.source) ? cell.source.join('') : String(cell.source ?? '')));
+      if (runtime) {
+        await this.checkAccount(scope);
+        if (runtime.provider === 'google.colab' && !await ensureColab()) return;
+        const root = (await this.courseFolder(scope)).fsPath;
+        const directory = join(root, runtime.provider === 'google.colab' ? 'colab' : 'gpu');
+        await mkdir(directory, {recursive: true});
+        notebook.metadata = {...notebook.metadata, dhimantai_runtime: runtime};
+        const uri = vscode.Uri.file(join(directory, randomUUID() + '.ipynb'));
+        await createOnce(uri.fsPath, JSON.stringify(notebook, null, 2));
+        await this.checkAccount(scope);
+        const doc = await vscode.workspace.openNotebookDocument(uri);
+        if (runtime.provider === 'google.colab') await chooseColabKernel(doc, runtime.accelerator);
+        else await openNotebookKernelPicker(doc);
+        return doc;
+      }
+    }
+    // GPU coursework starts on Colab without provisioning a local CPU container.
+    // The Runtime dropdown can still select an existing Jupyter server explicitly.
+    if (action.kind === 'start' && scope.runtime !== 'programming' && (await this.configuration(scope, true)).preferred_accelerator === 'gpu') return this.enterColab(scope);
     const labs = action.kind === 'start' && (await this.recipe(scope)).labs ? await this.courseLabs(scope) : undefined;
     const engine = await this.setup(scope);
     const recipe = await this.recipe(scope);

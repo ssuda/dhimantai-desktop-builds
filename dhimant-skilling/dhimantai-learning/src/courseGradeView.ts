@@ -9,6 +9,7 @@ import { learnerRpc, PublicCatalog } from './learnerCatalog';
 import { CourseworkOutbox, CourseCertificate, CourseGrade } from './courseworkProgress';
 import { courseGradeHtml } from './courseGradeHtml';
 import { onRecordsChanged } from './helpRecord';
+import { CertificateCourse, loadCertificateCourses } from './certificateDashboard';
 
 export class CourseGradeView implements vscode.Disposable {
   private panel?: vscode.WebviewPanel;
@@ -21,6 +22,7 @@ export class CourseGradeView implements vscode.Disposable {
   private grade?: CourseGrade;
   private learning?: SkillingPathway;
   private certificates: CourseCertificate[] = [];
+  private certificateCourses: CertificateCourse[] = [];
   private busy = false;
   private notice = '';
   private subscriptions: vscode.Disposable[];
@@ -31,7 +33,7 @@ export class CourseGradeView implements vscode.Disposable {
       onRecordsChanged(() => { if (!this.busy) void this.refresh(); }),
       vscode.commands.registerCommand('dhimantai.courseGrade', (course?: string) => this.open(course))];
   }
-  private clear() { this.sequence++; this.grade = undefined; this.learning = undefined; this.certificates = []; this.api = undefined; this.owner = ''; this.render('Loading…'); }
+  private clear() { this.sequence++; this.grade = undefined; this.learning = undefined; this.certificates = []; this.certificateCourses = []; this.api = undefined; this.owner = ''; this.render('Loading…'); }
   dispose() { this.sequence++; this.panel?.dispose(); this.subscriptions.forEach(s => s.dispose()); }
   async open(course?: string) {
     try {
@@ -57,21 +59,27 @@ export class CourseGradeView implements vscode.Disposable {
   private render(notice = this.notice) {
     this.notice = notice;
     if (this.panel) this.panel.webview.html = courseGradeHtml(randomBytes(16).toString('hex'),this.grade,this.certificates,this.notice,
-      this.owner && this.environment ? this.outbox.pending(this.environment,this.owner).length : 0,this.busy,!this.course,this.learning,`${this.owner}:${this.environment}:${this.course}`);
+      this.owner && this.environment ? this.outbox.pending(this.environment,this.owner).length : 0,this.busy,!this.course,this.learning,`${this.owner}:${this.environment}:${this.course}`,this.certificateCourses);
   }
   private async refresh() {
     if (!this.panel) return;
     const sequence = ++this.sequence, environment = this.env(), backend = this.service();
-    this.grade = undefined; this.learning = undefined; this.certificates = []; this.api = undefined; this.render('Loading course results…');
+    this.grade = undefined; this.learning = undefined; this.certificates = []; this.certificateCourses = []; this.api = undefined; this.render('Loading course results…');
     try {
       const owner = (await this.auth.session())?.user.id;
       if (sequence !== this.sequence) return;
       if (!owner) { this.owner = ''; this.render('Sign in to view your course grade.'); return; }
       this.owner = owner; this.environment = environment; this.apiUrl = backend.apiUrl;
       const api = new Api(this.auth, () => { if (environment !== this.env()) throw new Error('Your service changed.'); return backend; }, owner);
-      const [result, history, learning] = await Promise.allSettled([this.course ? api.courseGrade(this.course) : Promise.resolve(undefined),api.courseCertificates(),this.course?api.skillingPathway(this.course):Promise.resolve(undefined)]);
+      const [result, history, learning, dashboard] = await Promise.allSettled([this.course ? api.courseGrade(this.course) : Promise.resolve(undefined),api.courseCertificates(),this.course?api.skillingPathway(this.course):Promise.resolve(undefined),
+        this.course ? Promise.resolve([]) : (async () => {
+          const catalog = await learnerRpc<PublicCatalog>(backend, 'public_learning_catalog', {}, await this.auth.accessToken());
+          return loadCertificateCourses(catalog.courses, async id => (await api.courseGrade(id)).gradebook,
+            () => sequence === this.sequence && environment === this.env());
+        })()]);
       if (sequence !== this.sequence || (await this.auth.session())?.user.id !== owner) return;
       this.api = api;
+      if (dashboard.status === 'fulfilled') this.certificateCourses = dashboard.value;
       if(learning.status==='fulfilled') this.learning=learning.value;
       if (history.status === 'fulfilled') this.certificates = history.value.certificates.filter(c => !this.course || c.course_id === this.course);
       if (result.status === 'fulfilled' && result.value) {
@@ -82,15 +90,18 @@ export class CourseGradeView implements vscode.Disposable {
       }
       this.render(result.status === 'rejected' ? String(result.reason?.message ?? 'Course grade could not be loaded.')
         : history.status === 'rejected' ? 'Earlier certificates could not be loaded. Refresh to try again.'
-        : !this.course && !this.certificates.length ? 'No certificates yet. Complete your coursework and open Grade & certificate from your course.' : '');
+        : dashboard.status === 'rejected' ? 'Your courses could not be loaded. Refresh to check certificate requirements.' : '');
     } catch (error) { if (sequence === this.sequence) this.render(error instanceof Error ? error.message : 'Course results could not be loaded.'); }
   }
   private async handle(message: SkillingMessage) {
     if (this.busy) return;
     if (message.type === 'refresh') return this.refresh();
+    if (message.type === 'catalog') return vscode.commands.executeCommand('dhimantai.courseCatalog');
     const api = this.api, owner = this.owner, environment = this.environment, sequence = this.sequence;
     if (!api || !environment || (await this.auth.session())?.user.id !== owner || this.env() !== environment) return;
     try {
+      if (message.type === 'courseRequirements' && this.certificateCourses.some(c => c.id === message.id)) return this.open(message.id);
+      if (message.type === 'certificateLibrary') return this.open('__certificates__');
       if(['nextCourse','skillingProject','skillingSubmit','weeklyStart','weeklySubmit','challenge','interview','authoredChallenge'].includes(message.type??'')) {
         this.busy=true;this.render('Working…');
         await skillingAction(message,api,this.course,this.learning,this.context,async()=>sequence===this.sequence&&this.env()===environment&&(await this.auth.session())?.user.id===owner,owner);
@@ -101,8 +112,10 @@ export class CourseGradeView implements vscode.Disposable {
         const c = this.certificates.find(c => c.id === message.id && !c.revoked_at);
         if (!c) return;
         const url = this.apiUrl.replace(/\/+$/,'') + '/course-projects/certificates/' + encodeURIComponent(c.id) + '/verify';
-        if (message.type === 'copy') await vscode.env.clipboard.writeText(url);
-        else await vscode.env.openExternal(vscode.Uri.parse(url));
+        if (message.type === 'copy') {
+          await vscode.env.clipboard.writeText(url);
+          if (sequence === this.sequence) this.render('Verification link copied. You can share it on your professional profile.');
+        } else await vscode.env.openExternal(vscode.Uri.parse(url));
         return;
       }
       const req = this.grade?.requirements.find(r => r.id === message.id && r.kind === message.type);

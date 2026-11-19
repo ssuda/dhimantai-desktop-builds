@@ -7,6 +7,7 @@ import type { NotebookApi, NotebookLink } from './notebookSubmission';
 import type { SessionNotebookLink, TransferBody, TransferReceipt } from './sessionNotebookTransfer';
 import type { CourseLab } from './colabNotebooks';
 import type { RuntimeRelease } from './courseRuntime';
+import type {CourseRuntimeResponse} from './courseConfiguration';
 import type { ProjectHandoff } from './projectCore';
 import type { CourseCertificate, CourseGrade, CourseworkResult, ProjectAssessment } from './courseworkProgress';
 
@@ -194,8 +195,9 @@ export interface CoachRuntimeRelease {
 }
 
 /** expired: the course access period ended, so every chapter is locked until the learner buys again. */
-export interface Chapter { id: string; name: string; lesson?: string; locked?: boolean; expired?: boolean; progress?: import('./courseProgress').ChapterCoverage }
-export interface Course { name: string; chapters: Chapter[] }
+export interface LabCompute {version:1;status:'specified'|'unspecified';nodes?:number;gpusPerNode?:number;totalGpus?:number;optionalGpus?:number;note:string;layouts?:{nodes:number;gpusPerNode:number}[]}
+export interface Chapter { id: string; name: string; lesson?: string; locked?: boolean; expired?: boolean; progress?: import('./courseProgress').ChapterCoverage; compute?:LabCompute }
+export interface Course { name: string; chapters: Chapter[]; project_coach?: {course_id: string | null} | null }
 export interface Language { id: string; name: string }
 export type QuestionPool = 'textbook' | 'institution';
 export interface PracticeQuestion { id: string; title: string; topic?: string; language: string; difficulty?: string; kind?: 'written' }
@@ -211,7 +213,8 @@ export interface GeneratedExercise {
 export interface LearningPurchases {
   payments_ready: boolean;
   purchases: { id: string; title: string; amount: number; currency: string; course_ids: string[];
-    status: 'creating' | 'created' | 'paid' | 'refunded'; created_at: string; offer_id: string }[];
+    status: 'creating' | 'created' | 'paid' | 'refunded'; created_at: string; offer_id: string;
+    paid_at?:string|null; razorpay_payment_id?:string|null }[];
 }
 
 export class ApiError extends Error {
@@ -222,16 +225,16 @@ export class ApiError extends Error {
 
 export const ACCESS_ENDED = 'Access ended · Buy again in the Course Catalog to continue.';
 
-/**
- * Payment-required and access-period refusals read the same everywhere. Project endpoints refuse with 403 when no
- * Python course access is active (never joined, or the access period ended); say both, never a raw status.
- */
+/** Older project services use one refusal for both missing and expired enrollment. */
 export function accessErrorMessage(status: number, path: string, message: string, code?: string): string | undefined {
+  const project = /^\/(?:course-project-handoffs|notebook-coach\/project)(?:[/?]|$)/.test(path);
+  if (project && (status === 402 || status === 403 && code === 'payment_required'))
+    return 'Open the Course Catalog to check which courses your account can access.';
   if (status === 402 || (status === 403 && /^(?:access_(?:ended|expired)|course_access_expired|payment_required)$/.test(code ?? ''))) return ACCESS_ENDED;
   if (status !== 403) return;
-  if (/^Your access to this course ended\b/.test(message)) return ACCESS_ENDED;
-  if (/^\/(?:course-project-handoffs|notebook-coach\/project)(?:[/?]|$)/.test(path) && /python course/i.test(message))
-    return 'Projects need active Python course access. Join a Python course, or if your access period ended: ' + ACCESS_ENDED;
+  if (/^Your (?:access to this course ended|course access has ended)\b/i.test(message)) return ACCESS_ENDED;
+  if (project && /^(?:Join an available Python course|Project help needs active Python course access)/.test(message))
+    return 'Open the Course Catalog and check that your learning account has an active Python course with an accessible chapter.';
 }
 
 export class Api {
@@ -250,9 +253,9 @@ export class Api {
     return this.request<T>('POST', '/instructor/app-authoring', body, false, undefined, 330_000);
   }
 
-  guidedErpForms() {
+  guidedErpForms(signal?: AbortSignal) {
     return this.request<{id:string; title:string; version:string; lessons:import('./browserLearning').BrowserTask[]}>(
-      'GET', '/learning/guided-forms/erpnext-essentials');
+      'GET', '/learning/guided-forms/erpnext-essentials', undefined, false, signal);
   }
 
   transferNotebook(link: SessionNotebookLink, body: TransferBody) {
@@ -306,13 +309,13 @@ export class Api {
     if (!response.ok) {
       const message = typeof data.error === 'string' && data.error ? data.error : `Request failed (${response.status}).`;
       const access = accessErrorMessage(response.status, path, message, data.code);
-      throw new ApiError(response.status, access ?? message, access && !data.code ? 'access_ended' : data.code);
+      throw new ApiError(response.status, access ?? message, data.code ?? (access === ACCESS_ENDED ? 'access_ended' : access ? 'course_access_required' : undefined));
     }
     return data as T;
   }
 
-  practiceCatalog() {
-    return this.request<{ courses: Course[]; languages: Language[]; question_pools?: QuestionPool[] }>('GET', '/notebook-coach/exercises');
+  practiceCatalog(signal?: AbortSignal) {
+    return this.request<{ courses: Course[]; languages: Language[]; question_pools?: QuestionPool[] }>('GET', '/notebook-coach/exercises', undefined, false, signal);
   }
 
   projectHandoffAvailability() {
@@ -368,7 +371,7 @@ export class Api {
   }
 
   courseRuntime(course: string) {
-    return this.request<{runtime: RuntimeRelease | null}>('GET', '/notebook-coach/runtime?course=' + encodeURIComponent(course));
+    return this.request<CourseRuntimeResponse>('GET', '/notebook-coach/runtime?course=' + encodeURIComponent(course));
   }
 
   purchaseLearningOffer(offer_id: string) {
@@ -402,8 +405,8 @@ export class Api {
     return this.request<{url: string; token: string}>('POST', path + '/audio', {text});
   }
 
-  startAudio(path: string, text: string, ticket: string) {
-    return this.request<{accepted: boolean}>('POST', path + '/audio', {text, ticket});
+  startAudio(path: string, text: string, ticket: string, speed = 1) {
+    return this.request<{accepted: boolean}>('POST', path + '/audio', {text, ticket, speed});
   }
 
   /** Line-level help: the server needs the learner's explanation and a token proving a hint came first. */

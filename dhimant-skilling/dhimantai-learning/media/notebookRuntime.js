@@ -22,8 +22,10 @@ window.installNotebookRuntime = api => {
       if (option) option.disabled = !data.podman;
     }
     select.querySelector('[value="colab"]').disabled = !data.colab;
-    const jupyter = select.querySelector('[value="jupyter"]');
-    if (jupyter) jupyter.disabled = !uri;
+    for (const value of ['cloud', 'jupyter']) {
+      const option = select.querySelector(`[value="${value}"]`);
+      if (option) option.disabled = !data.colab;
+    }
     select.querySelector('[value="podman"]').disabled = !data.podman;
     select.querySelector('[value="podman"]').textContent = data.podman ? 'Course container' : 'Course container · setup needed';
     select.querySelector('[value="colab"]').textContent = data.colab ? 'Google Colab · remote Python' : 'Google Colab · Python notebooks only';

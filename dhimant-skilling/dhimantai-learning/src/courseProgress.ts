@@ -5,7 +5,7 @@ export interface ChapterCoverage {
   status: CoverageStatus; covered: number; total: number; topics: TopicCoverage[];
   needs_review?: number; updated_at?: string | null;
 }
-export const coverageNote = 'Covered means taught by Instructor. Practice and mastery are tracked separately.';
+export const coverageNote = 'Covered means taught by Instructor. Needs review means a topic check still needs follow-up practice. Practice and mastery are tracked separately.';
 export function coverageLabel(progress?: ChapterCoverage): string {
   if (!progress || progress.status === 'unavailable') return 'Progress unavailable';
   if (progress.status === 'content_changed') return 'Content updated · Revisit';
@@ -40,6 +40,7 @@ export function topicCoverageHtml(progress?: ChapterCoverage): string {
 export function nextChapter<T extends {progress?: ChapterCoverage}>(chapters: T[], isOpen: (chapter: T) => boolean): T | undefined {
   if (!chapters.some(ch => ch.progress && ch.progress.status !== 'unavailable')) return undefined;
   const open = chapters.filter(isOpen);
-  return open.find(ch => ch.progress?.status === 'in_progress' || ch.progress?.status === 'content_changed')
+  return open.filter(ch => ch.progress?.status === 'in_progress' || ch.progress?.status === 'content_changed')
+    .sort((a, b) => (Date.parse(b.progress?.updated_at ?? '') || 0) - (Date.parse(a.progress?.updated_at ?? '') || 0))[0]
     ?? open.find(ch => ch.progress?.status !== 'covered');
 }

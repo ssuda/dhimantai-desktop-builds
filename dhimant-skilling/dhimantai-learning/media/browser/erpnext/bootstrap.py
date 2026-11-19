@@ -2,6 +2,7 @@
 from datetime import date
 import os
 import frappe
+from training_permissions import ROLE, ensure_training_permissions
 
 os.chdir('/home/frappe/frappe-bench/sites')
 frappe.init(site='frontend', sites_path='/home/frappe/frappe-bench/sites')
@@ -24,8 +25,9 @@ try:
     tag = learner[:10]
     email = f'learner-{learner}@training.invalid'
     company = f'Training {tag}'
+    ensure_training_permissions()
     roles = ['Accounts User', 'Sales User', 'Purchase User', 'Stock User',
-             'Manufacturing User', 'Purchase Master Manager', 'Item Manager']
+             'Manufacturing User', 'Purchase Master Manager', 'Item Manager', ROLE]
     if not frappe.db.exists('Company', company):
         frappe.get_doc({'doctype': 'Company', 'company_name': company, 'abbr': tag,
                         'default_currency': 'INR', 'country': 'India',

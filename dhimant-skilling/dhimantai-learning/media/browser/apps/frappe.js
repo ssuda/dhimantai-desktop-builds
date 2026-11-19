@@ -4,7 +4,15 @@
   if (window.dhimantaiApp) return;
   const json = async response => { if (!response.ok) throw new Error('request failed'); return response.json(); };
   const get = path => fetch(path, {credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000)}).then(json);
-  const frm = () => window.cur_frm;
+  // Desk retains cur_frm even when it replaces the visible form with a message page.
+  const frm = () => window.frappe?.container ? frappe.container.page?.frm : window.cur_frm;
+  // The course opens forms from outside ERPNext's sidebar, like its global search.
+  // Let Frappe choose a sidebar that actually lists the destination (Item -> Stock),
+  // instead of retaining the previous task's Setup sidebar and URL prefix.
+  const openRoute = (...route) => {
+    frappe.route_flags = {...frappe.route_flags, jump: true};
+    return frappe.set_route(...route);
+  };
   window.dhimantaiApp = {
     name: 'frappe',
     title: 'ERPNext',
@@ -12,7 +20,11 @@
     ready: () => !!(window.frappe?.session?.user && window.frappe?.ui?.form),
     user: () => frappe.session.user,
     today: () => frappe.datetime.get_today(),
-    route: () => (frappe.get_route?.() || []).map(String).join('/'),
+    route() {
+      const route = frappe.get_route?.() || [];
+      if (route[0] === 'Form' && (frm()?.doctype !== route[1] || frm()?.doc?.name !== route[2])) return '';
+      return route.map(String).join('/');
+    },
     /** The open form as plain values, or undefined when no form is open. */
     current() {
       const f = frm();
@@ -40,9 +52,43 @@
       // new_doc opens Quick Entry for master data; the course needs the complete form and stable field wrappers.
       await frappe.model.with_doctype(form);
       frappe.route_options = {};
-      await frappe.set_route('Form', form, frappe.model.get_new_doc(form).name);
+      await openRoute('Form', form, frappe.model.get_new_doc(form).name);
     },
-    openRecord: (form, id) => frappe.set_route('Form', form, id),
+    async openRecord(form, id) {
+      if (frm()?.is_dirty()) throw new Error('Save or discard your current ERPNext changes first.');
+      const label = form + ' ' + id;
+      let response;
+      try {
+        // The same Desk loader as the native form checks access and fills Frappe's document cache.
+        response = await frappe.call({method: 'frappe.desk.form.load.getdoc', type: 'GET',
+          args: {doctype: form, name: id}, freeze: true});
+      } catch (error) {
+        if (error?.status === 401 || error?.status === 403)
+          throw new Error('Your ERPNext session could not access ' + label + '. Reopen the course with your training account and retry.');
+        throw new Error('ERPNext could not load ' + label + '. Check your connection and try again.');
+      }
+      // A missing document is a successful HTTP response with no matching document.
+      if (!response?.docs?.some(doc => doc.doctype === form && doc.name === id))
+        throw new Error('ERPNext could not find ' + label + ' in this training site.');
+
+      const route = ['Form', form, id], key = route.join('/');
+      await openRoute(...route);
+      const page = frappe.container?.page;
+      if (page && page === frappe.pages[key] && page.querySelector('.message-page') && frappe.get_route_str() === key) {
+        // A second set_route to the same URL keeps the error on screen. The native form
+        // factory also reuses that cached page on later visits, even after a successful read.
+        delete frappe.pages[key];
+        try {
+          frappe.router.render();
+          await frappe.after_ajax();
+        } finally {
+          if (frappe.container.page !== page) page.remove();
+          else frappe.pages[key] = page;
+        }
+      }
+      if (frm()?.doctype !== form || frm()?.doc?.name !== id)
+        throw new Error('ERPNext did not display ' + label + '. Try opening it again.');
+    },
     async read(form, id) {
       try { return (await get('/api/resource/' + encodeURIComponent(form) + '/' + encodeURIComponent(id))).data; }
       catch { return undefined; }

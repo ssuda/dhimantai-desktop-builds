@@ -59,8 +59,9 @@ export function pageScript(injection: Injection): string {
   const guarded = injection.scripts.map(source => `try{${source}\n}catch(error){console.error('dhimantAI player',error);}`).join('\n');
   return `(()=>{if(location.origin!==${JSON.stringify(injection.origin)}||window.__dhimantaiInjected)return;window.__dhimantaiInjected=true;
 for(const [k,v] of Object.entries(${JSON.stringify(injection.session)}))sessionStorage.setItem(k,v);
-const start=()=>{${guarded}};
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();})();`;
+// Adapters/player boot functions wait for the app. Claim their run-once guards
+// now, before an older bundled image's deferred scripts can install a panel.
+${guarded}\n})();`;
 }
 
 /** Attaches to the application's tab, signs the learner in and installs the player. Returns the page session id. */

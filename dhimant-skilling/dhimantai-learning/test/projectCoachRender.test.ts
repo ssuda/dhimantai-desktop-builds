@@ -87,7 +87,7 @@ test('New chat clears immediately, ignores pending old state, and keeps the new 
     assert.equal((doc.getElementById('newChat') as HTMLButtonElement).disabled, false);
     post({messages: [{role: 'tutor', text: 'Stale queued state'}]});
     assert.equal(doc.getElementById('conversation')!.textContent, '');
-    assert.equal(doc.getElementById('emptyChat')!.hidden, false);
+    assert.equal(doc.getElementById('newChat')!.hidden, true);
     post({conversationId: 'second', revision: 2, finalStep: true, handoffMode: 'teacher', handoffStatus: 'Awaiting teacher review'});
     assert.equal(doc.getElementById('handoff')!.hidden, false);
     assert.match(doc.getElementById('finish')!.textContent!, /Submit project/);
@@ -130,27 +130,25 @@ test('milestone navigation shows completion honestly and preserves separate draf
   const {dom, doc, post, sent} = panel();
   const button = (id: string) => doc.getElementById(id) as HTMLButtonElement;
   const note = doc.getElementById('note') as HTMLTextAreaElement;
-  const completed = doc.getElementById('completed') as HTMLInputElement;
   const steps = ['1. Map', '2. Trace'];
   const milestones = [{status: 'in_progress'}, {status: 'not_started'}];
   try {
     post({steps, milestones, check: {state: 'current', status: 'passed'}});
     assert.equal(button('previous').disabled, true);
     assert.match(doc.getElementById('progressText')!.textContent!, /0\/2 marked complete/);
-    assert.equal(completed.checked, false, 'a passing command does not complete a milestone');
-    note.value = 'Map draft'; completed.checked = true;
+    assert.equal(button('checkpoint').textContent, 'Complete milestone', 'a passing command does not complete a milestone');
+    note.value = 'Map draft';
     button('next').click();
     assert.equal(sent.at(-1).index, 1);
     assert.equal(button('next').disabled, true, 'ignore repeated navigation until host responds');
     post({steps, milestones, step: 1, revision: 2});
     assert.equal(note.value, '');
-    assert.equal(completed.checked, false);
+    assert.equal(button('checkpoint').textContent, 'Complete milestone');
     assert.equal(button('next').disabled, true, 'last step has no next milestone');
     note.value = 'Trace draft';
     button('previous').click();
     post({steps, milestones, revision: 3});
     assert.equal(note.value, 'Map draft');
-    assert.equal(completed.checked, true);
     button('checkpoint').click();
     assert.equal(sent.at(-1).completed, true);
     const checkpoint = {at: '2026-11-09T00:00:00Z', note: 'Map evidence', completed: true, assistance: 2, externalHelp: 'reported'};
@@ -158,13 +156,18 @@ test('milestone navigation shows completion honestly and preserves separate draf
     assert.match(doc.getElementById('progressText')!.textContent!, /1\/2 marked complete/);
     assert.equal((doc.getElementById('progress') as HTMLProgressElement).value, 1);
     assert.match((doc.getElementById('step') as HTMLSelectElement).options[0].text, /self-reported/);
+    assert.equal(button('checkpoint').textContent, 'Save changes');
+    assert.equal(button('saveDraft').textContent, 'Mark in progress');
+    button('saveDraft').click();
+    assert.equal(sent.at(-1).completed, false);
+    assert.equal(sent.at(-1).note, 'Map evidence');
     post({steps, milestones: [{status: 'review'}, {status: 'in_progress'}], checkpoint, revision: 5});
     assert.match(doc.getElementById('progressText')!.textContent!, /0\/2 marked complete · 1 to review/);
-    assert.equal(completed.checked, false, 'changed evidence requires an explicit new completion choice');
+    assert.equal(button('checkpoint').textContent, 'Complete milestone', 'changed evidence requires an explicit new completion choice');
     assert.equal(note.value, 'Map evidence');
     post({scope: 'another-account', steps, milestones, revision: 6});
     assert.equal(note.value, '', 'drafts do not cross accounts or projects');
-    assert.equal(completed.checked, false);
+    assert.equal(button('checkpoint').textContent, 'Complete milestone');
   } finally { dom.window.close(); }
 });
 
@@ -182,6 +185,43 @@ test('milestone references expose anchors and help progresses without losing the
     post({hintLevel: 2, signedIn: true, ai: false});
     assert.equal(doc.getElementById('hint')!.textContent, 'Review next step');
     assert.equal((doc.getElementById('hint') as HTMLButtonElement).disabled, false);
+  } finally { dom.window.close(); }
+});
+
+test('completion focuses missing evidence, while drafts can be saved without it', () => {
+  const {dom, doc, post, sent} = panel();
+  const note = doc.getElementById('note') as HTMLTextAreaElement;
+  const save = doc.getElementById('checkpoint') as HTMLButtonElement;
+  const error = doc.getElementById('noteError')!;
+  try {
+    post();
+    note.value = '  ';
+    const sentBefore = sent.length;
+    save.click();
+    assert.equal(sent.length, sentBefore);
+    assert.equal(doc.activeElement, note);
+    assert.equal(note.getAttribute('aria-invalid'), 'true');
+    assert.equal(note.getAttribute('aria-describedby'), error.id);
+    assert.match(error.textContent!, /Add your evidence/);
+    post({revision: 2});
+    assert.equal(note.getAttribute('aria-invalid'), 'true', 'an unrelated repaint preserves the error');
+    (doc.getElementById('saveDraft') as HTMLButtonElement).click();
+    assert.equal(sent.at(-1).completed, false);
+    assert.equal(error.textContent, '');
+    post({revision: 3});
+    save.click();
+    note.value = 'Help listed the search command.';
+    note.dispatchEvent(new dom.window.Event('input'));
+    assert.equal(note.hasAttribute('aria-invalid'), false);
+    assert.equal(error.textContent, '');
+    save.click();
+    assert.equal(sent.at(-1).note, note.value);
+    assert.equal(sent.at(-1).completed, true);
+    post({revision: 4});
+    note.value = ''; save.click();
+    post({step: 1, steps: ['Map', 'Entry'], revision: 5});
+    assert.equal(note.hasAttribute('aria-invalid'), false);
+    assert.equal(error.textContent, '');
   } finally { dom.window.close(); }
 });
 
@@ -212,16 +252,16 @@ test('a context problem is shown with working controls, and sharing follows the 
     assert.equal((doc.getElementById('check') as HTMLButtonElement).disabled, false);
     assert.equal((doc.getElementById('step') as HTMLSelectElement).disabled, false);
     post({revision: 2, sharedFiles: ['README.md:1–5', 'course_agent/tools.py:1–40 (excerpt)']});
-    assert.equal(doc.getElementById('sharedSummary')!.textContent, 'Coach will see: README.md, course_agent/tools.py');
+    assert.equal(doc.getElementById('sharedSummary')!.textContent, '2 project files included when you send');
     const message = doc.getElementById('message') as HTMLTextAreaElement;
     message.value = 'How does search.py rank?'; message.dispatchEvent(new dom.window.Event('input'));
     await new Promise(resolve => setTimeout(resolve, 350));
     assert.equal(sent.at(-1).type, 'contextPreview'); assert.equal(sent.at(-1).text, message.value);
     const preview = {type: 'contextPreview', scope: 'owner:project', text: message.value, sharedFiles: ['course_agent/search.py:1–20'], omitted: []};
     dom.window.dispatchEvent(new dom.window.MessageEvent('message', {data: {...preview, text: 'an older draft'}}));
-    assert.match(doc.getElementById('sharedSummary')!.textContent!, /tools\.py/, 'a stale preview is ignored');
+    assert.match(doc.getElementById('shared')!.textContent!, /tools\.py/, 'a stale preview is ignored');
     dom.window.dispatchEvent(new dom.window.MessageEvent('message', {data: preview}));
-    assert.equal(doc.getElementById('sharedSummary')!.textContent, 'Coach will see: course_agent/search.py');
+    assert.equal(doc.getElementById('sharedSummary')!.textContent, '1 project file included when you send');
     assert.match(doc.getElementById('shared')!.textContent!, /course_agent\/search.py:1–20/);
   } finally { dom.window.close(); }
 });

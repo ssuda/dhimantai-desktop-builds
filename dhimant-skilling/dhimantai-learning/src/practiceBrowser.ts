@@ -1,16 +1,19 @@
 import { CourseWorkspaces, CourseScope, notebookFile } from './courseWorkspace';
-import { hasColabLabs } from './colabNotebooks';
 import * as vscode from 'vscode';
 import { Api, ApiError, Chapter, Course, Language, GeneratedExercise, PracticeQuestion, QuestionPool } from './api';
 import { Auth } from './auth';
-import { jupyterMetadata } from './notebookCommands';
+import { externalRuntimeFor, jupyterMetadata } from './notebookCommands';
+import { useColabForNotebook } from './colab';
+import { openNotebookKernelPicker } from './notebookKernelPicker';
 import { Environment, EnvironmentName } from './environments';
 import { ProjectResults, ProjectSummary } from './projectResults';
 import { byDifficulty, dueReviews, hardReady, onRecordsChanged, ProblemRecord, progressText, rememberTopic, sharedRecords, trend, trendText } from './helpRecord';
 import { courseCoverage, coverageLabel } from './courseProgress';
 import { learnerRpc, PublicCatalog } from './learnerCatalog';
+import { CATALOG_PROJECTS, PROJECT_COURSES, projectCourseChoices } from './catalogProjects';
 
 type Scope = { account: string; environment: EnvironmentName };
+type WorkstationTarget = string | vscode.Uri | Extract<Node, {kind: 'course'}> | {kind: 'bundledProject'; projectId: string};
 type ChapterNode = Scope & { kind: 'chapter'; chapter: Chapter; course: string; languages: Language[]; pools?: QuestionPool[] };
 type Node = ChapterNode
   | { kind: 'project'; project: ProjectSummary }
@@ -29,14 +32,15 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
   private sequence = 0;
+  private readonly remoteCourses = new Map<string,boolean>();
   // A graded pass changes ticks, progress and the review list.
   private readonly records = onRecordsChanged(() => this.changed.fire());
 
   constructor(private readonly auth: Auth, private readonly environment: () => EnvironmentName,
       private readonly service: () => Environment, private readonly containers?: CourseWorkspaces,
-      private readonly results?: ProjectResults, private readonly media = '') {}
+      private readonly results?: ProjectResults, private readonly media = '', private readonly activeCourse:()=>string|undefined = ()=>undefined) {}
 
-  refresh() { this.sequence++; this.changed.fire(); }
+  refresh() { this.sequence++; this.remoteCourses.clear(); this.changed.fire(); }
   dispose() { this.records.dispose(); this.changed.dispose(); }
 
   private async requireScope(scope: Scope) {
@@ -78,7 +82,16 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
       case 'course': {
         const item = folder(node.course.name, 'library');
         item.description = courseCoverage(node.course.chapters);
-        if (hasColabLabs(node.course.name)) item.contextValue = 'dhimantaiCourseColab';
+        const key=JSON.stringify([node.environment,node.account,node.course.name]);
+        if(this.containers && !this.remoteCourses.has(key)) {
+          this.remoteCourses.set(key,false);
+          const sequence=this.sequence;
+          void this.containers.configuration({course:node.course.name,account:node.account,environment:node.environment}).then(config=>{
+            if(sequence!==this.sequence)return;
+            this.remoteCourses.set(key,!!config.preferred_accelerator);this.changed.fire();
+          }).catch(()=>{});
+        }
+        if (this.remoteCourses.get(key)) item.contextValue = 'dhimantaiCourseColab';
         else if (this.containers?.enabled) item.contextValue = 'dhimantaiCourse';
         return item;
       }
@@ -171,7 +184,9 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
           { kind: 'notice', label: 'Sign in', command: 'dhimantai.signIn' },
         ];
         const scope = { account, environment: this.environment() };
-        const { courses, languages, question_pools } = await this.scopedApi(scope).practiceCatalog();
+        const { courses:allCourses, languages, question_pools } = await this.scopedApi(scope).practiceCatalog();
+        const selected=this.activeCourse();
+        const courses=allCourses.filter(course=>!selected || course.name===selected);
         // Older services do not return source availability. Use their existing account catalog.
         let pools = question_pools;
         if (!pools) {
@@ -182,12 +197,12 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
         }
         await this.requireScope(scope);
         if (sequence !== this.sequence) return [];
-        const due = dueReviews(sharedRecords(account)).filter(r => /^[0-9a-f-]{36}$/i.test(r.id));
-        const nodes: Node[] = [{ kind: 'progress', account }, ...(due.length ? [{ kind: 'reviews' as const, account, due }] : []),
+        const due = selected ? [] : dueReviews(sharedRecords(account)).filter(r => /^[0-9a-f-]{36}$/i.test(r.id));
+        const nodes: Node[] = [...(selected ? [] : [{ kind: 'progress' as const, account }]), ...(due.length ? [{ kind: 'reviews' as const, account, due }] : []),
           ...(courses.length ? courses.map(course => ({ kind: 'course' as const, course, languages, pools, ...scope }))
             : [{ kind: 'notice' as const, label: 'No courses yet. Browse the catalog to get started.' }])];
         // The catalog, pricing and purchases are one page, also in this view's title bar.
-        return [...nodes, ...projects, { kind: 'notice', label: 'Saved Practice notebooks', command: 'dhimantai.practiceHistory' },
+        return [...nodes, ...(selected ? [] : projects), { kind: 'notice', label: 'Saved Practice notebooks', command: 'dhimantai.practiceHistory' },
           { kind: 'notice', label: 'My certificates', command: 'dhimantai.courseGrade', args: ['__certificates__'] },
           { kind: 'notice', label: 'Course Catalog · courses & pricing', command: 'dhimantai.courseCatalog' }];
       }
@@ -258,7 +273,7 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     await this.containers.enter({course:node.course.name, account:node.account, environment:node.environment});
   }
 
-  private async workstationScope(target?: string | vscode.Uri | Extract<Node, {kind: 'course'}>): Promise<CourseScope | undefined> {
+  private async workstationScope(target?: WorkstationTarget): Promise<CourseScope | undefined> {
     if (!this.containers?.enabled) throw new Error('The course container is unavailable. Set up the course runtime before running.');
     if(typeof target==='string') {
       const account=(await this.auth.session()??await this.auth.signIn())?.user.id;if(!account)return;
@@ -270,6 +285,30 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     if (target && 'kind' in target && target.kind === 'course') {
       await this.requireScope(target);
       return { course: target.course.name, account: target.account, environment: target.environment };
+    }
+    if (target && 'kind' in target && target.kind === 'bundledProject') {
+      const project = CATALOG_PROJECTS.find(p => p.id === target.projectId);
+      if (!project) return;
+      const account = (await this.auth.session() ?? await this.auth.signIn())?.user.id;
+      if (!account) return;
+      const scope = {account, environment: this.environment()};
+      const {courses} = await this.scopedApi(scope).practiceCatalog();
+      await this.requireScope(scope);
+      const choices = projectCourseChoices(project.id, courses);
+      if (!choices.length) {
+        const legacy = courses.length > 0 && courses.every(course => course.project_coach === undefined);
+        const action = 'Open Course Catalog';
+        const choice = await vscode.window.showInformationMessage(
+          legacy ? 'This service version offers Project Coach through the course titled Python. Open the Course Catalog to check access.'
+            : 'Project Coach needs an accessible chapter. Start the companion course in the Course Catalog, or check your existing course using the account you joined with. An active free first chapter includes Coach.', action);
+        if (choice === action) await vscode.commands.executeCommand('dhimantai.courseCatalog', legacy ? 'python' : PROJECT_COURSES[project.id]);
+        return;
+      }
+      const choice = await vscode.window.showQuickPick(choices, {title: project.title,
+        placeHolder: 'Choose a course for the project workspace and Coach'});
+      if (!choice) return;
+      await this.requireScope(scope);
+      return {...scope, course: choice.label};
     }
     const files = target instanceof vscode.Uri ? [target] : [vscode.window.activeNotebookEditor?.notebook.uri,
       vscode.window.activeTextEditor?.document.uri, ...(vscode.workspace.workspaceFolders ?? []).map(f => f.uri)];
@@ -289,7 +328,7 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     return {...scope, course: selected.label};
   }
 
-  async setupCourse(target?: string | vscode.Uri | Extract<Node, {kind: 'course'}>) {
+  async setupCourse(target?: WorkstationTarget) {
     const scope = await this.workstationScope(target);
     if (!scope) return;
     const engine = await this.containers!.setup(scope);
@@ -325,11 +364,12 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
 
   async openCourseColab(node?: Extract<Node, {kind:'course'}>) {
     if (!node || node.kind !== 'course') {
-      const courses = (await this.getChildren()).filter((row): row is Extract<Node, {kind:'course'}> =>
-        row.kind === 'course' && hasColabLabs(row.course.name));
+      const available = (await this.getChildren()).filter((row): row is Extract<Node, {kind:'course'}> => row.kind === 'course');
+      const configured=await Promise.all(available.map(async row=>({row,config:await this.containers?.configuration({course:row.course.name,account:row.account,environment:row.environment}).catch(()=>undefined)})));
+      const courses=configured.filter(item=>item.config?.preferred_accelerator).map(item=>item.row);
       if (!courses.length) {
         await vscode.commands.executeCommand('dhimantai.courseCatalog');
-        void vscode.window.showInformationMessage('Join Inference Engineering or Build an LLM from Scratch, then choose Open Course with Colab Runtime.');
+        void vscode.window.showInformationMessage('Join a course with Colab labs, then choose Open Course with Colab Runtime.');
         return;
       }
       if (courses.length === 1) node = courses[0];
@@ -349,6 +389,8 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
       throw new Error('Save and open a local .ipynb notebook first.');
     if (!this.containers?.enabled) throw new Error('Set up the course container before opening this notebook.');
     if (this.containers.recordFor(doc.uri)) {
+      const runtime = externalRuntimeFor(doc);
+      if (runtime) return runtime.provider === 'google.colab' ? useColabForNotebook(doc) : openNotebookKernelPicker(doc);
       await vscode.window.showNotebookDocument(doc, {viewColumn: vscode.ViewColumn.One, preview: false});
       await vscode.commands.executeCommand('notebook.selectKernel', { id: 'dhimantai-course', extension: 'optficial.dhimantai-learning' });
       return;

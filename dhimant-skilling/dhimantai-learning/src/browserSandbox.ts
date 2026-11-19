@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile, mkdtemp, writeFile, rm, copyFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { run, stream, stopCourseRuntime } from './podman';
+import { run, stream, stopCourseRuntime, ERP_MIN_MEMORY_BYTES } from './podman';
 
 export const ERP_IMAGES = {
   erpnext: 'docker.io/frappe/erpnext@sha256:32145acc7f699dc598ca141018a95ebf8e56f516d4a0e76beb7287ae68b303b8',
@@ -44,6 +44,7 @@ export class ErpSandbox {
     for (const name of (await readdir(this.media)).sort())
       if ((await stat(join(this.media, name))).isFile()) files.push([name, join(this.media, name)]);
     files.push(['guide.js', join(this.media, '..', 'player', 'guide.js')], ['live.js', join(this.media, '..', 'player', 'live.js')],
+      ['shift.js', join(this.media, '..', 'player', 'shift.js')],
       ['frappe.js', join(this.media, '..', 'apps', 'frappe.js')]);
     return files.sort((a, b) => a[0].localeCompare(b[0]));
   }
@@ -51,7 +52,7 @@ export class ErpSandbox {
     if (!/^[a-f0-9]{48}$/.test(password) || !/^[a-f0-9]{48}$/.test(learner.password) || !/^[a-f0-9]{20}$/.test(learner.id))
       throw new Error('Invalid sandbox credential.');
     const memory = Number(await run(this.bin,['info','--format','{{.Host.MemTotal}}']));
-    if (memory < 6_000_000_000) throw new Error('ERPNext needs at least 6 GB allocated to the course runtime. Increase Podman machine memory, then retry.');
+    if (!Number.isFinite(memory) || memory < ERP_MIN_MEMORY_BYTES) throw new Error('ERPNext needs at least 6 GB allocated to the course runtime. Increase Podman machine memory, then retry.');
     const files = await this.buildFiles();
     const hash = createHash('sha256').update('sandbox-v3');
     for (const [name, path] of files) { hash.update(name); hash.update(await readFile(path)); }

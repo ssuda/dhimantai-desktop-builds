@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[2]
 INPUTS = ['.github/workflows/desktop-preview.yml', '.github/workflows/desktop-build.yml', '.github/workflows/desktop-windows-acceptance.yml', 'dhimant-skilling/desktop',
           'dhimant-skilling/dhimantai-learning', 'website/upskill/assets/dhimantai-logo.png',
           'assets/epub_reader', 'agent/course_projects/data/book_companions.json',
+          'agent/course_projects/data/erpnext_shift.json', 'agent/course_projects/data/inference_runtime.json',
+          'agent/course_projects/data/lab_compute.json', 'content/courses/inference-engineering/labs/cluster.py',
           'content/courses/build-an-llm-from-scratch/*.md']
 
 

@@ -24,6 +24,26 @@ function render(account: string | undefined, courses: any[]) {
   return {catalog, document:new JSDOM(catalog.panel.webview.html, {runScripts:'outside-only'}).window.document};
 }
 
+test('Start free shows progress on the clicked card and ignores repeat clicks until the host settles', () => {
+  const {document} = render('learner', [course('java', false, ['']), course('python', false, [''])]);
+  const win = document.defaultView!;
+  const messages: any[] = [];
+  (win as any).acquireVsCodeApi = () => ({postMessage:(message: any) => messages.push(message)});
+  win.eval(document.querySelector('script')!.textContent!);
+  const start = document.querySelector<HTMLButtonElement>('[data-course="java"] [data-action="join"]')!;
+  const other = document.querySelector<HTMLButtonElement>('[data-course="python"] [data-action="join"]')!;
+  start.click();
+  win.dispatchEvent(new win.MessageEvent('message', {data:{type:'catalogStatus', message:'Refreshing…', busy:false}}));
+  start.click(); other.click();
+  assert.equal(start.textContent, 'Starting course…');
+  assert.equal(start.getAttribute('aria-busy'), 'true');
+  assert.deepEqual(messages.map(m => m.id), ['java']);
+  win.dispatchEvent(new win.MessageEvent('message', {data:{type:'courseStartState'}}));
+  assert.equal(start.textContent, 'Start free');
+  assert.equal(start.disabled || other.disabled, false);
+  win.close();
+});
+
 test('catalog sections and cards follow database order, including new categories and interleaved essentials', () => {
   const groups = [
     [course('custom', false, [''], {category:'New category'})],
@@ -63,6 +83,21 @@ test('the next chapter is the one in progress, else the first open uncovered one
   assert.equal(nextChapter(unstarted, open), undefined, 'without saved progress nothing is recommended');
 });
 
+test('one saved shelf workspace can be reopened or started under another eligible course', async t => {
+  const {catalog} = render('learner', []);
+  t.after(() => { delete (vscode as any).window; });
+  catalog.projects = [{projectId:'shelf-reading', root:'/courses/algorithms/shelf-reading', title:'Shelf', status:'In progress'}];
+  for (const choice of [0, 1]) {
+    (vscode as any).window = {showQuickPick: async (items: {label:string}[]) => {
+      assert.match(items[1].label, /another course/);
+      return items[choice];
+    }};
+    await catalog.handle({type:'project', id:'shelf-reading'});
+    assert.deepEqual(executed.at(-1), choice === 0
+      ? ['dhimantai.openSavedProject', catalog.projects[0].root] : ['dhimantai.startCapstone', 'shelf-reading']);
+  }
+});
+
 test('a returning learner resumes from the top of Course Catalog in one click; a visitor sees how to start', async () => {
   const {catalog, document} = render('learner', [course('new', false, ['', '', '']), course('py', true, ['covered', 'in_progress', 'not_started'])]);
   const resume = document.querySelector('section.resume')!;
@@ -82,9 +117,21 @@ test('a returning learner resumes from the top of Course Catalog in one click; a
   const visitor = render(undefined, [course('new', false, ['', ''])]).document;
   assert.equal(visitor.querySelector('section.resume'), null);
   assert.match(visitor.querySelector('section.intro')!.textContent!, /free first chapter/);
-  assert.ok(visitor.querySelector('section.intro button[data-action="signUp"]'));
+  assert.equal(visitor.querySelector<HTMLButtonElement>('section.intro button[data-action="signUp"]')?.dataset.id,'new');
   assert.ok(visitor.querySelector('main details.how'), 'access and runtime policy stays one click away');
   assert.match(visitor.querySelector('details.how')!.textContent!, /Search commands/);
+});
+
+test('starter goals offer only courses whose first chapter a new learner can open', () => {
+  const courses = [course('data-science-python',false,['']),
+    course('c-programming',false,[''],{expired:true}),
+    course('ai-at-work',false,[''],{chapters:[{id:'locked',name:'Locked',free:false},{id:'free',name:'Later',free:true}]})];
+  const {document} = render(undefined,courses);
+  const intro = document.querySelector('.intro')!;
+  assert.deepEqual([...intro.querySelectorAll<HTMLButtonElement>('button')].map(b => b.dataset.id), ['data-science-python']);
+  assert.match(intro.textContent!,/Predict a result from a small sales table/);
+  assert.match(intro.textContent!,/Python basics/);
+  assert.equal(render('learner',[...courses,course('owned',true,['not_started'])]).document.querySelector('.intro'),null);
 });
 
 test('signed-in learners have a visible sign-out action in the catalog', async () => {
@@ -93,6 +140,32 @@ test('signed-in learners have a visible sign-out action in the catalog', async (
   await catalog.handle({type:'signOut'});
   assert.deepEqual(executed.at(-1), ['dhimantai.signOut']);
   assert.equal(render(undefined, []).document.querySelector('[data-action="signOut"]'), null);
+});
+
+test('unavailable progress is never shown as zero completion or a locked next chapter', () => {
+  const {document} = render('learner', [course('unknown', true, ['', ''])]);
+  const resume = document.querySelector('.resume-card')!;
+  assert.match(resume.textContent!, /Progress unavailable/);
+  assert.doesNotMatch(resume.textContent!, /0 of 2|Unlock the next/);
+  assert.equal(resume.querySelector('progress'), null);
+  assert.equal(document.querySelector('[data-course="unknown"] progress'), null);
+  document.defaultView!.close();
+});
+
+test('course outlines distinguish free, unlocked, preview-only and expired access', () => {
+  const {document} = render('learner', [
+    course('free', true, ['', ''], {is_free:true, unlocked:false}),
+    course('paid', true, ['', ''], {unlocked:true}),
+    course('preview', true, ['', ''], {unlocked:false}),
+    course('expired', true, ['', ''], {is_free:true, unlocked:false, expired:true}),
+  ]);
+  const labels = (id:string) => [...document.querySelectorAll(`[data-course="${id}"] ol li > small`)].map(el => el.textContent);
+  assert.ok(labels('free').every(text => text?.endsWith(' · Free')));
+  assert.ok(labels('paid')[1]?.endsWith(' · Unlocked'));
+  assert.ok(labels('preview')[0]?.endsWith(' · Free'));
+  assert.ok(labels('preview')[1]?.endsWith(' · Locked'));
+  assert.ok(labels('expired').every(text => text?.endsWith(' · Locked')));
+  document.defaultView!.close();
 });
 
 test('ERPNext resumes in the browser with the Instructor and shows checked tasks apart from chapter coverage', () => {
@@ -108,5 +181,52 @@ test('ERPNext resumes in the browser with the Instructor and shows checked tasks
   const card = document.querySelector('[data-browser-course="erpnext-essentials"]')!;
   assert.equal(card.querySelector('progress')?.getAttribute('value'), '3');
   assert.match(card.textContent!, /3 of 18 tasks done: saved work checked in ERPNext and explained/);
-  assert.match(card.querySelector('.actions button')!.textContent!, /Continue course/);
+  assert.match(card.querySelector('.actions button')!.textContent!, /Continue guided tour/);
+});
+
+test('search ranks titles across categories, excludes incidental Python mentions and restores browsing order', () => {
+  const {document} = render(undefined, [
+    course('llm', false, [''], {title:'Build an LLM', category:'AI', summary:'Tools include Python.', prerequisites:'Python programming',
+      chapters:[{id:'intro', name:'Python setup'}]}),
+    course('science', false, [''], {title:'Data Science with Python', category:'AI'}),
+    course('algorithms', false, [''], {title:'Algorithms with Python'}),
+    course('python', false, [''], {title:'Python Programming'}),
+    course('cpp', false, [''], {title:'C++ Programming'}),
+    course('c', false, [''], {title:'C Programming'}),
+  ]);
+  const window = document.defaultView!;
+  const messages: unknown[] = [];
+  (window as any).acquireVsCodeApi = () => ({postMessage: (message: unknown) => messages.push(structuredClone(message))});
+  window.eval(document.querySelector('script')!.textContent!);
+  const input = document.querySelector<HTMLInputElement>('#search')!;
+  const visible = () => [...document.querySelectorAll<HTMLElement>('#results .course:not([hidden])')];
+  const ids = () => visible().map(card => card.dataset.course ?? card.dataset.project ?? card.dataset.browserCourse);
+  const search = (query: string) => { input.value = query; input.dispatchEvent(new window.Event('input')); };
+  const original = ids();
+  search('  pYThOn  ');
+  assert.deepEqual(ids(), ['python', 'science', 'algorithms']);
+  assert.match(document.querySelector('#result-count')!.textContent!, /^3 matching/);
+  visible()[0].querySelector<HTMLButtonElement>('[data-action="signUp"]')!.click();
+  assert.deepEqual(messages.pop(), {type:'signUp', id:'python'});
+  const category = document.querySelector<HTMLSelectElement>('#filter-category')!;
+  category.value = 'AI';
+  category.dispatchEvent(new window.Event('change'));
+  assert.deepEqual(ids(), ['science']);
+  category.value = '';
+  category.dispatchEvent(new window.Event('change'));
+  search('programming pyth');
+  assert.deepEqual(ids(), ['python']);
+  search('C++');
+  assert.deepEqual(ids(), ['cpp']);
+  search('regression test');
+  assert.deepEqual(ids(), ['shelf']);
+  search('ERPNext');
+  assert.deepEqual(ids(), ['erpnext-essentials']);
+  search('no matching title');
+  assert.deepEqual(ids(), []);
+  assert.equal(document.querySelector<HTMLElement>('#empty')!.hidden, false);
+  search('');
+  assert.deepEqual(ids(), original);
+  assert.ok(document.querySelector('.category [data-course="python"]'));
+  window.close();
 });

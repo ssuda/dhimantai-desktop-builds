@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "course": "Inference Engineering",
+  "recipe": "inference-nvidia-v1",
+  "python": "3.12",
+  "uv": "0.13.8",
+  "vllm": "0.32.0",
+  "ray": "2.60.0",
+  "ipython": "9.18.1",
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+  "gpusPerNode": 1,
+  "minVramMiB": 6000,
+  "minComputeCapability": 7.5,
+  "bareMachineOs": [
+    "ubuntu:22.04",
+    "ubuntu:24.04"
+  ],
+  "labs": {
+    "Chapter 1: Inference Engines and GPU Runtimes": {
+      "nodes": 1
+    },
+    "Chapter 2: Running vLLM Offline": {
+      "nodes": 1
+    },
+    "Chapter 3: Model Memory and KV Cache": {
+      "nodes": 1
+    },
+    "Chapter 4: Batching and Benchmarking": {
+      "nodes": 1
+    },
+    "Chapter 5: Prefix Caching and Precision": {
+      "nodes": 1
+    },
+    "Chapter 6: DeepInfer Architecture and Deployment": {
+      "nodes": 0,
+      "note": "Source and planning lab. Live DeepInfer deployment needs a separate supported-hardware recipe."
+    },
+    "Chapter 7: GPU Clusters and Parallelism": {
+      "nodes": 2,
+      "layouts": [
+        {
+          "nodes": 1,
+          "gpusPerNode": 2,
+          "label": "Two GPUs in one machine"
+        },
+        {
+          "nodes": 2,
+          "gpusPerNode": 1,
+          "label": "Two machines across a private network"
+        }
+      ]
+    },
+    "Chapter 8: Reproducible Inference Capstone": {
+      "nodes": 1
+    }
+  }
+}

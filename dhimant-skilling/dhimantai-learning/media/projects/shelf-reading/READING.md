@@ -7,18 +7,29 @@ and intentional search defect are preserved. Reading does not require fixing it.
 
 Open Project Coach on the right. Use its steps to map folders, find an entry point,
 follow a call, trace data, predict output and compare tests with real behaviour.
-The sample data is in **books.json** in the project root; `shelf/storage.py` loads it.
-**Runtime → Open course terminal** runs in the course container and this project directory.
-Run the commands below there on Windows, macOS and Linux. The container supplies
-Python and Git. The project must be inside its course folder.
 
-```sh
-python -m shelf --help
-python -m shelf list
-python -m shelf search dune
-python -m shelf report --by decade
-python -m unittest tests.test_search -v
-```
+## Milestone 1 · Map the repository
+
+1. Open [READING_NOTES.md](READING_NOTES.md). Under **Repository map and question**, write
+   one bullet each for `shelf/`, `tests/` and `books.json`. Use `- path — its purpose`.
+   Line numbers are optional.
+2. Predict the available commands, then choose **Run this step** to run `python -m shelf --help`.
+   You can also run it in **Project tools → Runtime → Open course terminal**.
+3. In the checkpoint, name one command shown in the help and describe what it does.
+   Choose **Complete milestone**. To save an unfinished checkpoint, choose **Save draft**.
+
+## Later milestones
+
+Milestone 2 introduces `python -m shelf list`. Each milestone's **Run this step**
+button runs its own example or focused tests in the course container.
+
+<details>
+<summary>Check your result after predicting the search output</summary>
+
+In the starter, `list` includes **Dune** and `search dune` prints **No books found.**
+Milestone 4, **Predict a search**, asks you to trace that difference in `shelf/search.py`.
+
+</details>
 
 Use Explorer for the first map, Quick Open for a named file, and workspace search
 for an exact symbol or output message. Go to Definition and Find All References

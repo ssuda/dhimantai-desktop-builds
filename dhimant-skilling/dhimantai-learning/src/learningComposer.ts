@@ -12,12 +12,14 @@ export function messageComposer(assistant: string, inputId: string, maxlength: n
 /** A message composer, outside the notebook's editable cells. Audio is supplied by its transport.
  * Every mode has the help ladder: one rung at a time, from a guiding question to a similar example. */
 export function learningComposer(assistant: 'Instructor' | 'Doubt Solver', practice: boolean, audio: string) {
-  return `<footer id="message-bar" aria-label="Talk to ${assistant}"><form id="composer">
-<div class="help-ladder"><strong>Stuck?</strong><button type="button" id="practice-help" disabled>Ask me a guiding question</button><span id="help-steps" class="help-steps" role="img" aria-label="No help steps used yet"></span><small id="help-trend" class="help-trend"></small>
-<details class="more-asks"><summary>Other help</summary><div id="notebook-help-actions" class="lesson-actions" role="group" aria-label="${assistant} help"></div></details></div><small id="help-note" class="help-note" role="status"></small>
+  return `<footer id="message-bar" aria-label="Talk to ${assistant}"><form id="composer"><div class="composer-support">
+<div class="composer-quick-actions" role="group" aria-label="Learning actions"><div class="help-ladder"><strong>Stuck?</strong><button type="button" id="practice-help" disabled>Ask me a guiding question</button><span id="help-steps" class="help-steps" role="img" aria-label="No help steps used yet"></span></div><div id="composer-mode-actions"></div>
+<details class="more-asks"><summary>Other help</summary><div id="notebook-help-actions" class="lesson-actions" role="group" aria-label="${assistant} help"></div></details></div><small id="help-trend" class="help-trend"></small><small id="help-note" class="help-note" role="status"></small>
 <small id="notebook-help-status" class="help-note" role="status"></small>
-<div class="composer-heading"><label for="message" class="sr-only">Ask ${assistant}</label><span id="composer-mode-actions"></span></div>
-<small id="composer-context" hidden></small>
+<small id="assistant-activity" role="status" aria-live="polite" aria-atomic="true" hidden></small>
+<small id="media-control-status" class="help-note" role="status" hidden></small>
+<label for="message" class="sr-only">Ask ${assistant}</label>
+<small id="composer-context" hidden></small></div>
 ${messageComposer(assistant, 'message', 4000, `<details class="workspace-menu composer-menu"><summary aria-label="Add attachments" title="Add photos or PDFs"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></summary><div class="menu-content">
 <button type="button" id="attach-images">Attach photos</button><button type="button" id="attach-pdfs">Attach PDFs</button>
 <button type="button" id="import-data" hidden>Import a CSV or Excel file for the Coach</button>

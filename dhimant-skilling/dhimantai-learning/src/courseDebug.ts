@@ -33,7 +33,7 @@ export async function courseDebug(engine: CourseEngine, folder: string, language
       plan.build.matcher
     );
 
-  if (language === 'c' || language === 'rust') {
+  if (language === 'c' || language === 'cpp' || language === 'rust') {
     const launch: vscode.DebugConfiguration = {
       type: 'cppdbg',
       request: 'launch',

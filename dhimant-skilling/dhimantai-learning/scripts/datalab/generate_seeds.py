@@ -1,10 +1,10 @@
-"""Generate the Ask your data sample databases (media/datalab/*.sql and about.json).
+"""Generate the Ask your data sample databases (content/courses/runtime-assets/data/*.sql and about.json).
 
 Synthetic, deterministic and small. Every name, place of business and number here is invented; no real person's data.
 The random generator is a fixed-seed splitmix64 written out below, so the output is byte-for-byte identical on every
 Python version. Run from the extension folder:
 
-    python3 scripts/datalab/generate_seeds.py            # rewrites media/datalab
+    python3 scripts/datalab/generate_seeds.py            # rewrites content/courses/runtime-assets/data
     python3 scripts/datalab/generate_seeds.py --out DIR  # writes elsewhere (the test compares the two)
 
 Each dataset plants questions an honest analyst must handle: a total that needs a second table, a count that needs a
@@ -421,15 +421,16 @@ def generate(out: Path):
     for name, build, card in (('shop', shop, SHOP_ABOUT), ('school', school, SCHOOL_ABOUT), ('clinic', clinic, CLINIC_ABOUT)):
         text, count = build(Rand(SEED + sum(map(ord, name))))
         assert count <= 5000, f'{name}: {count} rows; keep each sample at or under 5,000 rows'
-        (out / f'{name}.sql').write_text(text, encoding='utf-8', newline='\n')
+        (out / f'{name}.sql').write_bytes(text.encode('utf-8'))
         about[name] = {**card, 'rows': count}
-    (out / 'about.json').write_text(json.dumps(about, indent=2, ensure_ascii=False) + '\n', encoding='utf-8', newline='\n')
+    metadata = json.dumps(about, indent=2, ensure_ascii=False) + '\n'
+    (out / 'about.json').write_bytes(metadata.encode('utf-8'))
     return about
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    parser.add_argument('--out', type=Path, default=Path(__file__).resolve().parents[2] / 'media' / 'datalab')
+    parser.add_argument('--out', type=Path, default=Path(__file__).resolve().parents[4] / 'content/courses/runtime-assets/data')
     args = parser.parse_args()
     for name, card in generate(args.out).items():
         print(f'{name}: {card["rows"]} rows')

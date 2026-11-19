@@ -23,7 +23,7 @@ export function accessPeriod(course: CatalogCourse): string {
 
 /** Only these purpose-built RPCs are available to the extension, with the learner's own token. */
 export async function learnerRpc<T>(env: Environment,
-    name: 'public_learning_catalog' | 'complete_individual_signup' | 'join_learning_course',
+    name: 'public_learning_catalog' | 'complete_skilling_signin' | 'complete_individual_signup' | 'join_learning_course',
     body: object = {}, token?: string): Promise<T> {
   const response = await fetch(`${env.supabaseUrl}/rest/v1/rpc/${name}`, {
     method: 'POST', headers: { apikey: env.supabaseAnonKey,

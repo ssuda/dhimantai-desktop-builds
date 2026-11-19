@@ -18,3 +18,10 @@ tsconfig.webview.json
 desktop-client.json
 **/__pycache__/**
 **/*.pyc
+
+# Course-specific metadata lives in Supabase Storage.
+media/course/profiles.json
+media/course/lab_compute.json
+media/course/inference_runtime.json
+media/course/scenarios/**
+media/datalab/**

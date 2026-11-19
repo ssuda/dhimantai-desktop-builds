@@ -1,20 +1,33 @@
+import { firstPandasCell, starterExercises } from '../src/starterExercises';
+import { learningPreferences } from '../src/learningPreferences';
+import { notebookResume, unfinishedQuestion } from '../src/notebookContinuity';
 import type { NativeDebugReply } from '../src/debugEvidence';
 import { skillStages, SkillStage } from '../src/skillPractice';
+import { coachingLanguage } from '../src/coachingLanguage';
+import { freshTeachingVisuals, requestedVisual } from '../src/lessonVisuals';
 import type { RemoteParticipant, RemoteTrackPublication, Room } from 'livekit-client';
 import { diagram } from './diagram';
+import { bindDiagramBlocks } from './diagramBlocks';
 import { bindVisuals, imageSource, imageMarkdown, prepareVisuals } from './visual';
-import { renderBoard, renderHeading } from './markdown';
+import { markdownPlainText, renderBoard, renderHeading } from './markdown';
+import { labelLessonOutputs } from './lessonOutput';
 import { topicTeachBackRequest } from '../src/teachBack';
 import { PracticeCodeEditors, ToolReply } from './practiceCodeEditor';
+import { NotebookNavigation } from './notebookNavigation';
 import type { CodeSnapshot, observedRun } from '../src/roomCode';
 import type {BrowserObservation} from '../src/browserLearning';
+import {BrowserCourseProgress, ERP_COURSE, browserProgressLabel, browserProgressNote, browserTaskLabel} from '../src/browserCourseProgress';
 import {BrowserQuestion,validBrowserQuestion,validBrowserAnswer,browserAnswerMessage} from '../src/browserQuestion';
+import {validDemonstration} from '../src/browserDemonstration';
+import {BrowserActionRelay} from './browserActions';
 import { SpeakerControl } from './audioControls';
 import { mediaIcon } from '../src/mediaIcons';
 import { LearningDevices } from './learningDevices';
+import { SpeechInterruption } from './speechInterruption';
 import { AttachmentRole, NotebookAttachments } from './notebookAttachments';
 import { icon } from './icons';
 import { notebookContext } from '../src/notebookContext';
+import { executionFollowup, lessonCompletion, recordExecutionIssue } from '../src/lessonExecution';
 import { emptyNotebook, readNotebook } from '../src/tutorNotebook';
 import type { NotebookCell, TutorNotebook } from '../src/tutorNotebook';
 import type { Course } from '../src/api';
@@ -32,6 +45,7 @@ import '../media/audioControls.css';
 declare const LivekitClient: typeof import('livekit-client');
 declare function acquireVsCodeApi(): {postMessage(message: unknown): void};
 const host = acquireVsCodeApi(), { RoomEvent } = LivekitClient;
+const browserActions=new BrowserActionRelay(message=>host.postMessage(message));
 // Spoken replies play only replies this page accepted and showed (see send()).
 const spokenReplies = (window as unknown as {installCoachAudio?: (api: typeof host) => {reply(audioId: string | null): void} | undefined}).installCoachAudio?.(host);
 type Mode = 'tutor' | 'doubt_solver';
@@ -41,8 +55,49 @@ const button = (id: string) => byId<HTMLButtonElement>(id);
 const latestButton = button('latest');
 const feed = byId('feed'), status = byId('status'), field = byId<HTMLTextAreaElement>('message');
 const closeVisual = bindVisuals(feed, refreshDiagramAlternatives);
-const notebookPage = document.scrollingElement ?? document.documentElement;
+bindDiagramBlocks(feed, prepareVisuals);
+function notebookPage() {
+  const panel = document.getElementById('learning-document');
+  return panel && getComputedStyle(panel).overflowY === 'auto' ? panel : document.scrollingElement ?? document.documentElement;
+}
+function notebookTop() {
+  const page = notebookPage();
+  return page === document.scrollingElement || page === document.documentElement ? 0 : page.getBoundingClientRect().top;
+}
+function scrollToNotebookRow(row: Element, toolbarHeight: number) {
+  const page = notebookPage();
+  page.scrollTop = Math.max(0, Math.min(page.scrollHeight - page.clientHeight,
+    page.scrollTop + row.getBoundingClientRect().top - notebookTop() - toolbarHeight));
+}
+const navigationToolbar = document.querySelector<HTMLElement>('.notebook-tools');
+function goToNotebookCell(id: string) {
+  const cell = notebook.cells.find(cell => cell.id === id);
+  const row = [...feed.querySelectorAll<HTMLElement>('[data-cell-id]')].find(row => row.dataset.cellId === id);
+  if (!cell || !row) return;
+  if (cell.collapsed) { cell.collapsed = false; updateConversationCard(cell, row); saveNotebook(); }
+  // Leaving the bottom reveals this control and can wrap a narrow toolbar.
+  // Include it before measuring so it cannot cover the entry after the jump.
+  latestButton.hidden = false;
+  row.tabIndex = -1; row.focus({preventScroll:true});
+  scrollToNotebookRow(row, navigationToolbar?.parentElement?.offsetHeight ?? 0);
+  updateLatest();
+}
+const navigation = navigationToolbar ? new NotebookNavigation(navigationToolbar, goToNotebookCell) : undefined;
+function refreshNavigation() {
+  const course = mode === 'tutor' && !practiceMode ? lessonCourses.find(course => course.chapters.some(ch => ch.id === selectedLesson)) : undefined;
+  const chapter = course?.chapters.find(ch => ch.id === selectedLesson);
+  const visibleCells = new Set(Array.from(feed.querySelectorAll<HTMLElement>('[data-cell-id]'), row => row.dataset.cellId));
+  navigation?.update(notebook.cells.filter(cell => visibleCells.has(cell.id)).map(cell => ({id:cell.id,
+    label: (cell.kind === 'code' ? 'Code · ' : cell.kind === 'message' ? 'You · ' : cell.kind === 'note' ? 'Note · ' : '')
+      + markdownPlainText(cell.text).replace(/\s+/g, ' ').slice(0, 90)})),
+    chapter && course ? course.name === ERP_COURSE
+      ? `${chapter.lesson || chapter.name} · ${taskProgress ? browserTaskLabel(taskProgress.tasks.find(task=>task.chapter===chapter.id)?.status)+' · ' : ''}${browserProgressLabel(taskProgress)}`
+      : `${chapter.lesson || chapter.name} · ${coverageLabel(chapter.progress)} · ${courseCoverage(course.chapters)}` : '',
+    course?.name === ERP_COURSE ? browserProgressNote : coverageNote);
+}
 const messageBar = document.getElementById('message-bar');
+const selectionPage = document.getElementById('course-selection');
+let selectionOpen = !!selectionPage;
 const heading = document.querySelector('.workspace-title h1');
 const initialTitle = heading?.textContent ?? '';
 if (heading) heading.innerHTML = renderHeading(initialTitle);
@@ -61,16 +116,95 @@ function confirmRemoval(trigger: HTMLButtonElement, message: string, remove: () 
   prompt.append(text,cancel,confirm);
   (trigger.closest('article') ?? trigger.parentElement!).append(prompt); cancel.focus();
 }
-let attempt = 0, mode: Mode = 'tutor', room: Room | undefined, agent: string | undefined;
+let attempt = 0, mode: Mode = document.body.dataset.notebookMode === 'doubt_solver' ? 'doubt_solver' : 'tutor', room: Room | undefined, agent: string | undefined;
+let coachLanguage = 'en-IN';
+let learnerPreferences = learningPreferences(undefined);
+const preferenceNotice = document.getElementById('learning-preferences-status');
+async function applyLearningPreferences() {
+  if (!room || !agent) return;
+  const current = room;
+  try {
+    const ack = await current.localParticipant.performRpc({destinationIdentity:agent, method:'set_learning_preferences',
+      payload:JSON.stringify(learnerPreferences), responseTimeout:8000});
+    if (ack !== 'ok') throw new Error('Preferences unavailable');
+    if (room === current && preferenceNotice) preferenceNotice.textContent = 'Saved. Voice changes apply to the next spoken reply.';
+  } catch {
+    if (room === current && preferenceNotice) preferenceNotice.textContent = 'Saved on this computer, but the learning service could not apply these preferences. Reconnect or update the service.';
+  }
+}
+for (const id of ['preferred-name', 'check-frequency', 'preferred-voice']) {
+  const control = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
+  if (control) control.onchange = () => host.postMessage({type:'learningPreferences', preferences:{
+    preferred_name:(document.getElementById('preferred-name') as HTMLInputElement).value,
+    check_frequency:(document.getElementById('check-frequency') as HTMLSelectElement).value,
+    voice:(document.getElementById('preferred-voice') as HTMLSelectElement).value,
+  }});
+}
+const coachLanguagePicker = document.getElementById('coaching-language') as HTMLSelectElement | null;
+if (coachLanguagePicker) coachLanguagePicker.onchange = () => {
+  host.postMessage({type:'coachingLanguage', language:coachLanguagePicker.value});
+};
 let ready = false, sending = false, coaching = false, voice = true, blockedAudio = false, visible = true;
+let agentActivity = '';
+const pendingTutorRequests = new Set<string>(), retractedTutorRequests = new Set<string>();
+let tutorTurn = '', lastTutorRequest = '', tutorOutputPaused = false;
+let tutorCancellation = Promise.resolve();
+function packetTurn(packet: Record<string, unknown> | undefined) {
+  return String(packet?.tutor_request_id || packet?.tutor_turn_id || '');
+}
+function showAgentActivity() {
+  const activity = byId('assistant-activity');
+  if (!activity) return;
+  const label = !ready ? '' : interruption.listening ? 'Listening…' : tutorOutputPaused ? '' : agentActivity === 'thinking' ? 'Thinking…'
+    : agentActivity === 'speaking' ? 'Replying…' : '';
+  if (activity.textContent !== label) activity.textContent = label;
+  activity.hidden = !label;
+}
 let browserCourse=false, browserSnapshot:BrowserObservation|null=null, browserSequence=0;
+let taskProgress:BrowserCourseProgress|undefined;
+function practicalLesson() {
+  return mode==='tutor' && !practiceMode && lessonCourses.some(course=>course.name===ERP_COURSE && course.chapters.some(ch=>ch.id===selectedLesson));
+}
+function showBrowserProgress() {
+  if(!practicalLesson())return;
+  // Replace old teaching-coverage cards, including ones restored from older notebooks.
+  const old=notebook.cells.filter(cell=>cell.kind==='recap' && cell.packet?.progressScope);
+  for(const cell of old)feed.querySelector(`[data-cell-id="${cell.id}"]`)?.remove();
+  notebook.cells=notebook.cells.filter(cell=>!old.includes(cell));
+  const content='### Course progress\n\n'+browserProgressLabel(taskProgress)+'\n\n'
+    +(taskProgress?.tasks.filter(task=>task.status!=='not_started' || task.chapter===selectedLesson)
+      .map(task=>'- '+(task.status==='completed'?'✓ ':'')+'**'+task.title+'** — '+browserTaskLabel(task.status)).join('\n') || '')
+    +'\n\n'+browserProgressNote;
+  const prior=notebook.cells.find(cell=>cell.kind==='recap' && cell.packet?.browserCourseProgress);
+  if(prior) {
+    if(prior.text!==content || old.length) {
+      prior.text=content;
+      const body=feed.querySelector(`[data-cell-id="${prior.id}"] > div`);if(body)body.innerHTML=renderBoard(content);
+      saveNotebook();
+    }
+  } else addCell('recap',content,{browserCourseProgress:true});
+  refreshNavigation();
+}
 let browserQuestion:BrowserQuestion|null=null, browserAnswered='', browserAskInstead='';
 function showBrowserQuestion(value:unknown) {
   browserQuestion=validBrowserQuestion(value)?value:null;
+  let changed = false;
+  for (const cell of notebook.cells) {
+    if (!validBrowserQuestion(cell.packet?.browser_question)) continue;
+    const stale = cell.packet!.browser_question_id !== browserQuestion?.id;
+    if (stale && !cell.packet!.browser_question_closed) {
+      cell.packet!.browser_question_closed = true; cell.collapsed = true;
+      updateConversationCard(cell); changed = true;
+    } else if (!stale && cell.packet!.browser_question_closed) {
+      cell.packet!.browser_question_closed = false; cell.collapsed = false;
+      updateConversationCard(cell); changed = true;
+    }
+  }
+  if (changed) saveNotebook();
   if(!browserQuestion){controls();return;}
   const question=browserQuestion;
   if(!notebook.cells.some(cell=>cell.packet?.browser_question_id===question.id)) {
-    addCell('board','### '+question.title+'\n\n'+question.question,{browser_question_id:question.id,
+    addCell('board','### '+(question.kind==='prediction'?'Predict':question.kind==='explanation'?'Explain':'Reflect')+' · '+question.title+'\n\n'+question.question,{browser_question_id:question.id,
       browser_question:question});
   }
   controls();
@@ -82,30 +216,73 @@ function openBrowserQuestion() {
 function focusBrowserQuestion() {
   browserAskInstead='';controls();
   field.focus();messageBar?.scrollIntoView({block:'nearest'});
-  helpStatus('Answer the question below, then send your reply.');
+  helpStatus(ready?'Write your answer, then use the send arrow for Instructor feedback.'
+    :'Connecting to Instructor… Your draft is saved. Use the send arrow when connected.');
 }
-let browserSync:Promise<void>=Promise.resolve();
+let browserSync:Promise<void>=Promise.resolve(), browserObservationFailed=false;
+function browserConnectionFailed(message:string) {
+  browserObservationFailed=true;
+  button('tutor').textContent='Reconnect Instructor';button('tutor').hidden=false;
+  helpStatus(message);
+}
+
 function syncBrowserObservation():Promise<void> {
   const live=room,dest=agent,id=attempt,observation=browserSnapshot;
   if(!browserCourse || !ready || !live || !dest)return Promise.resolve();
-  const sequence=++browserSequence;
+  const sequence=browserSequence=Math.max(browserSequence+1,Date.now()*1000);
   browserSync=browserSync.catch(()=>{}).then(async()=>{
-    if(room!==live || id!==attempt || !browserCourse)return;
-    const ack=await live.localParticipant.performRpc({destinationIdentity:dest,method:'on_browser_activity',
-      payload:JSON.stringify(observation?{...observation,sequence}:{sequence,clear:true}),responseTimeout:8000});
-    if(room!==live || id!==attempt)return;
+    if(room!==live || id!==attempt || !browserCourse || !ready)return;
+    let ack:string;
+    try {
+      // switch_mode accepts the lesson before its asynchronous preload finishes.
+      // Wait briefly for this read-only context handoff; never resend chat here.
+      const deadline=Date.now()+4000;
+      do {
+        ack=await live.localParticipant.performRpc({destinationIdentity:dest,method:'on_browser_activity',
+          payload:JSON.stringify(observation?{...observation,sequence}:{sequence,clear:true}),responseTimeout:8000});
+        if(ack!=='unavailable' || Date.now()>=deadline)break;
+        await new Promise(resolve=>setTimeout(resolve,250));
+        if(room!==live || id!==attempt || !browserCourse || !ready)return;
+      }while(true);
+    } catch(error) {
+      const detail='Instructor could not receive this task. Your draft and saved work are kept. Reconnect Instructor, then send your answer.';
+      if(room===live && id===attempt && ready) {
+        browserConnectionFailed(detail);host.postMessage({type:'browserState',attempt:id,connected:false,detail});
+      }
+      throw new Error(detail);
+    }
+    if(room!==live || id!==attempt || !ready)return;
     const connected=ack==='ok';
-    if(connected && status.textContent==='Instructor could not receive the current ERPNext form. Reconnect before asking about it.')status.textContent='Instructor connected';
+    browserObservationFailed=!connected;
+    if(connected)button('tutor').hidden=true;
+    else browserConnectionFailed('Browser observation is unavailable. Your draft and saved work are kept. Reconnect Instructor to retry.');
+    if(connected && status.textContent==='Instructor could not receive the current ERPNext form. Reconnect before asking about it.')helpStatus('Instructor connected');
     host.postMessage({type:'browserState',attempt:id,connected,detail:connected
       ? observation?'Instructor is following this ERPNext task.':'Observation paused. Instructor can still answer questions.'
-      : 'Browser observation is unavailable. Update the Instructor service and reconnect.'});
+      : 'Browser observation is unavailable. Your draft and saved work are kept. Reconnect Instructor to retry.'});
     if(!connected)throw new Error('Instructor could not receive the current ERPNext form. Reconnect before asking about it.');
   });
   return browserSync;
 }
 let mediaAllowed = false, mediaBusy = false;
+function updateMediaControls() {
+  if (!button('audio-camera')) return;
+  const reason = !visible || selectionOpen ? 'Return to the learning room to use the microphone or camera.'
+    : !ready ? `Connect to ${names[mode]} to use the microphone or camera.`
+    : !mediaAllowed ? `This ${names[mode]} session supports typed messages and attachments. Microphone and camera are unavailable.`
+    : mediaBusy ? 'Waiting for device access…' : '';
+  for (const [id, name] of [['audio-microphone', 'microphone'], ['audio-camera', 'camera']]) {
+    const control = button(id);
+    control.disabled = !!reason;
+    control.title = reason || (control.getAttribute('aria-pressed') === 'true' ? 'Stop ' : 'Start ') + name;
+    control.setAttribute('aria-label', control.title);
+    control.setAttribute('aria-describedby', 'media-control-status');
+  }
+  const message = byId('media-control-status');
+  if (message) { message.textContent = reason; message.hidden = !reason; }
+}
 const devices = new LearningDevices({
-  current: () => ready && visible && mediaAllowed && mode === 'tutor' && room && agent ? {room, agent} : undefined,
+  current: () => ready && visible && !selectionOpen && mediaAllowed && room && agent ? {room, agent} : undefined,
   capture: device => device === 'microphone'
     ? LivekitClient.createLocalAudioTrack({echoCancellation: true, noiseSuppression: true, autoGainControl: true})
     : LivekitClient.createLocalVideoTrack({resolution: {width: 640, height: 480, frameRate: 10}}),
@@ -118,10 +295,8 @@ const devices = new LearningDevices({
       if (!control || !button('audio-camera')) continue;
       control.setAttribute('aria-pressed', String(active));
       control.innerHTML = mediaIcon(name, active);
-      control.title = (active ? 'Stop ' : 'Start ') + name;
-      control.setAttribute('aria-label', control.title);
-      control.disabled = mediaBusy || !ready || !visible || !mediaAllowed || mode !== 'tutor';
     }
+    updateMediaControls();
     const preview = byId<HTMLVideoElement>('camera-preview');
     if (preview) {
       byId('camera-panel').hidden = !state.camera;
@@ -136,6 +311,24 @@ if (button('audio-camera')) {
 }
 window.addEventListener('pagehide', () => devices.stop());
 const audio = new Set<HTMLMediaElement>();
+function roomAudioMuted(): boolean {
+  return !visible || selectionOpen || !voice || !!activeVideo || interruption.muted || tutorOutputPaused;
+}
+function resumeTutorOutput() {
+  if (!tutorOutputPaused) return;
+  tutorOutputPaused = false;
+  for (const el of audio) el.muted = roomAudioMuted();
+  showAgentActivity();
+}
+const interruption = new SpeechInterruption(() => {
+  for (const el of audio) el.muted = roomAudioMuted();
+  showAgentActivity();
+}, () => {
+  const live = room, destinationIdentity = agent, id = attempt;
+  if (!live || !destinationIdentity) return;
+  void live.localParticipant.performRpc({destinationIdentity, method:'stop_speaking', payload:'{}', responseTimeout:3000})
+    .catch(() => { if (room === live && attempt === id) helpStatus('Listening. The stop request could not be confirmed; playback stays paused until Instructor responds again.'); });
+});
 /** Retry browser playback during a learner gesture, without changing their mute preference. */
 async function resumeSpeaker() {
   const live=room,id=attempt;
@@ -149,6 +342,14 @@ async function resumeSpeaker() {
 }
 const voiceByMode = new Map<Mode, boolean>();
 const speaker = button('sound') ? new SpeakerControl(button('sound'), {
+  menuLabel: 'Speaker options',
+  playback: async speed => {
+    const current = room;
+    if (!current || !agent) return;
+    const ack = await current.localParticipant.performRpc({destinationIdentity: agent, method:'set_speech_playback_speed',
+      payload:JSON.stringify({speed}), responseTimeout:8000});
+    if (ack !== 'ok' || room !== current) throw new Error('Voice speed was not accepted');
+  },
   supported: () => 'setSinkId' in HTMLMediaElement.prototype,
   select: async deviceId => {
     const current = room;
@@ -163,6 +364,7 @@ const videos = new Map<string, {body: HTMLElement; title: string; topic: string;
 let activeVideo: string | undefined;
 let currentVideo: string | undefined, latestVideoUpdate: Promise<boolean> = Promise.resolve(true);
 let pendingPause: {video: string; promise: Promise<boolean>; finish: (ok: boolean) => void} | undefined;
+let observationContent='';
 let observationSequence = 0, latestObservation: Promise<unknown> = Promise.resolve();
 let lessonScope = '';
 let notebook = emptyNotebook(), documentKey = '', restoring = false, cellSequence = 0;
@@ -172,40 +374,150 @@ let practice: {id:string; language:string; title:string} | undefined;
 let askInsteadOf = '', askInstead: HTMLButtonElement | undefined;
 // Visibility can arrive before openPractice. Preserve the host's exercise heading from the first render.
 let practiceMode = document.body.dataset.notebookMode === 'practice';
+const localRuntimeLabel = () => 'Course container';
+const workspaceMode = document.getElementById('workspace-mode') as HTMLSelectElement | null;
+const practicePanel = document.getElementById('workspace-practice');
+let workspaceBusy = false;
+async function changeWorkspace(mode: string, questionId?: string, carryDraft = false) {
+  if (workspaceBusy || sending) return;
+  workspaceBusy = true;
+  if (workspaceMode) workspaceMode.disabled = true;
+  devices.stop(); saveNotebook(true);
+  const draft=snapshotNotebook();
+  const tried=byId<HTMLTextAreaElement>('doubt-tried')?.value.trim();
+  if(carryDraft && tried) {
+    const combined=(draft.textDraft||'')+'\n\nWhat I tried: '+tried;
+    if(combined.length>4000) {
+      draft.cells.push({id:'handoff-tried-'+Date.now().toString(36),kind:'note',text:'What I tried: '+tried});
+    } else draft.textDraft=combined;
+  }
+  try {
+    const id=attempt, files=carryDraft?await attachments.encoded(true):undefined;
+    if(id!==attempt)return;
+    host.postMessage({type:'workspaceMode', mode, questionId, documentKey, notebook:draft,carryDraft,files});
+  } catch(error) { workspaceBusy=false;helpStatus(error instanceof Error?error.message:'Could not carry your draft.');controls(); }
+}
+function browseCoursePractice(chapterId = selectedLesson) {
+  devices.stop();
+  if (practicePanel) practicePanel.hidden = false;
+  document.body.classList.add('browsing-practice');
+  if (byId('practice-questions')) byId('practice-questions').textContent = 'Loading practice sets…';
+  host.postMessage({type:'workspacePractice', chapterId});
+  practicePanel?.scrollIntoView?.({block:'start'});
+}
+if (workspaceMode) workspaceMode.onchange = () => {
+  if (workspaceMode.value === 'practice') browseCoursePractice();
+  else if (!practiceMode && workspaceMode.value === mode) { if (practicePanel) practicePanel.hidden = true; document.body.classList.remove('browsing-practice'); }
+  else changeWorkspace(workspaceMode.value);
+};
+if (button('practice-back')) button('practice-back').onclick = () => {
+  if (practicePanel) practicePanel.hidden = true; document.body.classList.remove('browsing-practice');
+  if (workspaceMode) workspaceMode.value = practiceMode ? 'practice' : mode;
+};
 // Course data (see the course data section below).
 let courseData: CourseDataset[] = [], dataState: 'none' | 'loading' | 'ready' | 'error' = 'none', askNormally = false;
 let pendingData: {request:number; finish:(reply:DataReply) => void} | undefined;
 type DataReply = {outcome?: DataOutcome; datasets?: string[]; error?: string; accessEnded?: boolean; quota?: boolean};
 const importedSets = new Map<string, CourseDataset>();
-let lessonCourses: Course[] = [], selectedLesson = '', preferredCourse = '', loadingLessons = false;
+let lessonCourses: Course[] = [], selectedLesson = '', preferredCourse = '', loadingLessons = !practiceMode, lessonLoadError = '';
+function updateSelectionPage() {
+  if (!selectionPage) return;
+  selectionPage.hidden = !selectionOpen;
+  document.body.classList.toggle('selecting-course', selectionOpen);
+  button('selection-back').hidden = !selectedLesson;
+  button('choose-course').disabled = sending || workspaceBusy;
+}
+function showCourseSelection(open: boolean) {
+  if (!selectionPage) return;
+  selectionOpen = open;
+  if (open) { devices.stop(); saveNotebook(true); }
+  for (const el of audio) el.muted = roomAudioMuted();
+  updateSelectionPage();
+  updateMediaControls();
+  if (open) { notebookPage().scrollTop = 0; byId('selection-title').focus(); }
+  else field.focus();
+}
+function loadCourseSelection() {
+  if (sending || workspaceBusy) return;
+  showCourseSelection(true);
+  loadingLessons = true; lessonLoadError = '';
+  renderLessons();
+  host.postMessage({type:'tutorLessons', attempt, browse:true});
+}
 /** A chapter the host asked to resume (Course Catalog's Continue learning); it starts once lessons load. */
 let preferredLesson = '';
+// Keep transient loading/connection guidance outside the saved notebook.
+const lessonPlaceholder = document.createElement('p');
+lessonPlaceholder.id = 'lesson-placeholder'; lessonPlaceholder.hidden = true;
+lessonPlaceholder.setAttribute('role', 'status'); feed.before(lessonPlaceholder);
+function showLessonPlaceholder() {
+  lessonPlaceholder.hidden = practiceMode || !!feed.childElementCount;
+  if (lessonPlaceholder.hidden) return;
+  const chapters = lessonCourses.find(course => course.name === byId<HTMLSelectElement>('lesson-course')?.value)?.chapters ?? [];
+  lessonPlaceholder.textContent = loadingLessons ? 'Loading your lessons…'
+    : selectedLesson ? status.textContent
+    : lessonLoadError || (chapters.length ? 'Choose a course and chapter to open your lesson.'
+      : 'No lessons available. Open Course Catalog to view your courses.');
+  lessonPlaceholder.setAttribute('aria-busy', String(loadingLessons));
+}
+const lessonPlaceholderObserver = new MutationObserver(showLessonPlaceholder);
+lessonPlaceholderObserver.observe(status, {childList:true, subtree:true, characterData:true});
+lessonPlaceholderObserver.observe(feed, {childList:true});
+function suggestedChapter(course?: Course) {
+  const chapters = course?.chapters ?? [];
+  const available = (chapter: Course['chapters'][number]) => !chapter.locked && !chapter.expired;
+  if (course?.name === ERP_COURSE) {
+    const task = taskProgress?.tasks.find(task => task.status !== 'completed' && chapters.some(ch => ch.id === task.chapter && available(ch)));
+    return chapters.find(ch => ch.id === task?.chapter);
+  }
+  return nextChapter(chapters, available);
+}
 function followingChapter() {
   const chapters=lessonCourses.find(course=>course.chapters.some(ch=>ch.id===selectedLesson))?.chapters ?? [];
   const index=chapters.findIndex(ch=>ch.id===selectedLesson);
   return index<0?undefined:chapters.slice(index+1).find(ch=>!ch.locked && !ch.expired);
 }
 function selectChapter(chapterId:string) {
-  if(chapterId===selectedLesson)return;
+  if (selectionPage && (sending || workspaceBusy)) return;
+  if(chapterId===selectedLesson) { showCourseSelection(false); return; }
   const course=lessonCourses.find(course=>course.chapters.some(ch=>ch.id===selectedLesson));
   if(browserCourse && browserSnapshot && course?.chapters.some(ch=>ch.id===chapterId)) {
     host.postMessage({type:'browserChooseChapter',attempt,chapterId});
     helpStatus('Opening the selected chapter and its browser task. Your unfinished work stays saved.');
-  } else begin('tutor',chapterId);
+  } else begin(mode,chapterId);
 }
 function renderLessons() {
+  refreshNavigation();
   const list = byId('lesson-list'), course = byId<HTMLSelectElement>('lesson-course');
   if (!list || !course) return;
   list.replaceChildren();
+  list.setAttribute('aria-busy', String(loadingLessons));
+  course.disabled = loadingLessons || !lessonCourses.length;
+  const search = byId<HTMLInputElement>('lesson-search');
+  if (search) search.disabled = loadingLessons;
+  const unavailable = !!lessonLoadError && !lessonCourses.length;
+  for (const field of [course, search]) {
+    if (!field) continue;
+    field.hidden = unavailable;
+    for (const label of field.labels ?? []) label.hidden = unavailable;
+  }
+  if (button('reload-lessons')) button('reload-lessons').hidden = !lessonLoadError || loadingLessons;
+  showLessonPlaceholder();
+  if (loadingLessons) { list.textContent = 'Loading your lessons…'; return; }
+  if (lessonLoadError) { list.textContent = lessonLoadError; return; }
   const chapters = lessonCourses.find(item => item.name === course.value)?.chapters ?? [];
-  if (chapters.length) {
+  const practical=course.value===ERP_COURSE;
+  if (chapters.length && mode === 'tutor') {
     const summary = document.createElement('p'); summary.className = 'course-coverage';
-    summary.textContent = courseCoverage(chapters); summary.title = coverageNote; list.append(summary);
+    summary.textContent = practical ? browserProgressLabel(taskProgress) : courseCoverage(chapters);
+    summary.title = practical ? browserProgressNote : coverageNote; list.append(summary);
   }
   // One chapter is the obvious next step: the one in progress, else the first not yet covered that is open.
-  const upNext = nextChapter(chapters, ch => !ch.locked && !ch.expired);
+  const upNext = suggestedChapter(lessonCourses.find(item => item.name === course.value));
   for (const chapter of chapters) {
-    const row = document.createElement('div'); row.className = 'lesson-outline' + (chapter === upNext ? ' up-next' : '');
+    if (search?.value.trim() && !(chapter.name + ' ' + (chapter.lesson || '')).toLowerCase().includes(search.value.trim().toLowerCase())) continue;
+    const taskStatus=taskProgress?.tasks.find(task=>task.chapter===chapter.id)?.status;
+    const row = document.createElement('div'); row.className = 'lesson-outline' + (mode === 'tutor' && chapter === upNext ? ' up-next' : '');
     const choice = document.createElement('button'); choice.type = 'button';
     const label = chapter.lesson || chapter.name;
     if (chapter.lesson && chapter.lesson !== chapter.name) choice.title = chapter.name;
@@ -221,21 +533,30 @@ function renderLessons() {
       choice.disabled = !!chapter.locked;
       choice.onclick = () => selectChapter(chapter.id);
     }
-    if (chapter.progress?.status === 'covered') {
+    if (practical ? taskStatus==='completed' : chapter.progress?.status === 'covered') {
       // A covered chapter is done, not cancelled: a check mark, never a strikethrough, and still revisitable.
       const mark = document.createElement('span'); mark.className = 'covered-mark'; mark.setAttribute('aria-hidden', 'true'); mark.textContent = '✓ ';
       const access = chapter.expired ? ' · Access ended · Buy again' : chapter.locked ? ' · Locked' : '';
       choice.classList.add('lesson-covered'); choice.replaceChildren(mark, document.createTextNode(label + access));
     }
     row.append(choice);
+    if (mode === 'doubt_solver') { list.append(row); continue; }
+    if(chapter.compute) {
+      const compute=document.createElement('small');compute.className='chapter-coverage';
+      compute.textContent=chapter.compute.status==='specified'
+        ? `${chapter.compute.totalGpus} GPUs · ${chapter.compute.layouts?.length ? chapter.compute.layouts.map(l=>l.nodes+' × '+l.gpusPerNode).join(' or ') : chapter.compute.totalGpus ? chapter.compute.nodes+' machine'+(chapter.compute.nodes===1?'':'s') : 'CPU lab'}`
+        : 'Compute requirements pending review';
+      compute.title=chapter.compute.note;row.append(compute);
+    }
     const progress = document.createElement('small'); progress.className = 'chapter-coverage';
-    progress.textContent = (chapter === upNext ? (chapter.progress?.status === 'not_started' ? 'Up next · ' : 'Pick up here · ') : '') + coverageLabel(chapter.progress);
+    progress.textContent = practical ? (chapter===upNext?'Pick up here · ':'')+browserTaskLabel(taskStatus)
+      : (chapter === upNext ? (chapter.progress?.status === 'not_started' ? 'Up next · ' : 'Pick up here · ') : '') + coverageLabel(chapter.progress);
     row.append(progress);
-    const topics = document.createElement('div'); topics.innerHTML = topicCoverageHtml(chapter.progress);
+    const topics = document.createElement('div'); topics.innerHTML = practical ? '' : topicCoverageHtml(chapter.progress);
     row.append(topics); list.append(row);
   }
-  if (chapters.length) {
-    const note = document.createElement('small'); note.className = 'course-coverage'; note.textContent = coverageNote; list.append(note);
+  if (chapters.length && mode === 'tutor') {
+    const note = document.createElement('small'); note.className = 'course-coverage'; note.textContent = practical ? browserProgressNote : coverageNote; list.append(note);
   }
   if (chapters.some(chapter => chapter.expired)) {
     const note = document.createElement('small'); note.id = 'lesson-access-note'; note.className = 'muted';
@@ -243,6 +564,7 @@ function renderLessons() {
     list.append(note);
   }
   if (!chapters.length) list.textContent = 'No lessons available. Open Course Catalog to view your courses.';
+  else if (!list.querySelector('.lesson-outline')) list.textContent = 'No chapters match your search.';
 }
 function clearDocument(keepAttachments = false) {
   clearTimeout(saveTimer); documentKey = ''; saveSequence = 0;
@@ -250,16 +572,20 @@ function clearDocument(keepAttachments = false) {
   askInsteadOf = ''; editors.restartRuntime();
   restoreNotebook(emptyNotebook());
 }
-function chooseLesson() {
-  close('Loading your lessons…'); mode = 'tutor'; selectedLesson = ''; lessonCourses = [];
+function chooseLesson(next:Mode = mode) {
+  if (selectionPage) selectionOpen = true;
+  close('Loading your lessons…'); mode = next; selectedLesson = ''; lessonCourses = [];
+  loadingLessons = true; lessonLoadError = '';
   const course = byId<HTMLSelectElement>('lesson-course'); if (course) course.replaceChildren();
   clearDocument(); controls(); renderLessons(); button('tutor').hidden = true;
-  loadingLessons = true; host.postMessage({type:'tutorLessons', attempt});
+  host.postMessage({type:'tutorLessons', attempt});
 }
 /** Refreshes the lesson list in place, for example after the learner bought a course in the catalog. */
 function reloadLessons() {
-  if (practiceMode || mode !== 'tutor' || selectedLesson || loadingLessons || !byId('lesson-list')) return;
-  loadingLessons = true; host.postMessage({type:'tutorLessons', attempt});
+  if (practiceMode || selectedLesson || loadingLessons || !byId('lesson-list')) return;
+  loadingLessons = true; lessonLoadError = ''; status.textContent = 'Loading your lessons…';
+  button('tutor').hidden = true;
+  renderLessons(); host.postMessage({type:'tutorLessons', attempt});
 }
 type NotebookReply = {content?:string; ladderNote?:string; error?:string; accessEnded?:boolean; audioId?:string | null; choices?:string[]; replies?:string[]; strategy?:string; line?:number};
 /** Ended course access is a next step, not a raw error: say so and offer the catalog. */
@@ -301,6 +627,7 @@ function doubtCells() {
   return notebook.cells.slice(start + 1);
 }
 function currentDoubt() {
+  if(notebook.doubtId)return notebook.doubtId;
   const divider = [...notebook.cells].reverse().find(isDivider);
   return divider ? divider.packet!.doubt_id as string : pendingDoubt ||= crypto.randomUUID();
 }
@@ -311,40 +638,56 @@ function doubtRecap() {
 }
 let doubtContext: {chapter_id?: string; lesson_name?: string} = {};
 function switchPayload(grant: {chapterId?: string; lesson?: {subject: string; name: string}}) {
-  if (mode === 'tutor') return {mode, chapter_id:grant.chapterId,
+  if (mode === 'tutor') return {mode, language:coachLanguage, chapter_id:grant.chapterId,
+    notebook_resume:notebookResume(snapshotNotebook()),
     ...(mediaAllowed ? {lesson_subject:grant.lesson?.subject, lesson_name:grant.lesson?.name} : {})};
-  const payload = {mode, doubt_id:currentDoubt(), recap:doubtRecap(), ...doubtContext};
+  const payload = {mode, language:coachLanguage, doubt_id:currentDoubt(), recap:doubtRecap(), ...doubtContext};
   // LiveKit RPC payloads are byte bounded: drop the oldest recap items first.
   while (payload.recap.length && new TextEncoder().encode(JSON.stringify(payload)).length > 14000) payload.recap.shift();
-  if (!payload.recap.length) return {mode, doubt_id:payload.doubt_id, ...doubtContext};
+  if (!payload.recap.length) return {mode, language:coachLanguage, doubt_id:payload.doubt_id, ...doubtContext};
   return payload;
 }
 function newDoubt() {
   if (sending || mode !== 'doubt_solver' || practiceMode || !documentKey) return;
-  if (!doubtCells().some(cell => cell.kind === 'message')) { field.focus(); return; }
-  pendingDoubt = '';
-  const id = crypto.randomUUID();
-  addCell('recap', 'New doubt', {doubt_divider:true, doubt_id:id});
-  const tried = document.getElementById('doubt-tried') as HTMLTextAreaElement | null;
-  if (tried) tried.value = '';
-  showHelp({next:1});
-  status.textContent = 'New doubt. Ask your question; earlier doubts stay above.';
-  const live = room, dest = agent;
-  if (ready && live && dest) void live.localParticipant.performRpc({destinationIdentity:dest, method:'switch_mode',
-    payload:JSON.stringify({mode, doubt_id:id, ...doubtContext}), responseTimeout:30000}).catch(() => {});
-  controls(); field.focus();
+  switchChat({newChat:true,chapter:selectedLesson});
 }
+let chatSwitchPending=false;
+function switchChat(chat:{newChat?:boolean;chatId?:string;chapter:string}) {
+  if(sending || chatSwitchPending)return;
+  chatSwitchPending=true;sending=true;controls();
+  host.postMessage({type:'switchDoubtChat',documentKey,notebook:snapshotNotebook(),...chat});
+}
+const chatHistory = document.getElementById('doubt-history') as HTMLDetailsElement | null;
+if(chatHistory)chatHistory.ontoggle=()=>{if(chatHistory.open)host.postMessage({type:'doubtHistory'});};
+function renderChatHistory(chats: {id:string;title:string;course:string;chapter:string}[]) {
+  const list=document.getElementById('doubt-chat-list'); if(!list)return;
+  list.replaceChildren();
+  for(const chat of chats) {
+    const item=document.createElement('button'); item.type='button';item.className='quiet';
+    const title=document.createElement('strong'),context=document.createElement('small');
+    title.textContent=chat.title;context.textContent=chat.course;
+    item.append(title,context); item.setAttribute('aria-current',String(chat.id===notebook.doubtId));
+    item.onclick=()=>{if(sending)return;switchChat({chatId:chat.id,chapter:chat.chapter});};
+    list.append(item);
+  }
+  if(!chats.length)list.textContent='Your chats will appear here after you choose a chapter.';
+}
+
 let notebookCounter = 0, pendingNotebook: {request:number; finish:(reply:NotebookReply) => void} | undefined;
 const replyContexts = new Map<string, CodeSnapshot & {skillStage?:SkillStage}>();
 const activeSkills = new Map<string, SkillStage>();
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
-function snapshotNotebook(): TutorNotebook { return {...notebook, textDraft:field.value, drafts: editors.drafts()}; }
-function saveNotebook() {
+function snapshotNotebook(): TutorNotebook { return {...notebook, textDraft:field.value, ...(mode==='doubt_solver'?{attemptDraft:(document.getElementById('doubt-tried') as HTMLTextAreaElement|null)?.value ?? ''}:{}), drafts: editors.drafts()}; }
+function lessonXp() {
+  return notebook.cells.reduce((total, cell) => total + (Number.isSafeInteger(cell.packet?.xp) && Number(cell.packet?.xp) > 0 ? Number(cell.packet!.xp) : 0), 0);
+}
+function saveNotebook(immediate=false) {
   if (restoring || !documentKey) return;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
+  const save=() => {
     host.postMessage({type:'notebookChanged', documentKey, sequence:++saveSequence, notebook:snapshotNotebook()});
-  }, 250);
+  };
+  if(immediate)save();else saveTimer = setTimeout(save, 250);
 }
 /** A closing line "Your turn: …" becomes its own cell that stays open until the learner replies. */
 function splitYourTurn(text: string): {body: string; turn?: string} {
@@ -357,14 +700,16 @@ function splitYourTurn(text: string): {body: string; turn?: string} {
   return {body:text};
 }
 function addCell(kind: NotebookCell['kind'], text: string, packet?: Record<string, unknown>) {
-  if (kind === 'message') for (const turn of feed.querySelectorAll('.your-turn.is-open')) turn.classList.remove('is-open');
+  if (kind === 'message' && !packet?.action && !packet?.notebook_help)
+    for (const turn of feed.querySelectorAll('.your-turn.is-open')) turn.classList.remove('is-open');
   const cell: NotebookCell = {id:'cell-' + Date.now().toString(36) + '-' + ++cellSequence, kind, text, ...(packet ? {packet} : {})};
-  notebook.cells.push(cell); renderCell(cell); saveNotebook();
+  notebook.cells.push(cell); renderCell(cell); saveNotebook(); refreshNavigation();
   if (kind === 'board') refreshDiagramAlternatives();
   if (!practice && ready) { const selected = editors.selection(); observeCode(selected?.snapshot, selected?.run); }
   return cell;
 }
 function restoreNotebook(value: TutorNotebook) {
+  document.getElementById('runtime-restore')?.remove();
   closeVisual();
   cancelRemoval?.();
   activeSkills.clear();
@@ -373,31 +718,83 @@ function restoreNotebook(value: TutorNotebook) {
   restoring = true;
   notebook = readNotebook(value);
   field.value = notebook.textDraft ?? '';
+  const tried=document.getElementById('doubt-tried') as HTMLTextAreaElement|null;if(tried)tried.value=notebook.attemptDraft??'';
   editors.restore(notebook.drafts); editors.update(ready, attempt);
   feed.replaceChildren();
   for (const cell of notebook.cells) renderCell(cell);
+  const pending = unfinishedQuestion(notebook);
+  if (!practiceMode && mode === 'tutor' && typeof pending?.packet?.tutor_checkpoint_id === 'string')
+    editors.checkpoint(pending.packet.tutor_checkpoint_id);
+  if (!practiceMode && mode === 'tutor') {
+    const target = pending ?? [...notebook.cells].reverse().find(cell => cell.kind === 'board' || cell.kind === 'code');
+    if (target && notebookResume(notebook)) {
+      const bar = document.createElement('div'), status = document.createElement('span'), resume = document.createElement('button');
+      bar.id = 'stopping-point'; bar.dataset.target = target.id;
+      resume.textContent = 'Return to stopping point'; resume.className = 'quiet';
+      resume.onclick = () => goToNotebookCell(target.id);
+      bar.append(status, resume); feed.append(bar);
+    }
+  }
   refreshDiagramAlternatives();
   if (practice && ready && notebook.exerciseId === practice.id) editors.checkpoint('practice:' + practice.id);
   restoring = false; updateLatest();
+  showBrowserProgress();
   controls();
 }
 function updateConversationCard(cell: NotebookCell, row = feed.querySelector<HTMLElement>(`[data-cell-id="${cell.id}"]`)) {
   const body = row?.querySelector<HTMLElement>(':scope > .conversation-body');
   const toggle = row?.querySelector<HTMLButtonElement>('[data-collapse]');
   if (!body || !toggle) return;
+  const preview=row?.querySelector<HTMLElement>('.conversation-preview');
+  if(preview && validBrowserQuestion(cell.packet?.browser_question)) {
+    const question=cell.packet!.browser_question as BrowserQuestion;
+    preview.textContent=(cell.packet!.browser_question_closed?'Earlier ':'')+question.kind+' · '+question.title;
+  }
   body.hidden = cell.collapsed === true;
   toggle.textContent = cell.collapsed ? 'Expand' : 'Collapse';
   toggle.setAttribute('aria-expanded', String(!cell.collapsed));
   row!.classList.toggle('is-collapsed', !!cell.collapsed);
 }
+function retractTutorRequest(request: string) {
+  const live = room, destinationIdentity = agent;
+  if (!live || !destinationIdentity || !pendingTutorRequests.delete(request)) return;
+  retractedTutorRequests.add(request);
+  if (request === lastTutorRequest) {
+    tutorOutputPaused = true;
+    for (const el of audio) el.muted = true;
+    showAgentActivity();
+  }
+  // Keep the composer editable. A corrected answer can be sent immediately,
+  // but reaches the worker after it has reopened the original checkpoint.
+  const ack = live.localParticipant.performRpc({destinationIdentity, method:'cancel_tutor_request',
+    payload:JSON.stringify({tutor_request_id:request}), responseTimeout:8000});
+  tutorCancellation = Promise.all([tutorCancellation, ack]).then(([, result]) => {
+    if (result !== 'ok') throw new Error('Cancellation unavailable');
+  }).catch(() => {
+    if (room === live) close('Instructor could not confirm cancellation. Your draft is saved. Reconnect Instructor to continue.');
+  });
+}
 function removeConversation(cells: NotebookCell[]) {
   if (sending) return;
   const ids = new Set(cells.filter(conversationCell).map(cell => cell.id));
+  for (const cell of cells) {
+    const request = packetTurn(cell.packet);
+    if (cell.kind !== 'message' || !ids.has(cell.id) || !pendingTutorRequests.has(request)) continue;
+    retractTutorRequest(request);
+    for (const other of notebook.cells) {
+      if (packetTurn(other.packet) === request) ids.add(other.id);
+      if (other.packet?.student_answer_request_id === request && !other.packet.feedback_received) {
+        delete other.packet.student_answer;
+        delete other.packet.student_answer_request_id;
+        if (other.packet.browser_question_id === browserAnswered) browserAnswered = '';
+      }
+    }
+  }
   notebook.cells = notebook.cells.filter(cell => !ids.has(cell.id));
   for (const id of ids) { editors.removeCell(id); feed.querySelector(`[data-cell-id="${id}"]`)?.remove(); replyContexts.delete(id); }
   refreshDiagramAlternatives();
   if (!practiceMode) { const selected = editors.selection(); observeCode(selected?.snapshot, selected?.run); }
-  saveNotebook(); controls(); updateLatest();
+  saveNotebook(true); controls(); updateLatest();
 }
 function conversationControls(body: HTMLElement, cell: NotebookCell) {
   if (!conversationCell(cell) || (!practiceMode && cell.packet?.is_question_prompt)) return;
@@ -406,9 +803,7 @@ function conversationControls(body: HTMLElement, cell: NotebookCell) {
   header.className = 'conversation-header'; bar.className = 'cell-actions';
   row.prepend(header); header.append(label, bar);
   const preview = document.createElement('span'); preview.className = 'conversation-preview';
-  const excerpt = document.createElement('div');
-  if (cell.kind === 'board') excerpt.innerHTML = renderBoard(cell.text); else excerpt.textContent = cell.text;
-  preview.textContent = (excerpt.textContent ?? '').replace(/\s+/g, ' ').slice(0, 100); row.append(preview);
+  preview.textContent = (cell.kind === 'board' ? markdownPlainText(cell.text) : cell.text).replace(/\s+/g, ' ').slice(0, 100); row.append(preview);
   body.classList.add('conversation-body'); body.id = cell.id + '-body';
   const collapse = document.createElement('button'); collapse.dataset.collapse = '';
   collapse.setAttribute('aria-controls', body.id);
@@ -485,7 +880,13 @@ function refreshDiagramAlternatives() {
 }
 function renderCell(cell: NotebookCell) {
   if (cell.kind === 'board' && typeof cell.packet?.data_part === 'string') { renderDataCell(cell); return; }
-  if (cell.kind === 'board') { renderTeaching(cell); return; }
+  // Older saved notebooks may already contain both the image event and its
+  // Markdown copy. Filter their presentation without rewriting saved work.
+  let text = restoring && mode === 'tutor' && ['board', 'diagram'].includes(cell.kind)
+    ? instructorVisuals(cell.text, cell.packet ?? {}, notebook.cells.slice(0, notebook.cells.indexOf(cell))) : cell.text;
+  if (!text.trim() && cell.kind === 'board' && cell.packet?.is_question_prompt) text='Use the figure above to answer.';
+  if (!text.trim() && cell.text.trim()) return;
+  if (cell.kind === 'board') { renderTeaching(cell, text); return; }
   if (isDivider(cell)) {
     const row = document.createElement('article'), label = document.createElement('small');
     row.className = 'doubt-divider'; row.dataset.cellId = cell.id; row.setAttribute('role', 'separator');
@@ -503,14 +904,64 @@ function renderCell(cell: NotebookCell) {
       share.title = 'Send this note to Instructor and discuss it'; share.dataset.share = 'note';
       share.onclick = () => { if (note.value.trim()) void send('Discuss my notes with me:\n' + note.value, false, note.value, 'hint'); };
       body.parentElement?.classList.add('note-cell'); body.append(note, share);
-    } else if (cell.kind === 'code') editors.add(body, cell.id + ':0', typeof cell.packet?.language === 'string' ? cell.packet.language : 'python', cell.text);
-    else if (cell.kind === 'diagram') {
-      body.innerHTML = cell.packet?.image_url ? renderBoard(cell.text) : diagram(cell.text);
+    } else if (cell.kind === 'code') {
+      editors.add(body, cell.id + ':0', typeof cell.packet?.language === 'string' ? cell.packet.language : 'python', cell.text);
+      if (cell.packet?.starterExample === 'data-science-python') {
+        const alternative = document.createElement('p'), browser = document.createElement('a');
+        const url = new URL('https://jupyterlite.github.io/demo/repl/index.html');
+        url.search = new URLSearchParams({kernel:'python', toolbar:'1', execute:'0', code:firstPandasCell}).toString();
+        browser.href = url.href; browser.textContent = 'Open the original example in JupyterLite';
+        alternative.append('Waiting for your runtime? ', browser, ' and press Shift+Enter to run it in your browser.');
+        body.append(alternative);
+      }
+    } else if (cell.kind === 'diagram') {
+      body.innerHTML = cell.packet?.image_url ? renderBoard(text) : diagram(text);
       if (typeof cell.packet?.label === 'string') {
         const caption = document.createElement('small'); caption.textContent = cell.packet.label; body.append(caption);
       }
     }
-    else if (cell.kind === 'recap') { body.innerHTML = renderBoard(cell.text); if (cell.packet?.session_summary) summaryActions(body, cell); }
+    else if (cell.kind === 'recap') {
+      const starter = starterExercises.find(item => item.courseId === cell.packet?.starterExercise);
+      if (starter) {
+        const title = document.createElement('h3'), prompt = document.createElement('p'), choices = document.createElement('div');
+        title.textContent = 'First exercise'; prompt.textContent = starter.question;
+        choices.className = 'starter-answers'; choices.setAttribute('role','group'); choices.setAttribute('aria-label',starter.question);
+        const feedback = document.createElement('p'); feedback.setAttribute('role','status');
+        const showAnswer = () => {
+          const answer = cell.packet?.starterAnswer;
+          const complete = answer === starter.correct;
+          feedback.textContent = complete ? 'Exercise complete. ' + starter.feedback : typeof answer === 'number' ? starter.hint : '';
+          for (const [index, choice] of [...choices.querySelectorAll('button')].entries()) {
+            choice.setAttribute('aria-pressed', String(index === answer));
+            choice.disabled = complete;
+          }
+        };
+        starter.choices.forEach((label, index) => {
+          const choice = document.createElement('button'); choice.type = 'button'; choice.textContent = label;
+          choice.onclick = () => { cell.packet!.starterAnswer = index; showAnswer(); saveNotebook(true); };
+          choices.append(choice);
+        });
+        body.append(title, prompt);
+        if (starter.source) {
+          const code = document.createElement('pre'); code.textContent = starter.source; body.append(code);
+        }
+        body.append(choices, feedback); showAnswer();
+        if (starter.source) {
+          const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'quiet'; edit.textContent = 'Try in a code cell';
+          edit.onclick = () => {
+            const existing = notebook.cells.find(item => item.kind === 'code' && item.packet?.starterExample === starter.courseId);
+            const example = existing ?? addCell('code', starter.source!, {language:starter.language, starterExample:starter.courseId});
+            const row = [...feed.querySelectorAll<HTMLElement>('[data-cell-id]')].find(item => item.dataset.cellId === example.id);
+            if (row) scrollToNotebookRow(row, toolbar?.offsetHeight ?? 0);
+            row?.querySelector<HTMLElement>('.cm-content')?.focus();
+          };
+          body.append(edit);
+        }
+      } else {
+        body.innerHTML = renderBoard(cell.text);
+        if (cell.packet?.session_summary) summaryActions(body, cell);
+      }
+    }
     else if (cell.kind === 'voice') { const details = document.createElement('details'), summary = document.createElement('summary'), text = document.createElement('p'); summary.textContent = 'Spoken explanation'; text.textContent = cell.text; details.append(summary, text); body.append(details); }
     else { body.className = 'learner-message'; body.textContent = cell.text; }
     prepareVisuals(body);
@@ -535,6 +986,14 @@ const toolReplies = new Map<number, (reply: ToolReply) => void>();
 let toolCounter = 0;
 const debugReplies = new Map<number, (reply:NativeDebugReply) => void>();
 const editors = new PracticeCodeEditors({
+  executionFinished: (key, snapshot, run, error) => {
+    notebook.executionIssues = recordExecutionIssue(notebook.executionIssues ?? [], key, snapshot.snippet, run, error);
+    for (const cell of notebook.cells.filter(cell => cell.packet?.session_summary)) {
+      const body = feed.querySelector<HTMLElement>(`[data-cell-id="${cell.id}"] > div`);
+      if (body) { body.innerHTML = renderBoard(cell.text); summaryActions(body, cell); }
+    }
+    saveNotebook();
+  },
   assistant: () => names[mode],
   debug: (snapshot, action) => new Promise<NativeDebugReply>(resolve => {
     const request = ++toolCounter;
@@ -573,13 +1032,13 @@ function observeCode(snapshot?: CodeSnapshot, run?: ReturnType<typeof observedRu
   const shared = notebookContext(notebook.cells, editors.contexts(), snapshot?.snippet);
   const sharing = visible && editors.following && editors.aiEnabled;
   const payload = sharing && snapshot ? {
-    sequence: ++observationSequence, notebook:shared, snippet: snapshot.snippet, revision: snapshot.revision,
+    sequence: observationSequence + 1, notebook:shared, snippet: snapshot.snippet, revision: snapshot.revision,
     language: snapshot.language, source: snapshot.source.slice(0, 4000), question: snapshot.question.slice(0, 1200),
     stdin: snapshot.stdin.slice(0, 600), guidance: (guidance ?? '').slice(0, 1200),
     source_truncated: snapshot.source.length > 4000, input_truncated: snapshot.stdin.length > 600,
     run: run ? {...run, output: run.output.slice(0, 2000), stderr: run.stderr.slice(0, 800),
       incomplete: run.incomplete || run.output.length > 2000 || run.stderr.length > 800} : null,
-  } : sharing && shared.cells.length ? {sequence: ++observationSequence, notebook:shared} : {sequence: ++observationSequence, clear: true};
+  } : sharing && shared.cells.length ? {sequence: observationSequence + 1, notebook:shared} : {sequence: observationSequence + 1, clear: true};
   // LiveKit RPC payloads are byte bounded, including multibyte source and JSON escaping.
   if (sharing && snapshot && typeof payload.source === 'string') while (new TextEncoder().encode(JSON.stringify(payload)).length > 14000) {
     if (payload.source.length) { payload.source = payload.source.slice(0, Math.max(0, payload.source.length - 500)); payload.source_truncated = true; }
@@ -593,20 +1052,41 @@ function observeCode(snapshot?: CodeSnapshot, run?: ReturnType<typeof observedRu
   const shown = 'snippet' in payload ? `${assistant} can see your current snippet, input and latest run.`
     : 'notebook' in payload ? `${assistant} can see your shared notebook cells. Select a code cell to share it.`
     : sharing ? `${assistant} has no notebook cells to follow yet.` : 'Automatic code observation is paused.';
+  const content=JSON.stringify({...payload,sequence:0});
+  if(content===observationContent)return;
+  observationContent=content;observationSequence=payload.sequence;
   latestObservation = live.localParticipant.performRpc({destinationIdentity: dest, method: 'on_editor_activity',
     payload: JSON.stringify(payload), responseTimeout: 6000}).then(result => {
       if (id !== attempt || payload.sequence !== observationSequence) return;
+      if(result!=='ok')observationContent='';
       byId('code-observer-status').textContent = result === 'ok' ? shown : unavailable;
     }).catch(() => {
-      if (id === attempt && payload.sequence === observationSequence) byId('code-observer-status').textContent = unavailable;
+      if (id === attempt && content===observationContent) {observationContent='';byId('code-observer-status').textContent = unavailable;}
     });
 }
 
 function controls() {
-  button('doubt_solver').textContent = mode === 'doubt_solver' ? 'Return to Instructor' : 'Open Doubt Solver';
+  const stoppingPoint = document.getElementById('stopping-point');
+  if (stoppingPoint) {
+    const target = notebook.cells.find(cell => cell.id === stoppingPoint.dataset.target);
+    if (!target || (target.packet?.is_question_prompt && unfinishedQuestion(notebook) !== target)) {
+      const restore = stoppingPoint.querySelector('#runtime-restore');
+      if (restore) toolbar?.after(restore);
+      stoppingPoint.remove();
+    } else stoppingPoint.querySelector('span')!.textContent = !target.packet?.is_question_prompt ? ''
+      : typeof target.packet.student_answer === 'string' ? 'Your last answer is awaiting feedback.' : 'Your last “Your turn” is still waiting for your answer.';
+  }
+  updateSelectionPage();
+  refreshNavigation();
+  showLessonPlaceholder();
+  showAgentActivity();
+  if (workspaceMode) workspaceMode.disabled = workspaceBusy || sending;
+  if (workspaceMode) button('doubt_solver').hidden = mode !== 'doubt_solver';
+  button('tutor').disabled=sending;
+  button('doubt_solver').textContent = mode === 'doubt_solver' ? 'Open in Instructor' : 'Open Doubt Solver';
   if (byId('notebook-mode')) byId('notebook-mode').textContent = 'DHIMANTAI · ' + (practiceMode ? 'PRACTICE NOTEBOOK' : mode === 'doubt_solver' ? 'DOUBT SOLVER' : 'INSTRUCTOR NOTEBOOK');
-  if (byId('tutor-lessons')) byId('tutor-lessons').hidden = practiceMode || mode !== 'tutor';
-  const choosing = !practiceMode && mode === 'tutor' && !selectedLesson;
+  if (byId('tutor-lessons')) byId('tutor-lessons').hidden = practiceMode;
+  const choosing = !practiceMode && !selectedLesson;
   const skip=button('skip-chapter'),next=followingChapter();
   if(skip) {
     skip.hidden=practiceMode || mode!=='tutor' || !selectedLesson;
@@ -619,7 +1099,7 @@ function controls() {
   if (heading) {
     const lesson = lessonCourses.flatMap(course => course.chapters).find(chapter => chapter.id === selectedLesson);
     heading.innerHTML = renderHeading(practiceMode ? practice?.title || (notebook.exerciseId && notebook.title) || initialTitle
-      : mode === 'doubt_solver' ? 'Ask a specific question' : lesson?.lesson || lesson?.name || 'Choose a lesson');
+      : mode === 'doubt_solver' ? lesson?.lesson || lesson?.name || 'Ask a specific question' : lesson?.lesson || lesson?.name || 'Choose a lesson');
   }
   byId('composer').hidden = choosing;
   for (const id of ['add-code', 'add-note', 'save-notebook', 'open-notebook']) if (button(id)) button(id).disabled = !documentKey;
@@ -643,16 +1123,26 @@ function controls() {
   for(const action of feed.querySelectorAll<HTMLButtonElement>('[data-browser-question]'))
     action.disabled=!ready || sending || action.dataset.browserQuestion!==browserQuestion?.id || action.dataset.browserQuestion===browserAnswered;
   speaker?.update(!voice || blockedAudio, false, blockedAudio ? 'Enable speaker' : undefined);
-  if (button('audio-camera')) for (const id of ['audio-microphone', 'audio-camera']) {
-    button(id).disabled = mediaBusy || !ready || !visible || !mediaAllowed || mode !== 'tutor';
-  }
+  updateMediaControls();
 }
+function writtenCheckpoint(packet: Record<string, unknown>) {
+  if (!packet.is_question_prompt) return false;
+  if (packet.tutor_answer_kind === 'written') return true;
+  const task = packet.tutor_practice_editor as {source?: string; question?: string} | undefined;
+  if (!task) return packet.tutor_answer_kind !== 'code';
+  if (packet.tutor_answer_kind === 'code' || task.source !== 'Your turn' || typeof task.question !== 'string') return false;
+  // Older generated questions sometimes identified the language of the example as the answer type.
+  const prose = task.question.slice(0, 6000).replace(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, ' ').replace(/`[^`\n]*`/g, ' ');
+  return /\b(?:predict|explain|describe|justify|summarize|state the (?:printed line|output)|which (?:printed )?line|in your own words|what (?:does|do|will|would|is)|does the loop)\b/i.test(prose)
+    && !/(?:^|[.!?,:\n—]|\b(?:and|then|please|can you|your task is to)\s+)\s*(?:implement|modify|rewrite|edit|fix|complete|write|create|change)\s+(?:(?:a|the|this|python|new)\s+)*(?:program|function|code|loop|comparison|statement|blank)\b/i.test(prose);
+}
+
 /** Instructor's latest open written question, answered from the separate message bar. */
 function openQuestion(): NotebookCell | undefined {
   if (practice || mode !== 'tutor') return;
   const cell = [...notebook.cells].reverse().find(c => c.kind === 'board' && c.packet?.is_question_prompt);
   const p = cell?.packet;
-  if (!p || typeof p.tutor_checkpoint_id !== 'string' || p.tutor_practice_editor || typeof p.student_answer === 'string'
+  if (!p || typeof p.tutor_checkpoint_id !== 'string' || !writtenCheckpoint(p) || p.feedback_received || typeof p.student_answer === 'string'
       || p.tutor_checkpoint_id !== editors.activeCheckpoint || p.tutor_checkpoint_id === askInsteadOf) return;
   return cell;
 }
@@ -675,7 +1165,7 @@ function composerMode() {
   if (byId('send-label')) byId('send-label').textContent = action;
   const context = byId('composer-context');
   if (context) {
-    const prompt=browserPrompt?.question??question?.text;
+    const prompt = markdownPlainText(browserPrompt?.question ?? question?.text ?? '');
     context.hidden = !prompt;
     context.textContent = prompt ? 'Replying to: ' + prompt.slice(0, 180) + (prompt.length > 180 ? '…' : '') : '';
   }
@@ -687,7 +1177,7 @@ function composerMode() {
 }
 /** The message bar answers Instructor's open question, or asks one. Attachments go with a question. */
 async function submitField(): Promise<boolean> {
-  if (!ready) { helpStatus('Instructor is not connected yet. Your draft is saved; send it when connected.'); return false; }
+  if (!ready) { helpStatus(names[mode] + ' is not connected yet. Your draft is saved; send it when connected.'); return false; }
   if (sending) { helpStatus('Sending your message…'); return false; }
   if (!field.value.trim() && !attachments.count) { field.focus(); return false; }
   const browserPrompt=attachments.count?undefined:openBrowserQuestion();
@@ -697,16 +1187,16 @@ async function submitField(): Promise<boolean> {
       helpStatus(browserPrompt.options.length?'Choose one of the prediction options in Instructor.'
         : `Write ${browserPrompt.minLength}–${browserPrompt.maxLength} characters in your own words.`);return false;
     }
-    const ok=await send(browserAnswerMessage(browserPrompt,text),false,text);
+    const cell=notebook.cells.find(c=>c.packet?.browser_question_id===browserPrompt.id);
+    const ok=await sendLive(browserAnswerMessage(browserPrompt,text),false,text,undefined,cell);
     if(ok && id===attempt) {
       browserAnswered=browserPrompt.id;
       host.postMessage({type:'browserAnswer',attempt,id:browserPrompt.id,answer:text});
       if(field.value.trim()===text)field.value='';
-      const cell=notebook.cells.find(c=>c.packet?.browser_question_id===browserPrompt.id);
-      if(cell?.packet){cell.packet.student_answer=text;saveNotebook();}
+      saveNotebook();
       helpStatus(browserPrompt.kind==='prediction'?'Prediction sent. Continue the practical step in the browser.'
         :browserPrompt.kind==='reflection'?'Reflection sent. Read your feedback here.'
-        :'Answer sent. Read your feedback here, then choose Next task in the browser.');
+        :browserSnapshot?.shift?'Answer sent. Read your feedback here, then Continue.':'Answer sent. Read your feedback here, then choose Next task in the browser.');
     }
     controls();return ok;
   }
@@ -716,37 +1206,46 @@ async function submitField(): Promise<boolean> {
   if (!question) return send(field.value, true);
   const text = field.value, packet = question.packet!;
   if (!text.trim() || sending) return false;
-  const ok = await send('TUTOR_NOTEBOOK_ANSWER\n' + JSON.stringify({checkpoint_id:packet.tutor_checkpoint_id, answer:text}), false, text);
+  const ok = await sendLive('TUTOR_NOTEBOOK_ANSWER\n' + JSON.stringify({checkpoint_id:packet.tutor_checkpoint_id, answer:text}), false, text, undefined, question);
   // Backend question identity remains authoritative; delivery alone does not assess it.
-  if (ok) { packet.student_answer = text; if (field.value === text) field.value = ''; saveNotebook(); }
+  if (ok) {
+    if (field.value === text) field.value = ''; saveNotebook();
+  }
   controls();
   return ok;
 }
 const toolbar = document.querySelector<HTMLElement>('.notebook-toolbar');
-function nearBottom() { return notebookPage.scrollHeight - notebookPage.scrollTop - notebookPage.clientHeight < 48; }
+// On narrow screens the composer follows the feed. Its height is not chat history.
+function nearBottom() {
+  const page = notebookPage();
+  const bottom = page === document.scrollingElement || page === document.documentElement ? window.innerHeight : page.getBoundingClientRect().bottom;
+  return feed.getBoundingClientRect().bottom <= bottom + 48;
+}
 function updateLatest() { latestButton.hidden = nearBottom(); }
-function appendCard(label: string, fill: (body: HTMLElement) => void, follow = nearBottom()) {
+function appendCard(label: string, fill: (body: HTMLElement) => void, follow = nearBottom(), replaceRow?: HTMLElement) {
   const row = document.createElement('article'), tag = document.createElement('small'), body = document.createElement('div');
   tag.textContent = label;
   row.append(tag, body);
   fill(body);
-  feed.append(row);
+  if (replaceRow) replaceRow.replaceWith(row);
+  else feed.append(row);
   // A long answer opens at its beginning. Later packets leave a reader in place.
   if (follow) {
     // The sticky toolbar stays over the page top; open the card just below it.
-    const top = notebookPage.scrollTop + row.getBoundingClientRect().top - (toolbar?.offsetHeight ?? 0);
-    notebookPage.scrollTop = Math.max(0, Math.min(notebookPage.scrollHeight - notebookPage.clientHeight, top));
+    scrollToNotebookRow(row, toolbar?.offsetHeight ?? 0);
   }
   updateLatest();
 }
-document.addEventListener('scroll', updateLatest);
+document.addEventListener('scroll', updateLatest, true);
 feed.addEventListener('toggle', updateLatest, true);
 feed.addEventListener('load', updateLatest, true);
 window.addEventListener('resize', updateLatest);
 button('latest').onclick = () => {
   const latest = [...notebook.cells].reverse().find(conversationCell);
   if (practice && latest) { latest.collapsed = false; updateConversationCard(latest); saveNotebook(); }
-  notebookPage.scrollTop = notebookPage.scrollHeight; updateLatest();
+  const row = feed.lastElementChild;
+  if (row) scrollToNotebookRow(row, toolbar?.offsetHeight ?? 0);
+  updateLatest();
 };
 if (button('clear-conversation')) button('clear-conversation').onclick = () => confirmRemoval(button('clear-conversation'), 'Delete all conversation messages? Your task, code and private notes will stay.', () => removeConversation(notebook.cells));
 const focusButton = button('wide'), focusHome = document.createComment('focus view control');
@@ -761,15 +1260,19 @@ function focusView(active: boolean) {
 }
 focusButton.onclick = () => focusView(!document.body.classList.contains('focus-view'));
 function close(message: string) {
+  pendingTutorRequests.clear(); retractedTutorRequests.clear();
+  tutorTurn = lastTutorRequest = ''; tutorOutputPaused = false; tutorCancellation = Promise.resolve();
+  interruption.reset();
+  latestObservation=Promise.resolve();observationContent='';
   if(browserCourse)host.postMessage({type:'browserState',attempt,connected:false,detail:'Instructor disconnected. Reconnect to resume live help.'});
-  browserSnapshot=null;browserCourse=false;browserQuestion=null;browserAnswered='';browserAskInstead='';
+  browserObservationFailed=false;browserActions.close();browserSnapshot=null;browserCourse=false;browserQuestion=null;browserAnswered='';browserAskInstead='';
   devices.stop(); mediaAllowed = false;
   clearTimeout(saveTimer);
   const saved = snapshotNotebook();
   if (documentKey) host.postMessage({type:'notebookChanged', documentKey, sequence:++saveSequence, notebook:saved});
   pendingNotebook?.finish({error:'Session changed.'}); pendingNotebook = undefined;
   pendingData?.finish({error:'Session changed.'}); pendingData = undefined;
-  ++attempt; ready = sending = coaching = false; blockedAudio = false; agent = undefined;
+  ++attempt; ready = sending = coaching = false; blockedAudio = false; agent = undefined; agentActivity = '';
   courseData = []; dataState = 'none'; dataStatus('');
   document.querySelector('.data-preview')?.remove();
   lessonScope = '';
@@ -783,21 +1286,23 @@ function close(message: string) {
   button('end').disabled = true;
   button('tutor').textContent = practiceMode ? 'Retry Practice' : 'Retry ' + names[mode]; button('tutor').hidden = false;
   for (const key of Object.keys(names)) button(key).setAttribute('aria-pressed', 'false');
-  status.textContent = message; controls(); host.postMessage({type: 'leave'});
+  helpStatus(message); controls(); host.postMessage({type: 'leave'});
   byId('code-observer-status').textContent = '';
   restoreNotebook(saved);
 }
-function begin(next: Mode, chapterId = '') {
-  if (!practiceMode && next === 'tutor' && !chapterId) { chooseLesson(); return; }
-  if (next === mode && chapterId === selectedLesson && !button('end').disabled) return;
-  const retry = next === mode && chapterId === selectedLesson;
+function begin(next: Mode, chapterId = '', reconnect = false, chat?:{newChat?:boolean;chatId?:string}) {
+  if (!practiceMode && !chapterId) { chooseLesson(next); return; }
+  if (selectionPage) { selectionOpen = false; updateSelectionPage(); }
+  if (!reconnect && next === mode && chapterId === selectedLesson && !button('end').disabled) return;
+  const retry = !chat && next === mode && chapterId === selectedLesson;
+  const saved=retry?snapshotNotebook():undefined;
   close('Connecting to ' + names[next] + '…'); accessNotice();
   if (!retry) { struggles = 0; smallerStep(false); }
   // A retry keeps chosen attachments: they are cleared only after the agent receives them.
-  mode = next; selectedLesson = chapterId; clearDocument(retry); renderLessons();
+  mode = next; selectedLesson = chapterId; clearDocument(retry); if(saved)restoreNotebook(saved); renderLessons();
   voice = voiceByMode.get(mode) ?? true; controls(); button('end').disabled = false;
   button(next).setAttribute('aria-pressed', 'true');
-  host.postMessage({type: 'join', mode, attempt, ...(chapterId ? {chapterId} : {})});
+  host.postMessage({type: 'join', mode, attempt, ...(chapterId ? {chapterId} : {}), ...chat, ...(!chat && notebook.doubtId ? {chatId:notebook.doubtId} : {})});
   button('tutor').hidden = true;
   if (practiceMode) status.textContent = 'Opening Practice…';
 }
@@ -884,23 +1389,77 @@ function videoPacket(data: Record<string, unknown>) {
   });
   host.postMessage({type: 'checkVideo', videoId: id, attempt});
 }
+function deliveredStep(packet: Record<string, unknown>) {
+  const failed = failureStep(packet);
+  return typeof packet.tutor_step_id === 'string' && notebook.cells.some(cell =>
+    !cell.packet?.operational_notice && (cell.packet?.tutor_step_id === packet.tutor_step_id
+      || failed && cell.packet?.tutor_retry_of_step_id === failed));
+}
+function failureStep(packet: Record<string, unknown>) {
+  return typeof packet.tutor_retry_of_step_id === 'string' && packet.tutor_retry_of_step_id
+    || (typeof packet.tutor_step_id === 'string' ? packet.tutor_step_id : '');
+}
+function resolveStepFailure(packet: Record<string, unknown>) {
+  if (typeof packet.tutor_step_id !== 'string') return;
+  const failed = failureStep(packet);
+  const notices = notebook.cells.filter(cell => cell.packet?.operational_notice
+    && (cell.packet.failed_step === packet.tutor_step_id || cell.packet.failed_step === failed));
+  if (!notices.length) return;
+  for (const cell of notices) feed.querySelector(`[data-cell-id="${cell.id}"]`)?.remove();
+  notebook.cells = notebook.cells.filter(cell => !notices.includes(cell));
+  helpStatus('Instructor recovered this step. Your answer and progress are preserved.');
+  saveNotebook();
+}
+/** Revisit a figure once per learner request or question, across every delivery path. */
+function instructorVisuals(text: string, packet: Record<string, unknown>, history = notebook.cells) {
+  let requestIndex = history.length - 1;
+  while (requestIndex >= 0 && history[requestIndex].kind !== 'message') requestIndex--;
+  if (packet.is_question_prompt) {
+    // A new question needs its givens. Replayed copies of that question do not.
+    const checkpoint = packet.tutor_checkpoint_id;
+    history = typeof checkpoint === 'string' && checkpoint
+      ? history.filter(cell => cell.packet?.is_question_prompt && cell.packet.tutor_checkpoint_id === checkpoint)
+      : history.slice(requestIndex + 1).filter(cell => cell.packet?.is_question_prompt);
+  } else if (requestIndex >= 0 && requestedVisual(history[requestIndex].text)) {
+    history = history.slice(requestIndex + 1);
+  }
+  return freshTeachingVisuals(text, history.filter(cell => ['board', 'diagram'].includes(cell.kind)).map(cell => cell.text));
+}
 function board(text: string, section?: unknown, packet: Record<string, unknown> = {}) {
   if (!text.trim() || text.length > 100000) return;
+  resolveStepFailure(packet);
+  if (browserCourse) {
+    const chapter = lessonCourses.flatMap(course => course.chapters).find(ch => ch.id === selectedLesson);
+    packet = {...packet, browser_step:chapter?.lesson || chapter?.name || browserQuestion?.title};
+    const tag = browserSnapshot?.training_tag;
+    if (tag && /^[a-f0-9]{10}$/.test(tag)) text = text.replaceAll('{{company}}', 'Training ' + tag).replaceAll('{{tag}}', tag);
+  }
+  if (mode === 'tutor') {
+    text=instructorVisuals(text,packet);
+    // An image-only checkpoint still owns the answer controls when its figure
+    // arrived in a separate event immediately before the question.
+    if (!text.trim() && packet.is_question_prompt) text='Use the figure above to answer.';
+    if (!text.trim()) return;
+  }
   if (mode === 'tutor' && (packet.is_question_prompt || packet.tutor_feedback)) {
     editors.checkpoint(packet.is_question_prompt && typeof packet.tutor_checkpoint_id === 'string' ? packet.tutor_checkpoint_id : '');
   }
   if (mode === 'tutor' && packet.tutor_feedback) {
     // Feedback closes its question: the full set of lesson moves comes back.
-    const asked = [...notebook.cells].reverse().find(cell => cell.packet?.is_question_prompt
+    const asked = [...notebook.cells].reverse().find(cell => cell.kind === 'board' && cell.packet?.is_question_prompt
       && (!packet.tutor_checkpoint_id || cell.packet.tutor_checkpoint_id === packet.tutor_checkpoint_id));
-    if (asked?.packet && !asked.packet.feedback_received) asked.packet.feedback_received = true;
+    if (asked?.packet) {
+      asked.packet.feedback_received = true;
+    }
     const correct = [packet.correct, packet.is_correct, packet.answer_correct].includes(true);
     struggles = correct ? 0 : struggles + 1;
     smallerStep(struggles >= 2);
   }
   if (mode === 'tutor' && packet.is_question_prompt && !packet.tutor_feedback && packet.tutor_checkpoint_id !== idleQuestion) showHelp({next:1});
-  const prior = [...notebook.cells].reverse().find(cell => cell.packet?.tutor_checkpoint_id === packet.tutor_checkpoint_id && packet.tutor_checkpoint_id);
-  addCell('board', text, {...packet, active_subtopic:section, ...(prior?.packet?.student_answer ? {student_answer:prior.packet.student_answer} : {})});
+  const prior = [...notebook.cells].reverse().find(cell => cell.kind === 'board' && cell.packet?.tutor_checkpoint_id === packet.tutor_checkpoint_id && packet.tutor_checkpoint_id);
+  addCell('board', text, {...packet, active_subtopic:section, ...(prior?.packet?.student_answer ? {
+    student_answer:prior.packet.student_answer, student_answer_request_id:prior.packet.student_answer_request_id,
+  } : {})});
   controls();
 }
 const learningActions: Record<string, [string, string]> = {
@@ -924,10 +1483,11 @@ function updateLessonActions() {
     && (packet.tutor_practice_editor as {source?:string} | undefined)?.source !== 'Practice exercise';
   const menu = packet.tutor_action_menu as {actions?: unknown} | undefined;
   // The existing help ladder handles hints. An unanswered question must not offer a way to skip it.
-  const ids = available && !openQuestion() && !questionOpen(packet)
+  const ids = available && (packet.operational_notice === true || (!openQuestion() && !questionOpen(packet)))
     ? ['continueLesson', ...(Array.isArray(menu?.actions) ? menu.actions : [])] : [];
   const visibleActions = new Set(ids.filter((id): id is string => typeof id === 'string'
     && !!learningActions[id] && !['hint', 'stuck'].includes(id)));
+  if(browserCourse&&browserSnapshot?.shift)visibleActions.add('continueLesson');
   for (const id of visibleActions) {
     const [label, text] = learningActions[id];
     let action = document.querySelector<HTMLButtonElement>(`[data-lesson-action="${id}"]`);
@@ -991,11 +1551,21 @@ function nextLesson() {
   }
 }
 function summaryActions(body: HTMLElement, cell: NotebookCell) {
+  const pending = executionFollowup(notebook.executionIssues ?? []);
+  if (pending) {
+    const note = document.createElement('div'); note.className = 'execution-followup';
+    note.setAttribute('role', 'note'); note.innerHTML = renderBoard(pending); body.append(note);
+  }
   const bar = document.createElement('div'); bar.className = 'lesson-actions';
   const next = nextLesson(), weak = typeof cell.packet?.work_on === 'string' ? cell.packet.work_on : '';
-  if (next) {
+  if (next && cell.packet?.lesson_completion === 'complete') {
     const go = document.createElement('button'); go.type = 'button'; go.dataset.nextLesson = next.id;
     go.textContent = 'Next lesson: ' + (next.lesson || next.name); go.onclick = () => begin('tutor', next.id); bar.append(go);
+  }
+  if (cell.packet?.lesson_completion === 'partial') {
+    const resume = document.createElement('button'); resume.type = 'button'; resume.textContent = 'Resume lesson';
+    resume.onclick = () => { void send('Please resume the unfinished lesson from where we stopped.', false, 'Resume lesson', 'continueLesson'); };
+    bar.append(resume);
   }
   if (weak) {
     const review = document.createElement('button'); review.type = 'button'; review.dataset.reviewWeak = ''; review.textContent = 'Review weak spots';
@@ -1004,19 +1574,23 @@ function summaryActions(body: HTMLElement, cell: NotebookCell) {
   }
   if (bar.children.length) body.append(bar);
 }
-function renderTeaching(cell: NotebookCell) {
-  const text = cell.text, packet = cell.packet ?? {}, section = packet.active_subtopic;
+function renderTeaching(cell: NotebookCell, text = cell.text, replaceRow?: HTMLElement) {
+  const packet = cell.packet ?? {}, section = packet.active_subtopic;
   appendCard(names[mode], body => {
     body.parentElement?.setAttribute('data-cell-id', cell.id);
     const {body:shown, turn} = splitYourTurn(text);
     body.innerHTML = shown.trim() ? renderBoard(shown) : '';
+    if (typeof packet.browser_step === 'string') {
+      const context = document.createElement('small'); context.className = 'muted';
+      context.textContent = 'Feedback for: ' + packet.browser_step; body.prepend(context);
+    }
     if (turn) {
       const box = document.createElement('div'), label = document.createElement('strong'), prompt = document.createElement('div');
       box.className = 'your-turn'; box.setAttribute('role', 'note'); box.setAttribute('aria-label', 'Your turn');
       label.textContent = 'Your turn'; prompt.innerHTML = renderBoard(turn); box.append(label, prompt);
       // Open until the learner sends their next message.
       const index = notebook.cells.indexOf(cell);
-      if (!notebook.cells.slice(index + 1).some(later => later.kind === 'message')) box.classList.add('is-open');
+      if (!notebook.cells.slice(index + 1).some(later => later.kind === 'message' && !later.packet?.action && !later.packet?.notebook_help)) box.classList.add('is-open');
       body.append(box);
     }
     prepareVisuals(body);
@@ -1036,14 +1610,23 @@ function renderTeaching(cell: NotebookCell) {
       }
       if(actions.children.length)body.append(actions);
     }
-    // Coach replies are explanations, never new executable solution cells.
-    if (!packet.notebook_help && (!practiceMode || !conversationCell(cell))) editors.mount(body, text, packet.tutor_practice_editor, cell.id);
-    if (packet.is_question_prompt && typeof packet.tutor_checkpoint_id === 'string' && !packet.tutor_practice_editor) {
+    if (mode === 'tutor' && !practiceMode && !packet.is_question_prompt && !packet.tutor_feedback && !packet.notebook_help) {
+      labelLessonOutputs(body);
+    }
+    if (packet.tutor_code_review_basis === 'static_review' || packet.tutor_code_review_basis === 'learner_reported') {
+      const basis = document.createElement('small'); basis.className = 'muted';
+      basis.textContent = packet.tutor_code_review_basis === 'static_review' ? 'Feedback by code inspection' : 'Feedback based on learner-reported output';
+      body.prepend(basis);
+    }
+    if (mode === 'tutor' && writtenCheckpoint(packet) && typeof packet.tutor_checkpoint_id === 'string') {
+      editors.writtenQuestion(body, cell.id, packet.tutor_checkpoint_id);
       // Answers go in the one text cell at the bottom; this only points there while the question is open.
       const hint = document.createElement('small'); hint.className = 'answer-hint muted';
-      hint.dataset.questionHint = packet.tutor_checkpoint_id; hint.textContent = 'Answer below.';
+      hint.dataset.questionHint = packet.tutor_checkpoint_id; hint.textContent = 'Write your answer in the message bar below.';
       hint.hidden = openQuestion()?.packet?.tutor_checkpoint_id !== packet.tutor_checkpoint_id;
       body.append(hint);
+    } else if (!packet.notebook_help && (!practiceMode || !conversationCell(cell))) {
+      editors.mount(body, text, packet.tutor_practice_editor, cell.id);
     }
     conversationControls(body, cell);
     // Instructor sends the course section first, then the concept taught this turn.
@@ -1059,14 +1642,19 @@ function renderTeaching(cell: NotebookCell) {
     const context = document.createElement('small');
     context.textContent = section;
     heading.replaceWith(context, title);
-  }, !restoring && nearBottom());
+  }, !replaceRow && !restoring && nearBottom(), replaceRow);
 }
 async function connect(grant: {url: string; token: string; chapterId?: string; media?: boolean; browserCourse?:boolean; lesson?: {subject: string; name: string};
-    doubtContext?: {chapter_id?: unknown; lesson_name?: unknown}}, id: number) {
+    browserProgress?:BrowserCourseProgress; doubtContext?: {chapter_id?: unknown; lesson_name?: unknown}}, id: number) {
   mediaAllowed = grant.media === true;
-  browserCourse=grant.browserCourse===true;browserSequence=0;browserSync=Promise.resolve();
+  browserCourse=grant.browserCourse===true;browserSync=Promise.resolve();
+  taskProgress=grant.browserProgress;showBrowserProgress();renderLessons();
   document.body.classList.toggle('browser-course',browserCourse);
-  if(runtimePicker) {runtimePicker.disabled=browserCourse;runtimePicker.options[0].textContent=browserCourse?'ERPNext browser':'Course container';}
+  if(runtimePicker) {
+    runtimePicker.disabled=browserCourse;runtimePicker.options[0].textContent=browserCourse?'ERPNext browser':localRuntimeLabel();
+    runtimePicker.querySelector('[value="terminal"]')!.textContent = 'Open course terminal';
+    runtimePicker.querySelector('[value="setup"]')!.textContent = 'Set up / rebuild course';
+  }
   if(browserCourse)editors.follow(false);
   doubtContext = {};
   for (const key of ['chapter_id', 'lesson_name'] as const) {
@@ -1074,17 +1662,28 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
     if (typeof value === 'string' && value && value.length <= 300) doubtContext[key] = value;
   }
   byId<HTMLInputElement>('follow-code').disabled = mediaAllowed;
-  if (mediaAllowed) byId('code-observer-status').textContent = 'Use Ask Instructor to share a cell from this notebook.';
+  if (mediaAllowed) byId('code-observer-status').textContent = `Use Ask ${names[mode]} to share a cell from this notebook.`;
   const live = new LivekitClient.Room({audioOutput: {deviceId: speaker?.deviceId}}); room = live;
   const current = () => room === live && id === attempt;
   const isAgent = (peer?: RemoteParticipant) => current() && !!peer?.isAgent && (!agent || peer.identity === agent);
+  live.on(RoomEvent.ParticipantAttributesChanged, (changed, peer) => {
+    if (!isAgent(peer as RemoteParticipant) || !Object.hasOwn(changed, 'lk.agent.state')) return;
+    agentActivity = changed['lk.agent.state'];
+    interruption.agentChanged(agentActivity);
+    showAgentActivity();
+  });
+  live.on(RoomEvent.ActiveSpeakersChanged, speakers => {
+    if (!current() || !ready || !mediaAllowed) return;
+    interruption.userSpeaking(speakers.some(peer => peer === live.localParticipant));
+    if (interruption.listening) resumeTutorOutput();
+  });
   const subscribe = (pub: RemoteTrackPublication, peer: RemoteParticipant) => {
     if (isAgent(peer) && pub.kind === 'audio') pub.setSubscribed(true);
   };
   live.on(RoomEvent.TrackPublished, subscribe);
   live.on(RoomEvent.TrackSubscribed, (track, _pub, peer) => {
     if (!isAgent(peer) || track.kind !== 'audio') return;
-    const el = track.attach(); el.muted = !visible || !voice || !!activeVideo; document.body.append(el); audio.add(el);
+    const el = track.attach(); el.muted = roomAudioMuted(); document.body.append(el); audio.add(el);
     if (voice) void el.play().catch(() => { if (current()) { blockedAudio = true; controls(); } });
   });
   live.on(RoomEvent.TrackUnsubscribed, track => { for (const el of track.detach()) { audio.delete(el); el.remove(); } });
@@ -1095,19 +1694,79 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
     if (!isAgent(peer) || bytes.length > 320000) return;
     let data;
     try { data = JSON.parse(new TextDecoder().decode(bytes)); } catch { return; }
-    if (data?.method === 'video_visual') videoPacket(data);
+    const turn = packetTurn(data);
+    if (retractedTutorRequests.has(turn)) return;
+    if (turn && turn === lastTutorRequest) resumeTutorOutput();
+    if (tutorOutputPaused && !turn && data?.method !== 'notebook_resume_ready') return;
+    if (data?.method === 'notebook_resume_ready') {
+      const pending = unfinishedQuestion(notebook);
+      if (pending?.packet && pending.packet.tutor_checkpoint_id === data.checkpoint_id) {
+        pending.packet.resume_unverified = data.verified !== true;
+        if (data.needs_resubmission) delete pending.packet.student_answer;
+        if (data.verified === true && (data.tutor_answer_kind === 'written' || data.tutor_answer_kind === 'code' && data.tutor_practice_editor)) {
+          const wasWritten = writtenCheckpoint(pending.packet);
+          pending.packet.tutor_answer_kind = data.tutor_answer_kind;
+          if (data.tutor_answer_kind === 'code') pending.packet.tutor_practice_editor = data.tutor_practice_editor;
+          else delete pending.packet.tutor_practice_editor;
+          if (wasWritten !== writtenCheckpoint(pending.packet)) {
+            const row = feed.querySelector<HTMLElement>(`[data-cell-id="${pending.id}"]`);
+            if (row) renderTeaching(pending, pending.text, row);
+          }
+        }
+        if (data.verified !== true) {editors.checkpoint(''); status.textContent = 'Your saved task is here. Ask Instructor to confirm it before submitting an answer.';}
+        else if (data.needs_resubmission) editors.checkpoint(data.checkpoint_id);
+        saveNotebook(); controls();
+      }
+    } else if (data?.method === 'tutor_turn_started' && typeof data.tutor_turn_id === 'string') {
+      tutorTurn = data.tutor_turn_id;
+    } else if (data?.method === 'tutor_turn_completed') {
+      pendingTutorRequests.delete(turn);
+    } else if (data?.method === 'tutor_request_failed' && typeof data.message === 'string' && data.message.trim()) {
+      const turn = typeof data.tutor_turn_id === 'string' ? data.tutor_turn_id : '';
+      if (tutorTurn && turn && turn !== tutorTurn && turn !== lastTutorRequest) return;
+      if (deliveredStep(data)) return;
+      const step = failureStep(data);
+      if (!notebook.cells.some(cell => cell.packet?.operational_notice && (step ? cell.packet.failed_step === step : turn && cell.packet.failed_turn === turn))) {
+        addCell('board', data.message.slice(0, 2000), {operational_notice:true, tutor_turn_id:turn, failed_turn:turn, failed_step:step});
+      }
+      helpStatus(data.message.slice(0, 2000));
+      controls();
+    } else if (data?.method === 'video_visual') videoPacket(data);
     else if (data?.method === 'video_pause_request') void pauseForQuestion();
+    else if (data?.method === 'award_xp' && mode === 'tutor') {
+      if (Number.isSafeInteger(data.amount) && data.amount > 0 && data.amount <= 50
+          && (!data.award_id || !notebook.cells.some(cell => cell.packet?.award_id === data.award_id))) {
+        addCell('recap', `+${data.amount} XP` + (typeof data.reason === 'string' ? ' · ' + data.reason.slice(0,300) : ''),
+          {xp:data.amount, ...(typeof data.award_id === 'string' ? {award_id:data.award_id} : {})});
+        const summary=[...notebook.cells].reverse().find(cell=>cell.packet?.session_summary);
+        if (summary) {
+          summary.text=summary.text.replace(/\*\*Lesson XP earned: \d+ XP\*\*/,`**Lesson XP earned: ${lessonXp()} XP**`);
+          const body=feed.querySelector<HTMLElement>(`[data-cell-id="${summary.id}"] > div`);
+          if (body) {body.innerHTML=renderBoard(summary.text);summaryActions(body,summary);}
+          saveNotebook();
+        }
+      }
+    }
     else if (['draw_svg', 'display_image'].includes(data?.method) && data.action !== 'clear') {
       const source = imageSource(data.image_url);
+      const visualPacket = {
+        ...(turn ? {tutor_turn_id:turn} : {}),
+        ...(data.is_question_prompt === true ? {is_question_prompt:true} : {}),
+        ...(typeof data.tutor_checkpoint_id === 'string' ? {tutor_checkpoint_id:data.tutor_checkpoint_id} : {}),
+      };
       if (source) {
         const label = (typeof data.label === 'string' ? data.label : typeof data.caption === 'string' ? data.caption : '').slice(0, 1000) || 'Textbook figure';
-        addCell('diagram', imageMarkdown(source, label), {image_url:source, label});
+        const markdown=imageMarkdown(source,label);
+        const figure=mode==='tutor' ? instructorVisuals(markdown,visualPacket) : markdown;
+        if (figure.trim()) addCell('diagram', figure, {...visualPacket, image_url:source, label});
       } else if (typeof data.svg === 'string' && data.svg.trim() && data.svg.length <= 100000) {
-        addCell('diagram', data.svg);
+        const figure=mode==='tutor' ? instructorVisuals(data.svg,visualPacket) : data.svg;
+        if (figure.trim()) addCell('diagram', figure, visualPacket);
       }
     } else if (['display_on_screen', 'write_on_whiteboard'].includes(data?.method) && typeof data.content === 'string') {
       board(data.content, data.active_subtopic, data);
     } else if (mode === 'tutor' && (data?.method === 'topic_update' || data?.method === 'tutor_example_progress')) {
+      if(browserCourse) {showBrowserProgress();return;}
       const title = typeof data.current_topic === 'string' ? data.current_topic : typeof data.topic === 'string' ? data.topic : '';
       if (title) notebook.title = title.slice(0,300);
       const items = Array.isArray(data.lesson_topics) ? data.lesson_topics : [];
@@ -1135,10 +1794,25 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
         else addCell('recap', content, {progressScope:scope});
       }
     } else if (data?.method === 'tutor_session_summary') {
+      resolveStepFailure(data);
+      const currentChapter=lessonCourses.find(c=>c.name===data.subject)?.chapters.find(c=>c.id===selectedLesson&&c.name===data.chapter&&(c.lesson||c.name)===data.topic);
       const cards = Array.isArray(data.recap_cards) ? data.recap_cards : [];
       const recap = ['## Lesson recap', data.big_idea || data.remark || '', ...cards.map((card: any) => typeof card === 'string' ? card : [card.title, ...(Array.isArray(card.takeaways) ? card.takeaways.map((point: string) => '- ' + point) : [card.content || card.summary || card.key_takeaway || ''])].filter(Boolean).join('\n\n')), data.strength ? '**What went well:** ' + data.strength : '', data.work_on ? '**Keep practising:** ' + data.work_on : ''].filter(value => typeof value === 'string').join('\n\n');
-      addCell('recap', recap, {session_summary:true, ...(typeof data.work_on === 'string' && data.work_on.trim() ? {work_on:data.work_on.slice(0, 600)} : {})});
+      const xp = lessonXp();
+      const completion = lessonCompletion(data);
+      const completionText = completion === 'complete' ? '**Lesson completed — teaching and required checks finished.**'
+        : completion === 'partial' ? '**Session ended — lesson still in progress.**'
+          : '**Lesson completion has not been confirmed.**';
+      const progress = data.lesson_progress;
+      const progressText = progress && Number.isInteger(progress.total) && progress.total > 0
+        && Number.isInteger(progress.completed_count) && progress.completed_count >= 0 && progress.completed_count <= progress.total
+        ? `\n\n${progress.completed_count}/${progress.total} lesson sections completed.` : '';
+      addCell('recap', recap + '\n\n' + completionText + progressText + `\n\n**Lesson XP earned: ${xp} XP**`,
+        {session_summary:true, tutor_step_id:data.tutor_step_id, tutor_turn_id:data.tutor_turn_id, lesson_completion:completion, ...(typeof data.work_on === 'string' && data.work_on.trim() ? {work_on:data.work_on.slice(0, 600)} : {})});
       editors.checkpoint(''); struggles = 0; smallerStep(false);
+      if(currentChapter&&data.is_complete===true&&data.partial_session===false&&data.summary_scope==='full'&&['ssh','cloud-cli'].includes(selectedRuntime)) {
+        saveNotebook(true);host.postMessage({type:'finishLab',attempt,documentKey,chapterId:selectedLesson});
+      }
     } else if (data?.method === 'lesson_context') {
       const scope = JSON.stringify([data.subject, data.chapter_name, data.lesson_name, data.subtopic]);
       if (scope !== lessonScope) { editors.checkpoint(''); struggles = 0; smallerStep(false); }
@@ -1146,30 +1820,55 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
     }
   });
   live.localParticipant.registerRpcMethod('display_on_screen', async data => {
-    if (!isAgent(live.remoteParticipants.get(data.callerIdentity))) return '';
+    if (!current() || data.callerIdentity!==agent || !isAgent(live.remoteParticipants.get(data.callerIdentity))) return '';
     const payload = JSON.parse(data.payload);
-    if (typeof payload?.content === 'string') board(payload.content, payload.active_subtopic, payload);
+    const turn = packetTurn(payload);
+    if (turn && turn === lastTutorRequest && !retractedTutorRequests.has(turn)) resumeTutorOutput();
+    if (!retractedTutorRequests.has(turn) && (!tutorOutputPaused || turn) && typeof payload?.content === 'string')
+      board(payload.content, payload.active_subtopic, payload);
     return '';
+  });
+  live.localParticipant.registerRpcMethod('demonstrate_browser',async data=>{
+    if(!current()||!ready||!browserCourse||!browserSnapshot?.shift||data.callerIdentity!==agent
+      ||!isAgent(live.remoteParticipants.get(data.callerIdentity)))return JSON.stringify({status:'rejected',message:'No active business shift.'});
+    let command;try{command=JSON.parse(data.payload);}catch{return JSON.stringify({status:'rejected',message:'Invalid browser action.'});}
+    if(!validDemonstration(command)||command.task!==browserSnapshot.task||command.snapshot!==browserSnapshot.shift.snapshot)
+      return JSON.stringify({status:'rejected',message:'The current form changed. Observe it before demonstrating.'});
+    const result=await browserActions.run(command,attempt);
+    return JSON.stringify(result);
   });
   live.registerTextStreamHandler('lk.transcription', async (reader, peer) => {
     if (!isAgent(live.remoteParticipants.get(peer.identity))) return;
+    const tagged = packetTurn(reader.info.attributes);
+    if (tagged && tagged === lastTutorRequest && !retractedTutorRequests.has(tagged)) resumeTutorOutput();
+    const turn = tagged || tutorTurn || lastTutorRequest;
+    const retractions = retractedTutorRequests.size;
+    const paused = tutorOutputPaused;
     const text = await reader.readAll();
-    if (!current() || !text.trim() || reader.info.attributes?.['lk.transcription_final'] === 'false') return;
-    addCell('voice', text.slice(0,12000));
+    if (!current() || paused || tutorOutputPaused || retractedTutorRequests.has(turn) || (!tagged && retractions !== retractedTutorRequests.size)
+        || !text.trim() || reader.info.attributes?.['lk.transcription_final'] === 'false') return;
+    addCell('voice', text.slice(0,12000), turn ? {tutor_turn_id:turn} : undefined);
   });
-  live.on(RoomEvent.ParticipantDisconnected, peer => { if (current() && peer.identity === agent) close('Instructor disconnected. Retry to reconnect.'); });
+  live.on(RoomEvent.ParticipantDisconnected, peer => { if (current() && peer.identity === agent) close(names[mode] + ' disconnected. Retry to reconnect.'); });
   live.on(RoomEvent.Disconnected, () => { if (current()) close('Disconnected. Retry to reconnect.'); });
-  live.on(RoomEvent.Reconnecting, () => { if (current()) {devices.stop(); ready = false; status.textContent = 'Reconnecting…'; controls();} });
+  live.on(RoomEvent.Reconnecting, () => { if (current()) {
+    devices.stop(); ready = false; agentActivity = ''; helpStatus('Reconnecting to ' + names[mode] + '… Your draft is saved.'); controls();
+    if(browserCourse)host.postMessage({type:'browserState',attempt:id,connected:false,detail:'Reconnecting to Instructor… Your draft is saved.'});
+  } });
   let switched = false;
   live.on(RoomEvent.Reconnected, () => {
     if (current() && switched && agent) {
       if (!isAgent(live.remoteParticipants.get(agent))) { close('The session changed. Retry to reconnect.'); return; }
-      ready = true; status.textContent = names[mode] + ' connected'; controls();
+      agentActivity = live.remoteParticipants.get(agent)?.attributes?.['lk.agent.state'] ?? '';
+      ready = true; helpStatus(names[mode] + ' connected'); controls();
+      if(browserCourse)void syncBrowserObservation().catch(error=>{if(current())helpStatus(error.message);});
     }
   });
+  let transportConnected = false;
   try {
     await live.connect(grant.url, grant.token, {autoSubscribe:false});
     if (!current()) { await live.disconnect(); return; }
+    transportConnected = true;
     for (const peer of live.remoteParticipants.values()) for (const pub of peer.trackPublications.values()) subscribe(pub, peer);
     const deadline = Date.now() + 65000;
     while (current() && Date.now() < deadline) {
@@ -1177,22 +1876,45 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
       if (peer) {
         agent = peer.identity;
         try {
+          let speedAccepted = false;
+          if (speaker) {
+            try {
+              const speedAck = await live.localParticipant.performRpc({destinationIdentity: agent, method:'set_speech_playback_speed',
+                payload:JSON.stringify({speed:speaker.playbackSpeed}), responseTimeout:8000});
+              speedAccepted = speedAck === 'ok';
+            } catch { /* A starting worker may not have registered its RPCs yet. */ }
+            if (!current()) return;
+          }
+          await applyLearningPreferences();
+          if (!current()) return;
           const ack = await live.localParticipant.performRpc({destinationIdentity: agent, method:'switch_mode',
             payload: JSON.stringify(switchPayload(grant)), responseTimeout: 30000});
           if (ack !== 'ok') {
-            if (current()) close(ack === 'error: choose Tutor or Doubt Solver in this room' && mode === 'tutor'
-              ? 'This Instructor service needs an update to open selected lessons. Contact support.'
-              : ack.startsWith('error:') ? ack.slice(6).trim() : 'Could not start this lesson. Retry.');
+            // Older services reject new connection fields with a misleading
+            // mode-picker instruction, even when this mode is already selected.
+            const incompatible = /^error: choose (?:Tutor|Instructor)(?:,| or) Doubt Solver(?: or Study)? in this room$/i.test(ack);
+            if (current()) close(incompatible
+              ? names[mode] + ' could not start because the learning service rejected this connection request. Contact support to update the service. Your draft is saved.'
+              : ack.startsWith('error:') ? ack.slice(6).trim() : names[mode] + ' could not start. Retry to reconnect.');
             return;
           }
           if (!current()) return;
+          if (speaker && !speedAccepted) {
+            try {
+              const speedAck = await live.localParticipant.performRpc({destinationIdentity: agent, method:'set_speech_playback_speed',
+                payload:JSON.stringify({speed:speaker.playbackSpeed}), responseTimeout:8000});
+              if (speedAck !== 'ok') throw new Error('Voice speed unavailable');
+            } catch { if (current()) speaker.resetPlaybackSpeed(); }
+            if (!current()) return;
+          }
           if (mediaAllowed) {
             const audioAck = await live.localParticipant.performRpc({destinationIdentity: agent, method:'toggle_audio',
               payload:JSON.stringify({input_enabled:false, output_enabled:true}), responseTimeout:8000});
-            if (audioAck !== 'ok') throw new Error('Instructor audio was not ready. Retry to reconnect.');
+            if (audioAck !== 'ok') throw new Error(`${names[mode]} audio was not ready. Retry to reconnect.`);
             if (!current()) return;
           }
-          switched = ready = true; status.textContent = names[mode] + ' connected'; controls(); field.focus();
+          agentActivity = peer.attributes?.['lk.agent.state'] ?? agentActivity;
+          switched = ready = true; helpStatus(names[mode] + ' connected'); controls(); field.focus();
           if(browserCourse)void syncBrowserObservation().catch(error=>{status.textContent=String(error.message);});
           return;
         } catch (e) {
@@ -1202,8 +1924,10 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
       }
       await new Promise(r => setTimeout(r, 350));
     }
-    if (current()) close('Instructor did not become ready. Retry to reconnect.');
-  } catch { if (current()) close('Could not connect. Retry to continue.'); }
+    if (current()) close(names[mode] + ' did not become ready in time. Retry to reconnect. If this continues, contact support. Your draft is saved.');
+  } catch { if (current()) close(transportConnected
+    ? names[mode] + ' could not finish starting. Retry to reconnect. If this continues, contact support. Your draft is saved.'
+    : 'Could not reach ' + names[mode] + '. Check your internet connection, then retry. Your draft is saved.'); }
 }
 /** Help also works before the learner adds code. The synthetic empty selection never becomes a notebook cell. */
 function helpContext() {
@@ -1219,7 +1943,7 @@ function helpStatus(message: string) {
 }
 async function send(text: string, fromField: boolean, display = text, action?: string, targetCell?: string, followupStage?:SkillStage, helpLevel?: number, notebookHelp = false): Promise<boolean> {
   const draft = fromField ? field.value : undefined;
-  const live = room, dest = agent, id = attempt;
+  const id = attempt;
   if (practice || notebookHelp) {
     const attached = fromField && attachments.count > 0;
     if (!ready || sending || !editors.aiEnabled || (!text.trim() && !attached)) return false;
@@ -1270,43 +1994,73 @@ async function send(text: string, fromField: boolean, display = text, action?: s
       helpStatus(held ? reply.ladderNote!.slice(0, 300) : names[mode] + ' replied. Choose a reply or ask your next question.');
       if (fromField && field.value === draft) field.value = '';
       return true;
-    } catch (error) { if (id === attempt) helpStatus(error instanceof Error ? error.message : names[mode] + ' could not reply. Try again.'); return false; }
+    } catch (error) {
+      if (id === attempt) helpStatus(error instanceof Error ? error.message : names[mode] + ' could not reply. Try again.');
+      // The review button owns a status beside the source. Let it show the same
+      // actionable failure instead of replacing it with a generic retry notice.
+      if (text.startsWith('PRACTICE_NOTEBOOK_SUBMISSION\n')) throw error;
+      return false;
+    }
     finally { if (id === attempt) { sending = coaching = false; controls(); } }
   }
+  return sendLive(text, fromField, display, action);
+}
+async function sendLive(text: string, fromField: boolean, display: string, action?: string, question?: NotebookCell): Promise<boolean> {
+  const live = room, dest = agent, id = attempt, draft = field.value;
   const attached = fromField && attachments.count > 0;
   if (!ready || sending || !live || !dest || (!text.trim() && !attached)) return false;
   sending = true; controls();
+  const request = mode === 'tutor' ? 'tutor-request-' + crypto.randomUUID() : '';
   try {
+    await tutorCancellation;
+    if (id !== attempt || !ready) return false;
     const current = editors.selection();
     observeCode(current?.snapshot, current?.run);
     await latestObservation;
     await syncBrowserObservation();
-    if (id !== attempt) return false;
+    if (id !== attempt || !ready) return false;
     if (!await pauseForQuestion()) {
       if (id === attempt) status.textContent = 'Could not confirm the video pause. Pause the video and try again; your question is still here.';
       return false;
     }
-    if (id !== attempt) return false;
+    if (id !== attempt || !ready) return false;
+    if (request) { pendingTutorRequests.add(request); lastTutorRequest = request; }
     if (attached) {
       const deadline = Date.now() + 120000;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
           attachments.send(live.localParticipant, dest, text, () => id === attempt && room === live && Date.now() < deadline,
-            mode === 'doubt_solver' && !practiceMode ? attachmentRole : undefined),
+            mode === 'doubt_solver' && !practiceMode ? attachmentRole : undefined, request),
           new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Attachment delivery timed out.')), 120000); }),
         ]);
       } finally { clearTimeout(timer); }
-    } else await live.localParticipant.sendText(text, {topic:'lk.chat', destinationIdentities:[dest], ...(action ? {attributes:{tutor_action_id:action}} : {})});
+    } else {
+      let deliveryTimer:ReturnType<typeof setTimeout>|undefined;
+      try {
+        await Promise.race([
+          live.localParticipant.sendText(text,{topic:'lk.chat',destinationIdentities:[dest],
+            attributes:{...(request ? {tutor_request_id:request} : {}), ...(action ? {tutor_action_id:action} : {})}}),
+          new Promise<never>((_,reject)=>{deliveryTimer=setTimeout(()=>reject(new Error('Message delivery timed out. Your draft is still here. Check for a reply before sending it again.')),20000);}),
+        ]);
+      } finally {clearTimeout(deliveryTimer);}
+    }
     if (id !== attempt) return false;
-    addCell('message', display + (attached ? '\n\nAttachments: ' + attachments.names.join(', ') : ''),
-      notebookHelpActions.some(item => item.label === display) ? {action:true} : undefined);
+    if (question?.packet) {
+      question.packet.student_answer = display;
+      question.packet.student_answer_request_id = request;
+    }
+    addCell('message', display + (attached ? '\n\nAttachments: ' + attachments.names.join(', ') : ''), {
+      ...(request ? {tutor_request_id:request} : {}),
+      ...(action || notebookHelpActions.some(item => item.label === display) ? {action:true} : {}),
+    });
     if (attached) attachments.clear();
     if (fromField && field.value === draft) field.value = '';
     return true;
   } catch (error) {
-    if (id === attempt) status.textContent = error instanceof Error && /pages|Session changed/.test(error.message) ? error.message
-      : 'Message delivery could not be confirmed. Your draft and attachments are still here.';
+    pendingTutorRequests.delete(request);
+    if (id === attempt) helpStatus(error instanceof Error && (browserObservationFailed || /pages|Session changed|Message delivery timed out/.test(error.message)) ? error.message
+      : 'Message delivery could not be confirmed. Your draft and attachments are still here. Try the send arrow again.');
   }
   finally { if (id === attempt) { sending = false; controls(); } }
   return false;
@@ -1314,16 +2068,32 @@ async function send(text: string, fromField: boolean, display = text, action?: s
 
 window.addEventListener('message', e => {
   const d = e.data;
+  if(e.origin===window.location.origin && d?.type==='handoffAttachments' && d.attempt===attempt && mode==='tutor') {
+    attachments.add(d.files.map((file:{name:string;type:string;data:string})=>new File([
+      Uint8Array.from(atob(file.data),character=>character.charCodeAt(0))],file.name,{type:file.type})));
+    return;
+  }
+  if(e.origin===window.location.origin && d?.type==='browserReconnect' && d.attempt===attempt && browserCourse) {
+    if(!sending)begin(mode,selectedLesson,true);
+    return;
+  }
   if(d?.type==='browserObservation') {
     if(e.origin!==window.location.origin || d.attempt!==attempt || d.chapter!==selectedLesson)return;
     browserSnapshot=d.observation;
+    if(d.progress) {taskProgress=d.progress;showBrowserProgress();renderLessons();}
+    if(d.brief&&typeof d.brief.id==='string'&&typeof d.brief.title==='string'&&typeof d.brief.text==='string'
+      &&!notebook.cells.some(cell=>cell.packet?.business_shift_brief===d.brief.id))
+      addCell('board','### '+d.brief.title+'\n\n'+d.brief.text,{business_shift_brief:d.brief.id});
     showBrowserQuestion(d.question);
     if(typeof d.taskStatus==='string' && d.taskStatus)helpStatus(d.taskStatus);
     if(d.focusQuestion && d.focusQuestion===browserQuestion?.id)focusBrowserQuestion();
     if(ready && browserCourse)void syncBrowserObservation().then(()=>{
       if(d.attempt===attempt && d.chapter===selectedLesson && d.help && typeof d.help==='string' && d.help.length<=1500)return send(d.help,false);
-    }).catch(error=>{status.textContent=error.message;});
+    }).catch(error=>{if(d.attempt===attempt)helpStatus(error.message);});
     return;
+  }
+  if(e.origin===window.location.origin&&d?.type==='browserDemonstrationResult') {
+    browserActions.receive(d.id,d.attempt,d.result);return;
   }
   if(e.origin===window.location.origin && d?.type==='browserAnswerRejected' && d.attempt===attempt) {
     if(browserAnswered===d.id){browserAnswered='';controls();}
@@ -1345,7 +2115,7 @@ window.addEventListener('message', e => {
         videoCommand(id, 'pause');
       activeVideo = currentVideo = d.id;
     } else if (activeVideo === d.id) activeVideo = undefined;
-    for (const el of audio) el.muted = !visible || !voice || !!activeVideo;
+    for (const el of audio) el.muted = roomAudioMuted();
     if (d.state === 'unavailable') renderVideo(d.id, false);
     // Pausing an older card must not replace the newer video's worker context.
     if (currentVideo && currentVideo !== d.id) return;
@@ -1359,21 +2129,76 @@ window.addEventListener('message', e => {
   // VS Code forwards host messages from its same-origin bootstrap frame.
   // The YouTube player is on the separate API origin and may only report playback above.
   if (e.origin !== window.location.origin) return;
-  if (d?.type === 'openTutor') { button('end').hidden = true; preferredLesson = typeof d.lesson === 'string' ? d.lesson : ''; begin(d.mode === 'doubt_solver' ? 'doubt_solver' : 'tutor'); return; }
+  if (d?.type === 'browseCoursePractice') { browseCoursePractice(); return; }
+  if (d?.type === 'workspaceError') {
+    workspaceBusy=false; if (workspaceMode) { workspaceMode.disabled=false; workspaceMode.value=practiceMode?'practice':mode; }
+    helpStatus(d.message);
+    if (practicePanel && !practicePanel.hidden) byId('practice-questions').textContent=d.message;
+    return;
+  }
+  if (d?.type === 'workspacePractice') {
+    if (!practicePanel) return;
+    practicePanel.hidden=false;
+    const chapters=byId<HTMLSelectElement>('practice-chapter'), list=byId('practice-questions');
+    chapters.replaceChildren(...d.chapters.map((chapter:any)=>{
+      const option=document.createElement('option'); option.value=chapter.id; option.textContent=chapter.lesson||chapter.name;
+      option.disabled=chapter.locked || chapter.expired; return option;
+    }));
+    chapters.value=d.chapterId; chapters.onchange=()=>browseCoursePractice(chapters.value);
+    list.replaceChildren(...d.questions.map((question:any)=>{
+      const choice=document.createElement('button'); choice.type='button'; choice.textContent=question.title;
+      choice.onclick=()=>changeWorkspace('practice',question.id); return choice;
+    }));
+    if (!d.questions.length) list.textContent='No published practice sets for this chapter yet. You can write and run code in the notebook.';
+    return;
+  }
+  if (d?.type === 'learningPreferencesError') {
+    if (preferenceNotice) preferenceNotice.textContent = d.message;
+    return;
+  }
+  if (d?.type === 'learningPreferences') {
+    learnerPreferences = learningPreferences(d.preferences);
+    for (const [id,key] of [['preferred-name','preferred_name'], ['check-frequency','check_frequency'], ['preferred-voice','voice']] as const) {
+      const control = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
+      if (control) control.value = learnerPreferences[key];
+    }
+    if (ready) void applyLearningPreferences();
+    return;
+  }
+  if (d?.type === 'coachingLanguage') {
+    const changed = coachLanguage !== coachingLanguage(d.language);
+    coachLanguage = coachingLanguage(d.language);
+    if (coachLanguagePicker) coachLanguagePicker.value = coachLanguage;
+    if (changed && ready && !practiceMode) {
+      const chapter = selectedLesson;
+      close('Changing coaching language…'); begin(mode, chapter);
+    }
+    return;
+  }
+  if (d?.type === 'openTutor') { button('end').hidden = true; preferredLesson = typeof d.lesson === 'string' ? d.lesson : ''; const next = d.mode === 'doubt_solver' ? 'doubt_solver' : 'tutor'; begin(next, next === mode ? selectedLesson : ''); return; }
   if (d?.type === 'tutorLessons') {
-    if (d.attempt !== attempt || mode !== 'tutor' || practiceMode) return;
-    if (selectedLesson) return;
-    lessonCourses = Array.isArray(d.courses) ? d.courses : []; loadingLessons = false;
+    if (d.attempt !== attempt || practiceMode) return;
+    if (selectedLesson && !(selectionPage && d.browse)) return;
+    const scope = (!d.browse && preferredLesson && d.preferredCourse) || preferredCourse || d.preferredCourse;
+    if (!d.browse || !d.error) lessonCourses = Array.isArray(d.courses) ? d.courses.filter((course:Course)=>d.browse || mode === 'doubt_solver' || !scope || course.name===scope) : [];
+    loadingLessons = false;
+    lessonLoadError = typeof d.error === 'string' ? d.error : '';
+    taskProgress=d.browserProgress;
     const course = byId<HTMLSelectElement>('lesson-course');
     if (course) {
       course.replaceChildren(...lessonCourses.map(item => { const option = document.createElement('option'); option.value = option.textContent = item.name; return option; }));
       const preferred = [preferredCourse, d.preferredCourse].find(name => lessonCourses.some(item => item.name === name));
       if (preferred) course.value = preferred;
     }
-    renderLessons(); status.textContent = d.error || 'Choose a lesson to learn with Instructor.';
-    const resume = preferredLesson; preferredLesson = '';
-    const chapter = resume ? lessonCourses.find(item => item.name === course?.value)?.chapters.find(ch => ch.id === resume) : undefined;
-    if (chapter && !chapter.locked && !chapter.expired) { begin('tutor', chapter.id); return; }
+    renderLessons();
+    if (selectionPage && d.browse) return;
+    status.textContent = lessonLoadError || (mode === 'tutor' ? 'Choose a lesson to learn with Instructor.' : 'Choose a course and chapter to ask Doubt Solver.');
+    const resume = preferredLesson;
+    if (!lessonLoadError) preferredLesson = '';
+    const chosenCourse = lessonCourses.find(item => item.name === course?.value);
+    const chapter = !lessonLoadError && (resume ? chosenCourse?.chapters.find(ch => ch.id === resume)
+      : scope && mode === 'tutor' ? suggestedChapter(chosenCourse) ?? chosenCourse?.chapters.find(ch => !ch.locked && !ch.expired) : undefined);
+    if (chapter && !chapter.locked && !chapter.expired) { begin(mode, chapter.id); return; }
     // Reloading stays reachable, for example after buying a course again.
     button('tutor').textContent = 'Reload lessons'; button('tutor').hidden = false;
     return;
@@ -1381,7 +2206,10 @@ window.addEventListener('message', e => {
   if (d?.type === 'chooseCourse' && typeof d.course === 'string') {
     if (practiceMode) return;
     // Continuing the lesson that is already open keeps its live session and notebook.
-    if (typeof d.lesson === 'string' && d.lesson && d.lesson === selectedLesson && mode === 'tutor') return;
+    if (typeof d.lesson === 'string' && d.lesson && d.lesson === selectedLesson) {
+      if(button('end').disabled)begin(mode,d.lesson);
+      return;
+    }
     preferredCourse = d.course; preferredLesson = typeof d.lesson === 'string' ? d.lesson : ''; chooseLesson();
     return;
   }
@@ -1392,10 +2220,17 @@ window.addEventListener('message', e => {
   }
   if (d?.type === 'helpState') { showHelp(d); return; }
   if (d?.type === 'notebookReply') { if (d.attempt === attempt && pendingNotebook && d.request === pendingNotebook.request) pendingNotebook.finish(d); return; }
+  if(d?.type==='openDoubtChat' && chatSwitchPending) {
+    chatSwitchPending=false;sending=false;if(chatHistory)chatHistory.open=false;
+    begin('doubt_solver',d.chapter,true,{...(d.newChat?{newChat:true}:{chatId:d.chatId})});showHelp({next:1});field.focus();return;
+  }
+  if(d?.type==='doubtChatError') {chatSwitchPending=false;sending=false;status.textContent=d.message;controls();return;}
+  if(d?.type==='doubtHistory' && Array.isArray(d.chats)){renderChatHistory(d.chats);return;}
   if (d?.type === 'restoreNotebook') {
     if (d.attempt !== undefined && d.attempt !== attempt) return;
     clearTimeout(saveTimer); notebookConflict(false); pendingDoubt = '';
     documentKey = d.documentKey; saveSequence = 0; restoreNotebook(d.notebook);
+    document.getElementById('runtime-restore')?.remove();
     if (byId('notebook-save-status')) byId('notebook-save-status').textContent = 'Saved on this computer. Runs are temporary.';
     return;
   }
@@ -1405,30 +2240,70 @@ window.addEventListener('message', e => {
     if (d.type === 'notebookSaved' || d.conflict === true) notebookConflict(d.conflict === true);
     return;
   }
+  if (d?.type === 'courseNoteUpdated' && d.documentKey === documentKey) {
+    const cell = notebook.cells.find(cell => cell.id === d.id && cell.kind === 'note');
+    if (cell && cell.text === d.expected) {
+      cell.text = d.text;
+      const input = feed.querySelector<HTMLTextAreaElement>(`[data-cell-id="${cell.id}"] textarea`);
+      if (input) input.value = d.text;
+      saveNotebook(true);
+    } else if (cell) notebookConflict(true);
+    return;
+  }
+  if (d?.type === 'runtimeHistory' && d.documentKey === documentKey) {
+    let bar = document.getElementById('runtime-restore');
+    if (!bar) {
+      bar = document.createElement('div'); bar.id = 'runtime-restore';
+      const resume = document.querySelector('#stopping-point > button');
+      if (resume) resume.before(bar); else toolbar?.after(bar);
+    }
+    bar.replaceChildren(); bar.hidden = (!d.count && !notebook.drafts.some(draft=>draft.language==='python')) || !d.needsRestore || selectedRuntime !== 'course';
+    const message = document.createElement('p');
+    if (!d.count) {
+      message.textContent = 'No execution history is available for these saved cells. Run your setup cells once to begin recording recoverable state.';
+      bar.append(message); return;
+    }
+    message.textContent = d.restoring ? 'Restoring previous successful Python runs…'
+      : `Python variables need restoring. Replay ${d.count} successful run(s) for this lesson, in order. This repeats file writes, installations and other code effects.`;
+    const restore = document.createElement('button'); restore.textContent = d.restoring ? 'Stop restoring' : 'Restore session state';
+    restore.onclick = () => {restore.disabled = true; host.postMessage({type:d.restoring?'stopRestore':'restoreRuntime', documentKey});};
+    const fresh = document.createElement('button'); fresh.className = 'quiet'; fresh.textContent = 'Start fresh'; fresh.disabled = d.restoring;
+    fresh.onclick = () => confirmRemoval(fresh, 'Start a fresh Python session? Saved code stays; the replay history will be cleared.',
+      () => host.postMessage({type:'freshRuntime', documentKey}));
+    bar.append(message, restore, fresh); return;
+  }
+  if (d?.type === 'runtimeRestored' && d.documentKey === documentKey) {
+    editors.restartRuntime(); status.textContent = 'Previous successful Python runs restored. Continue with your unfinished cell.'; return;
+  }
   if (d?.type === 'runtimeRestarted') {
+    host.postMessage({type:'runtimeStatus',documentKey});
     replyContexts.clear(); updateHelpReplies();
     pendingNotebook?.finish({error:'Runtime changed. Ask ' + names[mode] + ' again with a current run.'});
     if (d.runtime) {
       selectedRuntime = 'course';
       if (runtimePicker) runtimePicker.value = selectedRuntime;
-      editors.runtime = 'Course container · Podman';
+      editors.runtime = localRuntimeLabel();
     }
     editors.restartRuntime(); status.textContent = 'Runtime restarted. Run the required cells again.'; return;
   }
   if (d?.type === 'runtimeSelected') {
     replyContexts.clear(); updateHelpReplies();
     pendingNotebook?.finish({error:'Runtime changed. Ask ' + names[mode] + ' again with a current run.'});
-    selectedRuntime = 'course';
+    selectedRuntime = ['colab','cloud','jupyter','ssh','cloud-cli'].includes(d.runtime) ? d.runtime : 'course';
+    if (selectedRuntime !== 'course') {const bar=document.getElementById('runtime-restore');if(bar)bar.hidden=true;}
+    else host.postMessage({type:'runtimeStatus',documentKey});
     if (runtimePicker) runtimePicker.value = selectedRuntime;
-    editors.runtime = 'Course container · Podman';
+    editors.runtime = typeof d.label === 'string' ? d.label : localRuntimeLabel();
     editors.restartRuntime();
-    status.textContent = 'Course container ready.';
+    status.textContent = d.message || (selectedRuntime === 'course' ? localRuntimeLabel() + ' ready.' : 'GPU runtime selected.');
     return;
   }
+  if (d?.type === 'runtimeError') {status.textContent = d.message; return;}
   if (d?.type === 'workstationState' && runtimePicker) {
     const option = runtimePicker.querySelector<HTMLOptionElement>('[value="course"]');
-    if (option) option.textContent = 'Course container · ' + d.label;
-    if (d.machines) {
+    if (option) option.textContent = d.runtimeLabel || localRuntimeLabel() + ' · ' + d.label;
+    if (typeof d.runtimeLabel === 'string' && selectedRuntime === 'course') editors.runtime = d.runtimeLabel;
+    if (d.machines && !['colab','cloud','jupyter','ssh','cloud-cli'].includes(selectedRuntime)) {
       runtimePicker.querySelectorAll('[data-machine]').forEach(option => option.remove());
       for (const machine of d.machines.machines ?? []) {
         if (machine === 'course') continue;
@@ -1440,22 +2315,27 @@ window.addEventListener('message', e => {
       runtimePicker.value = selectedRuntime;
       editors.runtime = d.machines.selected === 'course' ? 'Course container' : d.machines.selected;
     }
-    runtimePicker.title = d.error || 'Commands and code run in your course container.';
+    if (!['colab','cloud','jupyter','ssh','cloud-cli'].includes(selectedRuntime)) runtimePicker.title = d.error
+      || 'Commands and code run in your selected course container.';
     return;
   }
   if (d?.type === 'visibility') {
     const returned = !visible && d.visible === true;
     visible = d.visible === true;
     // Coming back (for example from the catalog after a purchase) refreshes which lessons are open.
-    if (returned) reloadLessons();
+    if (returned) { if (selectionPage && selectionOpen) loadCourseSelection(); else reloadLessons(); }
     if (!visible) devices.stop();
     controls();
     const selected = editors.selection(); observeCode(selected?.snapshot, selected?.run);
-    for (const el of audio) el.muted = !visible || !voice || !!activeVideo;
+    for (const el of audio) el.muted = roomAudioMuted();
     return;
   }
   if (d?.type === 'signedOut') {
+    if (selectionPage) selectionOpen = true;
+    chatSwitchPending=false;renderChatHistory([]);
     close('Your account changed. Retry to sign in.'); selectedLesson = ''; lessonCourses = [];
+    loadingLessons = false; preferredLesson = ''; lessonLoadError = 'Your account changed. Retry to sign in.';
+    taskProgress=undefined;
     const course = byId<HTMLSelectElement>('lesson-course'); if (course) course.replaceChildren();
     clearDocument(); renderLessons(); controls(); return;
   }
@@ -1467,6 +2347,22 @@ window.addEventListener('message', e => {
     return;
   }
   if (d?.attempt !== attempt) return;
+  if (d.type === 'grant' || d.type === 'practiceReady') {
+    if (!d.gpuRuntimes && ['colab','cloud','jupyter','ssh','cloud-cli'].includes(selectedRuntime)) {
+      selectedRuntime = 'course';
+      if (runtimePicker) runtimePicker.value = selectedRuntime;
+    }
+    for (const option of runtimePicker?.querySelectorAll<HTMLOptionElement>('[data-gpu]') ?? []) {
+      const available = d.gpuRuntimes && (!option.hasAttribute('data-managed-gpu') || d.managedGpuRuntimes !== false);
+      option.hidden = !available; option.disabled = !available || option.value==='colab' && d.gpuCount>1;
+    }
+    let notice = document.getElementById('gpu-compute-notice');
+    if (d.gpuRuntimes && !notice) {
+      notice = document.createElement('p'); notice.id = 'gpu-compute-notice'; notice.className = 'muted';
+      document.querySelector('.workspace-header')?.after(notice);
+    }
+    if (notice) {notice.hidden = !d.gpuRuntimes; notice.textContent = (d.gpuCount ? d.gpuCount+' GPU(s) required. ' : '')+(d.gpuCostNotice || '');}
+  }
   if (d.type === 'practiceReady') {
     practice = d.practice; ready = true; mode = 'tutor'; editors.aiEnabled = d.aiEnabled === true;
     showHelp(d.help ?? {});
@@ -1509,17 +2405,29 @@ window.addEventListener('message', e => {
     v.url = d.url; renderVideo(d.videoId, true);
   }
 });
-button('tutor').onclick = () => begin(mode, selectedLesson);
+if (button('course-notes')) button('course-notes').onclick = () => {saveNotebook(true); host.postMessage({type:'courseNotes',documentKey});};
+button('tutor').onclick = () => {if(!sending)begin(mode, selectedLesson, browserObservationFailed);};
 if(button('skip-chapter'))button('skip-chapter').onclick=()=>{const next=followingChapter();if(next)selectChapter(next.id);};
-if (byId('lesson-course')) byId('lesson-course').onchange = () => { preferredCourse = byId<HTMLSelectElement>('lesson-course').value; renderLessons(); };
+if (byId('lesson-course')) byId('lesson-course').onchange = () => {
+  preferredCourse = byId<HTMLSelectElement>('lesson-course').value;
+  if (byId('lesson-search')) byId<HTMLInputElement>('lesson-search').value = '';
+  renderLessons();
+};
+if (byId('lesson-search')) byId('lesson-search').oninput = renderLessons;
+if (button('choose-course')) button('choose-course').onclick = loadCourseSelection;
+if (button('reload-lessons')) button('reload-lessons').onclick = () => {
+  if (selectedLesson) loadCourseSelection();
+  else reloadLessons();
+};
+if (button('selection-back')) button('selection-back').onclick = () => showCourseSelection(false);
 if (button('lesson-catalog')) button('lesson-catalog').onclick = () => host.postMessage({type:'courseCatalog'});
-// The other mode opens in its own tab, so this lesson and its session stay as they are.
-button('doubt_solver').onclick = () => host.postMessage({type:'openOtherMode'});
+// The explicit handoff carries the draft; ordinary mode selection keeps separate drafts.
+button('doubt_solver').onclick = () => changeWorkspace(mode==='tutor'?'doubt_solver':'tutor',undefined,mode==='doubt_solver');
 button('end').onclick = () => close('Session ended. Choose an agent to start again.');
 if (button('sound')) button('sound').onclick = async () => {
   voice = blockedAudio || !voice; blockedAudio = false;
   voiceByMode.set(mode, voice);
-  for (const el of audio) el.muted = !visible || !voice || !!activeVideo;
+  for (const el of audio) el.muted = roomAudioMuted();
   controls();
   await resumeSpeaker();
 };
@@ -1552,6 +2460,16 @@ function showHelp(d: {next?: unknown; waiting?: unknown; trend?: unknown}) {
 const helpButton = document.getElementById('practice-help') as HTMLButtonElement | null;
 if (helpButton) helpButton.onclick = () => {
   const item = HELP_LEVELS[nextHelp - 1];
+  if (!practice && mode === 'tutor') {
+    // Lesson help belongs to the shared Instructor and its open checkpoint.
+    // A previously selected code cell may be from an earlier learning objective.
+    const current = openQuestion() ?? [...notebook.cells].reverse().find(cell => cell.kind === 'board' && !cell.packet?.notebook_help);
+    const anchor = current ? '\n\nCurrent lesson question or explanation:\n' + current.text.slice(0, 6000) : '';
+    void send(item.message + anchor, false, item.label, 'hint').then(sent => {
+      if (sent) showHelp({next:Math.min(HELP_LEVELS.length, item.level + 1)});
+    });
+    return;
+  }
   void send(item.message, false, item.label, 'small_steps', undefined, undefined, item.level, !practice);
 };
 const tutorActions = byId('notebook-help-actions');
@@ -1585,14 +2503,15 @@ function doubtComposer() {
     tried = document.createElement('div'); tried.id = 'doubt-tried-box'; tried.className = 'doubt-tried';
     const label = document.createElement('label'), input = document.createElement('textarea'), nudge = document.createElement('small');
     label.htmlFor = 'doubt-tried'; label.textContent = 'What I tried (optional)';
+    input.addEventListener('input',()=>saveNotebook());
     input.id = 'doubt-tried'; input.rows = 1; input.maxLength = 1500; input.placeholder = 'The step you tried and where it stopped making sense';
     nudge.id = 'doubt-tried-nudge'; nudge.className = 'muted';
     nudge.textContent = 'Sharing what you tried helps Doubt Solver find the exact step that went wrong.';
     input.setAttribute('aria-describedby', nudge.id);
     tried.append(label, input, nudge);
     document.querySelector('#composer .composer-box')?.before(tried);
-    const fresh = document.createElement('button'); fresh.type = 'button'; fresh.id = 'new-doubt'; fresh.className = 'quiet'; fresh.textContent = 'New doubt';
-    fresh.title = 'Start a separate doubt. Doubt Solver will not mix it with the one above.';
+    const fresh = document.createElement('button'); fresh.type = 'button'; fresh.id = 'new-doubt'; fresh.className = 'quiet'; fresh.textContent = 'New Chat';
+    fresh.title = 'Start a fresh conversation. This chat stays in Chat history.';
     fresh.onclick = newDoubt;
     (byId('composer-mode-actions') ?? byId('composer')).prepend(fresh);
     const roles = document.createElement('fieldset'); roles.id = 'attachment-role'; roles.className = 'attachment-role';
@@ -1611,7 +2530,7 @@ function doubtComposer() {
   // A nudge on the first message of a doubt, never a requirement.
   if (nudge) nudge.hidden = !doubt || !!input?.value.trim() || doubtCells().some(cell => cell.kind === 'message');
   const fresh = document.getElementById('new-doubt') as HTMLButtonElement | null;
-  if (fresh) { fresh.hidden = !doubt; fresh.disabled = sending || !documentKey || !doubtCells().some(cell => cell.kind === 'message'); }
+  if (fresh) { fresh.hidden = !doubt; fresh.disabled = sending || chatSwitchPending || !documentKey || !doubtCells().some(cell => cell.kind === 'message'); }
   const roles = document.getElementById('attachment-role') as HTMLFieldSetElement | null;
   if (roles) {
     if (!attachments.count && attachmentRole !== 'question') {
@@ -1660,6 +2579,7 @@ for (const [id, handler] of Object.entries({
 const runtimePicker = document.getElementById('course-runtime') as HTMLSelectElement | null;
 let selectedRuntime = runtimePicker?.value ?? 'course';
 if (runtimePicker) runtimePicker.onchange = () => {
+  if(runtimePicker.value==='finish')saveNotebook(true);
   host.postMessage({type:'runtime', runtime:runtimePicker.value});
   runtimePicker.value = selectedRuntime;
 };

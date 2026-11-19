@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
 import { ENVIRONMENTS, Environment, EnvironmentName } from './environments';
+import { externalNotebookRuntime } from './colabSetup';
 
 export const jupyterMetadata = (doc: vscode.NotebookDocument) => doc.metadata.metadata ?? doc.metadata.custom?.metadata ?? {};
+export const externalRuntimeFor = (doc: vscode.NotebookDocument) => externalNotebookRuntime(jupyterMetadata(doc),
+  doc.getCells().filter(cell => cell.kind === vscode.NotebookCellKind.Code).map(cell => cell.document.getText()));
 
 export function contextFor(doc: vscode.NotebookDocument) {
   const meta = jupyterMetadata(doc);

@@ -31,3 +31,12 @@ try:
     os.chown(home / '.zshrc', uid, gid)
 except FileExistsError:
     pass
+
+# The desktop waits for this setup process before it accepts notebook work.
+# Run an image's optional startup hook with the same identity as learner code.
+startup = Path('/opt/dhimantai/course-start')
+if startup.is_file():
+    os.setgroups([gid])
+    os.setgid(gid)
+    os.setuid(uid)
+    os.execv(startup, [str(startup)])

@@ -214,7 +214,7 @@ export class ContractServer {
           ? [{ id: QUESTION_ID, title: 'Word count', topic: 'Strings', language: 'python', difficulty: 'easy' }] : [] });
       }
       if (req.method === 'GET') return send(res, 200, { courses: this.courseNames.map(name => ({name, chapters: [{id: QUESTION_ID, name: 'Lists'}]})),
-        languages: [{ id: 'python', name: 'Python' }] });
+        languages: [{ id: 'python', name: 'Python' }], question_pools: ['textbook'] });
       if (body.chapter_id !== QUESTION_ID || body.language !== 'python' || body.difficulty !== 'easy') return send(res, 400, {error: 'Bad selection'});
       return send(res, 200, { exercise: {title: 'Count red labels', task: 'Count the red labels in a list.',
         example_input: "['red', 'blue', 'red']", expected_output: '2'}, course: 'Python', chapter: 'Lists',

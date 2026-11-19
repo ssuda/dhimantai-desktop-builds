@@ -13,7 +13,7 @@ export const RUN_TIMEOUT_MS = 45_000;
 const COMPILE_TIMEOUT_MS = 120_000;
 const OUTPUT_LIMIT = 200_000;
 
-export type Toolchains = Partial<Record<'python' | 'node' | 'cc' | 'rustc' | 'javac' | 'java' | 'go' | 'tsc' | 'shell', string>>;
+export type Toolchains = Partial<Record<'python' | 'node' | 'cc' | 'cxx' | 'rustc' | 'javac' | 'java' | 'go' | 'tsc' | 'shell', string>>;
 
 export interface LocalRun {
   source: string;
@@ -47,6 +47,9 @@ export function plan(language: string): { compile?: Step; run: Step; install: st
         run: { tool: 'node', candidates: ['node'], args: ['main.js'] },
         install: 'Install Node.js, then run: npm install -g typescript @types/node',
       };
+    case 'cpp':
+      return { compile: {tool: 'cxx', candidates: ['g++', 'clang++', 'c++'], args: ['-std=c++17', '-Wall', '-Wextra', 'main.cpp', '-o', windows ? 'main.exe' : 'main']},
+        run: {tool: 'cxx', candidates: [exe], args: []}, install: 'Use the C++ course runtime or install a C++17 compiler.' };
     case 'c':
       return {
         compile: { tool: 'cc', candidates: ['gcc', 'clang', 'cc'], args: ['-std=c17', '-Wall', '-Wextra', 'main.c', '-o', windows ? 'main.exe' : 'main', '-lm'] },

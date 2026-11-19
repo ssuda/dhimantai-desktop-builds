@@ -27,7 +27,7 @@ export async function openInjectedTab(request: TabRequest): Promise<InjectedTab 
   let open: BrowserWindow['openBrowserTab'];
   try { open = (vscode.window as unknown as BrowserWindow).openBrowserTab; } catch { return undefined; }
   if (typeof open !== 'function') return undefined;
-  const files = [join('apps', request.adapter + '.js'), ...(request.bridge ? [join('player', 'guide.js'), join('player', 'live.js')] : [])];
+  const files = [join('apps', request.adapter + '.js'), ...(request.bridge ? [join('player', 'shift.js'), join('player', 'guide.js'), join('player', 'live.js')] : [])];
   const scripts = await Promise.all(files.map(path => readFile(join(request.media, path), 'utf8')));
   await request.server.login();
   const tab = await open(request.url + '/', {viewColumn: vscode.ViewColumn.Beside});

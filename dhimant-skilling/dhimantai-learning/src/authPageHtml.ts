@@ -5,7 +5,7 @@ const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;'
 const revealButton = (id: string, label: string) => `<button class="reveal" type="button" data-label="${label}" aria-controls="${id}" aria-pressed="false" aria-label="Show ${label}" title="Show ${label}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="slash" d="m3 3 18 18"/></svg></button>`;
 
 /** Credentials stay in the form and are never saved in webview state or sent to a browser. */
-export function authPageHtml(mode: AuthPageMode, nonce: string, environment: string, notice = ''): string {
+export function authPageHtml(mode: AuthPageMode, nonce: string, environment: string, notice = '', courseTitle?: string): string {
   const signup = mode === 'signUp', forgot = mode === 'forgotPassword', reset = mode === 'resetPassword';
   const newPassword = signup || reset;
   const title = signup ? 'Create your account' : forgot ? 'Forgot password' : reset ? 'Choose a new password' : 'Sign in';
@@ -23,11 +23,13 @@ label{display:block;margin:18px 0 6px}input{width:100%;padding:10px 12px;border:
 input:focus-visible,button:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}button{font:inherit;cursor:pointer;border:0;border-radius:4px}button:disabled{cursor:default;opacity:.65}
 .password-field{position:relative}.password-field input{padding-right:46px}.reveal{position:absolute;right:3px;top:3px;bottom:3px;width:40px;background:transparent;color:var(--vscode-input-foreground)}.reveal:hover{background:var(--vscode-toolbar-hoverBackground)}.reveal svg{width:20px;height:20px;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.6}.reveal .slash{display:none}.reveal[aria-pressed="true"] .slash{display:block}
 .submit{width:100%;padding:10px 16px;margin-top:24px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);font-weight:600}.submit:hover{background:var(--vscode-button-hoverBackground)}
+.providers{display:grid;gap:8px}.providers button{padding:10px 16px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}.providers button:hover{background:var(--vscode-button-secondaryHoverBackground)}
 .link{padding:2px;background:transparent;color:var(--vscode-textLink-foreground)}.link:hover{text-decoration:underline}.switch{text-align:center;margin-top:24px}.hint{font-size:12px;margin-top:6px}
 #status{margin:16px 0 0;overflow-wrap:anywhere}#status:empty{display:none}#status.error{color:var(--vscode-errorForeground)}
 </style></head><body><main>
 <header><div class="brand">dhimantAI${environment === 'production' ? '' : `<span class="service">${escape(environment)}</span>`}</div>
-<h1>${title}</h1><p>${signup ? 'Start learning with your own account.' : forgot ? 'Enter your registered email address. We will send you a link to reset your password.' : reset ? 'Use at least 8 characters. Then sign in with your new password.' : 'Continue learning with dhimantAI.'}</p></header>
+<h1>${title}</h1><p id="destination">${courseTitle && (signup || mode === 'signIn') ? 'Continue to ' + escape(courseTitle) + ' after signing in.' : signup ? 'Start learning with your own account.' : forgot ? 'Enter your registered email address. We will send you a link to reset your password.' : reset ? 'Use at least 8 characters. Then sign in with your new password.' : 'Continue learning with dhimantAI.'}</p></header>
+${signup || mode === 'signIn' ? '<div class="providers"><button type="button" data-provider="google">Continue with Google</button><button type="button" data-provider="github">Continue with GitHub</button><button type="button" data-provider="azure">Continue with Microsoft</button></div>' : ''}
 <form id="auth-form" novalidate>
 ${signup ? '<label for="name">Name</label><input id="name" name="name" autocomplete="name" required minlength="2" maxlength="100">' : ''}
 ${reset ? '' : `<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" required aria-describedby="email-hint">
@@ -37,6 +39,7 @@ ${forgot ? '' : `<label for="password">${reset ? 'New password' : 'Password'}</l
 ${newPassword ? '<label for="confirmation">Confirm password</label><div class="password-field"><input id="confirmation" name="confirmation" type="password" autocapitalize="none" spellcheck="false" autocomplete="new-password" required minlength="8">' + revealButton('confirmation', 'password confirmation') + '</div>' : ''}
 ${mode === 'signIn' ? '<p><button class="link" id="forgot" type="button">Forgot password?</button></p>' : ''}
 <p id="status" role="status" aria-live="polite">${escape(notice)}</p>
+<button class="link" id="cancel-provider" type="button" hidden>Cancel browser sign-in</button>
 <button class="submit" type="submit">${submit}</button>
 </form>
 <p class="switch">${forgot || reset ? '' : signup ? 'Already have an account?' : 'New to dhimantAI?'} <button class="link" id="switch" type="button">${forgot || reset ? 'Back to sign in' : signup ? 'Sign in' : 'Create an account'}</button></p>
@@ -68,6 +71,19 @@ function setBusy(value) {
   document.querySelectorAll('input,button').forEach(control => { control.disabled = value; });
   form.querySelector('.submit').textContent = value ? '${submitting}' : '${submit}';
 }
+const cancelProvider = document.getElementById('cancel-provider');
+document.querySelectorAll('[data-provider]').forEach(button => button.addEventListener('click', () => {
+  if (busy) return;
+  setBusy(true);
+  form.querySelector('.submit').textContent = '${submit}';
+  status.className = ''; status.textContent = 'Continue in your browser, then return to Skilling.';
+  cancelProvider.hidden = false; cancelProvider.disabled = false; cancelProvider.focus();
+  vscode.postMessage({type:'provider', provider:button.dataset.provider, mode:'${mode}'});
+}));
+cancelProvider.addEventListener('click', () => {
+  cancelProvider.disabled = true;
+  vscode.postMessage({type:'cancelProvider'});
+});
 const authInputErrors = ${authInputErrors.toString()};
 function validateFields() {
   const errors = authInputErrors(Object.fromEntries(new FormData(form)), ${forgot || reset ? JSON.stringify(mode) : signup});
@@ -101,7 +117,12 @@ document.getElementById('forgot')?.addEventListener('click', () => {
   vscode.postMessage({type:'navigate', mode:'forgotPassword'});
 });
 window.addEventListener('message', event => {
+  if (event.data?.type === 'courseDestination') {
+    document.getElementById('destination').textContent = 'Continue to ' + event.data.title + ' after signing in.';
+    return;
+  }
   if (event.data?.type !== 'error') return;
+  cancelProvider.hidden = true;
   setBusy(false);
   if (password) password.value = ''; if (confirmation) { confirmation.value = ''; confirmation.setCustomValidity(''); }
   status.className = 'error'; status.textContent = event.data.message;

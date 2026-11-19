@@ -1,12 +1,14 @@
 /**
- * Course recipes from media/course/profiles.json. Two separate things come from one entry:
+ * Public course recipes served by the backend from Supabase Storage.
  * - `language`: the course's notebook and editor language (the default "Start" notebook, new cells, the kernel);
  * - `services`: extra runtimes baked into the container image that do not change that language,
  *   e.g. PostgreSQL for the course data in a course whose learners never write code;
- * - `data`: the sample datasets (media/datalab/<name>.sql) preloaded into that PostgreSQL's read-only lab database.
+ * - `data`: the configured sample datasets preloaded into PostgreSQL's read-only lab database.
  */
 export interface Recipe {
   language?: string;
+  /** Additional toolchains baked into a shared notebook image. */
+  languages?: string[];
   services?: string[];
   torch?: string;
   requirements?: string[];
@@ -23,9 +25,15 @@ export function courseData(recipes: Record<string, Recipe>, course: string | und
   return r?.services?.includes('postgres') ? (r.data ?? []).filter(name => /^[a-z][a-z0-9_]{0,31}$/.test(name)) : [];
 }
 
-export const COURSE_LANGUAGES = ['python', 'c', 'java', 'javascript', 'typescript', 'go', 'rust', 'sql', 'pglab', 'bash', 'zsh'];
+export const COURSE_LANGUAGES = ['python', 'c', 'cpp', 'java', 'javascript', 'typescript', 'go', 'rust', 'sql', 'pglab', 'bash', 'zsh'];
+export const PROGRAMMING_RUNTIME = 'Shared programming container';
+export const programmingRecipe = (): Recipe & {language:string; services:string[]} => ({
+  language:'python', languages:[...COURSE_LANGUAGES], services:[],
+  requirements:['numpy==2.1.3', 'pandas==2.2.3', 'matplotlib==3.10.1', 'scikit-learn==1.6.1'],
+  imports:['numpy', 'pandas', 'matplotlib', 'sklearn'],
+});
 /** Services language.sh can install. Only these fixed names ever reach the image build. */
-export const COURSE_SERVICES = ['postgres'];
+export const COURSE_SERVICES = ['postgres', 'redis', 'javascript', 'audio'];
 
 export function courseRecipe(recipes: Record<string, Recipe>, course: string): Recipe & {language: string; services: string[]} {
   const key = course.trim().toLowerCase(), r = recipes[key] ?? {};
@@ -43,12 +51,45 @@ export function recipeLanguage(recipes: Record<string, Recipe>, course: string):
   return recipes[key]?.language ?? (COURSE_LANGUAGES.includes(key) ? key : undefined);
 }
 
+/** Add newly required course packages to existing workspaces without replacing learner pins or comments. */
+export function courseRequirements(current: string | undefined, recipe: Recipe): string {
+  const requirements = recipe.requirements ?? [];
+  if (current === undefined) return requirements.join('\n') + '\n';
+  const packageName = (line: string) => line.match(/^\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)/)?.[1]
+    .toLowerCase().replace(/[-_.]+/g, '-');
+  const existing = new Set(current.split(/\r?\n/).map(packageName));
+  const missing = requirements.filter(line => !existing.has(packageName(line)));
+  if (!missing.length) return current;
+  const newline = current.includes('\r\n') ? '\r\n' : '\n';
+  return current + (current && !current.endsWith('\n') ? newline : '') + missing.join(newline) + newline;
+}
+
 /** The course Dockerfile: the language's packages first, then each service, all through language.sh. */
 export function courseDockerfile(template: string, recipe: Recipe & {language: string; services: string[]}): string {
-  if (!COURSE_LANGUAGES.includes(recipe.language)) throw new Error('Unsupported course language.');
+  if ([recipe.language, ...recipe.languages ?? []].some(language => !COURSE_LANGUAGES.includes(language)))
+    throw new Error('Unsupported course language.');
   const torch = recipe.torch
     ? 'RUN python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==' + recipe.torch
     : '';
-  const installs = [recipe.language, ...recipe.services.filter(s => COURSE_SERVICES.includes(s))];
+  const installs = [...new Set([recipe.language, ...recipe.languages ?? [], ...recipe.services.filter(s => COURSE_SERVICES.includes(s))])];
   return template.replace('# COURSE_EXTRA_INSTALL', torch).replace('COURSE_INSTALLS', installs.join(' '));
+}
+
+/** Upgrade the install loop in older generated Dockerfiles while retaining learner customizations. */
+export function courseDockerfileServices(dockerfile: string, services: string[]): string {
+  if (services.some(service => !COURSE_SERVICES.includes(service))) throw new Error('Unsupported course service.');
+  // Older generated workspaces copied Node alone and obtained npm from apt.
+  // Keep learner edits while upgrading that known template to the matching npm.
+  const nodeCopy = 'COPY --from=node_runtime /usr/local/bin/node /usr/local/bin/node';
+  const npmCopy = 'COPY --from=node_runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm';
+  if (dockerfile.includes(nodeCopy) && !dockerfile.includes(npmCopy)) {
+    dockerfile = dockerfile.replace(nodeCopy, nodeCopy + '\n' + npmCopy + '\n'
+      + 'RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \\\n'
+      + ' && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx');
+  }
+  const matches = [...dockerfile.matchAll(/(&& for item in )([a-z ]+)(; do \/usr\/local\/sbin\/dhimantai-language "\$item" \|\| exit 1; done)/g)];
+  const last = matches.at(-1);
+  if (!last) return dockerfile;
+  const updated = last[1] + [...new Set([...last[2].trim().split(/\s+/), ...services])].join(' ') + last[3];
+  return dockerfile.slice(0,last.index) + updated + dockerfile.slice(last.index!+last[0].length);
 }

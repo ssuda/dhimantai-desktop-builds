@@ -1,6 +1,6 @@
 // Pure mapping between notebook cells and the mirror file that official language extensions analyse.
 
-export const MIRRORED = ['rust', 'go', 'java', 'c', 'javascript', 'typescript', 'sql', 'shellscript'] as const;
+export const MIRRORED = ['rust', 'go', 'java', 'c', 'cpp', 'javascript', 'typescript', 'sql', 'shellscript'] as const;
 export type MirroredLanguage = typeof MIRRORED[number];
 
 export interface Segment { cell: string; start: number; lines: number }
@@ -40,6 +40,7 @@ export function scaffold(language: MirroredLanguage, text: string): {main: strin
     case 'go': return {main: 'main.go', files: {'go.mod': 'module practice\n\ngo 1.21\n'}};
     // Java requires a public class to live in a file of the same name.
     case 'java': return {main: (/\bpublic\s+(?:final\s+|abstract\s+)*class\s+([A-Za-z_]\w*)/.exec(text)?.[1] ?? 'Main') + '.java', files: {}};
+    case 'cpp': return {main: 'main.cpp', files: {}};
     case 'c': return {main: 'main.c', files: {}};
     case 'shellscript': return {main:'main.sh',files:{}};
     case 'sql': return {main: 'main.sql', files: {}};

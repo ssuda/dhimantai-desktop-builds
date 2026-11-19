@@ -22,11 +22,11 @@ export class LearningDevices {
     this.options.changed({microphone: this.tracks.has('microphone'), camera: this.tracks.has('camera'), busy: this.busy,
       cameraTrack: this.tracks.get('camera')?.track as LocalVideoTrack | undefined});
   }
-  private async notify(connection: Connection, enabled: boolean) {
+  private async notify(connection: Connection, enabled: boolean, commit = false) {
     const notification = this.notifications.then(async () => {
       const reply = await connection.room.localParticipant.performRpc({destinationIdentity: connection.agent,
-        method: 'toggle_audio', payload: JSON.stringify({input_enabled: enabled}), responseTimeout: 8000});
-      if (reply !== 'ok') throw new Error(reply.startsWith('error:') ? reply.slice(6).trim() : 'Device access was not confirmed by Instructor.');
+        method: 'toggle_audio', payload: JSON.stringify({input_enabled: enabled, ...(commit ? {commit_turn:true} : {})}), responseTimeout: 8000});
+      if (reply !== 'ok') throw new Error(reply.startsWith('error:') ? reply.slice(6).trim() : 'Device access was not confirmed by the learning room.');
     });
     // Preserve stop/start ordering even when the preceding RPC fails or is slow.
     this.notifications = notification.catch(() => {});
@@ -36,7 +36,7 @@ export class LearningDevices {
     track.stop(); // Stop hardware before waiting for any network operation.
     void connection.room.localParticipant.unpublishTrack(track, true).catch(() => {});
   }
-  stop(device?: Device) {
+  stop(device?: Device, commit = false) {
     ++this.revision;
     const connections = new Set<Connection>();
     for (const [kind, entry] of this.tracks) {
@@ -46,10 +46,18 @@ export class LearningDevices {
       this.release(entry.track, entry.connection);
     }
     this.changed();
-    for (const connection of connections) void this.notify(connection, false).catch(() => {});
+    const revision = this.revision;
+    for (const connection of connections) void this.notify(connection, false, commit).catch(() => {
+      if (commit && this.revision === revision && this.options.current()?.room === connection.room)
+        this.options.report('Microphone off. Your response could not be confirmed. Type your answer or turn the microphone on and try again.');
+    });
   }
   async toggle(device: Device) {
-    if (this.tracks.has(device)) { this.stop(device); return; }
+    if (this.tracks.has(device)) {
+      this.stop(device, device === 'microphone');
+      this.options.report(device === 'microphone' ? 'Microphone off. Sending your response…' : 'Camera off.');
+      return;
+    }
     const connection = this.options.current();
     if (this.busy || !connection) return;
     this.busy = true; this.changed();
@@ -69,7 +77,7 @@ export class LearningDevices {
       track.mediaStreamTrack.addEventListener('ended', () => {
         if (this.tracks.get(device)?.track === track) { this.stop(device); this.options.report('The ' + device + ' stopped. Select it again to reconnect.'); }
       }, {once: true});
-      this.options.report(device === 'microphone' ? 'Microphone on. Speak to Instructor.' : 'Camera on.');
+      this.options.report(device === 'microphone' ? 'Microphone on. You can speak now.' : 'Camera on.');
     } catch (error) {
       if (track) this.release(track, connection);
       if (device === 'microphone') void this.notify(connection, false).catch(() => {});

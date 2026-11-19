@@ -18,6 +18,7 @@ export function sameRows(expected: string, actual: string, ordered: boolean): bo
 }
 
 export class CourseEngine {
+  pythonEnvironment = false;
   constructor(
     readonly bin: string,
     readonly name: string,
@@ -39,7 +40,11 @@ export class CourseEngine {
   }
 
   execArgs(cwd: string, command: string, args: string[]) {
-    return ['exec', '-i', ...this.execUser, '--workdir', this.path(cwd), this.name, command, ...args];
+    return ['exec', '-i', ...this.execUser, '--workdir', this.path(cwd), this.name, ...this.commandArgs(command, args)];
+  }
+
+  commandArgs(command:string, args:string[]) {
+    return this.pythonEnvironment ? ['python', '/course/.dhimantai/python_environment.py', command, ...args] : [command, ...args];
   }
 
   private async invoke<T>(operation: string, language: string, input: LocalRun, tests?: PublicTest[]): Promise<T> {

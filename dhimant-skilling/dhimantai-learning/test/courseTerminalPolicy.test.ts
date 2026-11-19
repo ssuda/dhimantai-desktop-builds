@@ -50,7 +50,7 @@ test('terminal profile passes container options through and cancellation never c
 test('course terminal uses Podman exec with a quoted-by-argv project path on every platform', () => {
   const api=moduleWithHost('courseTerminal',{ThemeIcon:class {}},'win32');
   const options=api.courseTerminalOptions({bin:'C:\\Program Files\\RedHat\\Podman\\podman.exe',name:'course-python',
-    root:'C:\\course',execUser:[],path:()=>'/course/my project'},'Course project','C:\\course\\my project');
+    root:'C:\\course',execUser:[],path:()=>'/course/my project',commandArgs:(command:string,args:string[])=>[command,...args]},'Course project','C:\\course\\my project');
   assert.equal(options.shellPath,'C:\\Program Files\\RedHat\\Podman\\podman.exe');
   assert.equal(options.shellArgs[3],'/course/my project');
   assert.deepEqual(Array.from(options.shellArgs.slice(-3)),['course-python','/bin/zsh','-il']);
@@ -87,6 +87,7 @@ test('a legacy courseContainers=false preference cannot enable host execution', 
     'courseTerminal','colab','colabNotebooks','notebookKernelPicker'].map(name=>['./'+name,{}]));
   const api=moduleWithHost('courseWorkspace',{workspace:{getConfiguration:()=>({get:()=>false})}},'win32',dependencies);
   const courses=Object.create(api.CourseWorkspaces.prototype);
+  courses.configuration=async()=>({preferred_accelerator:'gpu'});
   courses.available=true;
   assert.equal(courses.enabled,true);
   courses.available=false;
@@ -121,15 +122,17 @@ test('student GPU selection opens the existing Jupyter picker only for the curre
 test('starting the inference course exports labs without setting up a CPU container', async () => {
   const dependencies=Object.fromEntries(['podman','courseEngine','courseRecovery','courseDebug','courseReadiness',
     'courseTerminal','colab','notebookKernelPicker'].map(name=>['./'+name,{}]));
-  dependencies['./colabNotebooks'] = {courseAccelerator:(course:string)=>course === 'Inference Engineering' ? 'gpu' : undefined};
+  dependencies['./colabNotebooks'] = {};
+  dependencies['./courseConfiguration'] = {};
   const api=moduleWithHost('courseWorkspace',{},'linux',dependencies);
   const courses=Object.create(api.CourseWorkspaces.prototype), scope={course:'Inference Engineering',account:'student',environment:'staging'};
+  courses.configuration=async()=>({preferred_accelerator:'gpu'});
   const calls:any[]=[];
   courses.enterColab=async(...args:any[])=>{calls.push(args);return 'gpu notebook';};
   courses.setup=async()=>{throw new Error('GPU labs must not prepare a local container');};
   courses.recipe=async()=>{throw new Error('GPU labs must not load local runtime dependencies');};
   assert.equal(await courses.enter(scope),'gpu notebook');
-  assert.deepEqual(calls,[[scope,'jupyter']]);
+  assert.deepEqual(calls,[[scope]]);
   courses.context={globalState:{keys:()=>['dhimantai.courseRuntime.test'], get:()=>({root:'/course/inference'})}};
   courses.recordPrefix='dhimantai.courseRuntime.';
   assert.equal(courses.recordFor({scheme:'file',fsPath:'/course/inference/gpu/01-runtime.ipynb'}),undefined);
@@ -147,7 +150,8 @@ test('Practice refuses execution when course setup returns no container', async 
     NotebookCellKind:{Code:2},NotebookCellOutput:class {constructor(public items:any[]){}},
     NotebookCellOutputItem:{stderr:(text:string)=>text},
     notebooks:{createNotebookController:()=>controller},
-    workspace:{isTrusted:true,notebookDocuments:[],onDidCloseNotebookDocument:disposable,onDidOpenNotebookDocument:disposable},
+    workspace:{isTrusted:true,notebookDocuments:[],onDidCloseNotebookDocument:disposable,
+      onDidOpenNotebookDocument:disposable,onDidChangeNotebookDocument:disposable},
   };
   const api=moduleWithHost('practiceKernel',vscode,'win32',{
     './notebookCells':{NotebookCells:class {

@@ -11,7 +11,7 @@ export function courseTerminalOptions(engine: CourseEngine, label = 'Course', cw
   return {
     name: label, iconPath: new vscode.ThemeIcon('terminal'), cwd,
     shellPath: engine.bin,
-    shellArgs: ['exec', '-it', ...engine.execUser, '--workdir', engine.path(cwd), '--env', 'DHIMANTAI_TERMINAL_ID=' + id, engine.name, '/bin/zsh', '-il'],
+    shellArgs: ['exec', '-it', ...engine.execUser, '--workdir', engine.path(cwd), '--env', 'DHIMANTAI_TERMINAL_ID=' + id, engine.name, ...engine.commandArgs('/bin/zsh', ['-il'])],
     env: { DHIMANTAI_COURSE_CONTAINER: engine.name, DHIMANTAI_COURSE_DIRECTORY: engine.path(cwd), DHIMANTAI_TERMINAL_ID: id },
   };
 }

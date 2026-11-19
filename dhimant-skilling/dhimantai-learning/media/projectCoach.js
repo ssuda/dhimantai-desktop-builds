@@ -1,12 +1,17 @@
 (() => {
   const api = acquireVsCodeApi(), $ = id => document.getElementById(id);
   let revision = 0, currentStep = -1, currentScope = '', conversationId = '', lastSaved = '', rendered = [], resetting = false;
-  let milestoneState = '', stepOptions = '', sharedState, previewTimer;
+  let stepOptions = '', sharedState, previewTimer, readingSubmission = false;
   const drafts = new Map();
-  const draft = () => ({note: $('note').value, externalHelp: $('externalHelp').value, completed: $('completed').checked});
+  const draft = () => ({note: $('note').value, externalHelp: $('externalHelp').value});
+  const clearNoteError = () => {
+    $('note').removeAttribute('aria-invalid');
+    $('noteError').textContent = '';
+  };
+  $('note').oninput = () => { if ($('note').value.trim()) clearNoteError(); };
   const restoreDraft = value => {
     $('note').value = value?.note || ''; $('externalHelp').value = value?.externalHelp || 'unknown';
-    $('completed').checked = value?.completed === true;
+    clearNoteError();
   };
   const send = (type, data = {}) => api.postMessage({type, revision, conversationId, scope: currentScope, step: currentStep, ...data});
   // Disable immediately; the host's next state re-enables, so a double click cannot start twice.
@@ -14,10 +19,9 @@
   const actions = ['check', 'hint', 'ask', 'finish', 'refreshHandoff', 'runLive', 'submitProject'];
   const act = (type, data) => { lock(...actions); send(type, data); };
   const renderShared = s => {
-    const paths = s.sharedFiles.map(entry => entry.replace(/:\d+–\d+( \(excerpt\))?$/, ''));
+    const count = s.sharedFiles.length;
     $('sharedSummary').textContent = s.contextProblem ? 'Coach cannot read your project files right now.'
-      : paths.length ? 'Coach will see: ' + paths.slice(0, 4).join(', ') + (paths.length > 4 ? ' and ' + (paths.length - 4) + ' more' : '')
-      : 'No project files will be shared.';
+      : count ? `${count} project ${count === 1 ? 'file' : 'files'} included when you send` : 'No project files will be shared.';
     $('shared').textContent = (s.contextProblem ? s.contextProblem + '\n\n' : '') + 'Shared excerpts:\n' + s.sharedFiles.join('\n')
       + (s.omitted.length ? '\n\nContent not included (' + (s.omittedCount ?? s.omitted.length) + ' files):\n' + s.omitted.join('\n')
         + (s.omittedCount > s.omitted.length ? '\n…more files omitted' : '') : '')
@@ -37,7 +41,7 @@
   $('message').oninput = previewShared;
   const navigate = index => {
     if (index < 0 || index >= $('step').options.length || index === currentStep) return;
-    for (const id of ['previous', 'next', 'step', 'check', 'ask', 'hint', 'finish', 'refreshHandoff', 'runLive', 'checkpoint', 'newChat', 'submitProject', 'projectActions']) $(id).disabled = true;
+    for (const id of ['previous', 'next', 'step', 'check', 'ask', 'hint', 'finish', 'refreshHandoff', 'runLive', 'checkpoint', 'saveDraft', 'newChat', 'submitProject', 'projectActions']) $(id).disabled = true;
     send('step', {index});
   };
   $('step').onchange = () => navigate(Number($('step').value));
@@ -49,20 +53,44 @@
   $('finish').onclick = () => act('finish', {help: $('externalHelp').value, note: $('note').value});
   $('refreshHandoff').onclick = () => act('refreshHandoff');
   $('runLive').onclick = () => act('runLive');
-  $('submitProject').onclick = () => act('submitProject', {help: $('externalHelp').value, note: $('note').value});
+  $('submitProject').onclick = () => {
+    if (readingSubmission && !requireEvidence('Add your reading evidence before submitting the project.')) return;
+    act('submitProject', {help: $('externalHelp').value, note: $('note').value});
+  };
   $('projectActions').onchange = () => { send('projectAction', {action: $('projectActions').value}); $('projectActions').value = ''; };
   $('newChat').onclick = () => {
     if (resetting) return;
     resetting = true; $('newChat').disabled = true; $('ask').disabled = true;
     $('message').value = ''; $('conversation').replaceChildren(); rendered = [];
-    $('emptyChat').hidden = false; send('newChat');
+    $('newChat').hidden = true; send('newChat');
   };
-  $('checkpoint').onclick = () => send('checkpoint', {note: $('note').value, help: $('externalHelp').value, completed: $('completed').checked});
+  const requireEvidence = message => {
+    if ($('note').value.trim()) return true;
+    $('note').setAttribute('aria-invalid', 'true');
+    $('noteError').textContent = message;
+    $('note').focus();
+    return false;
+  };
+  const saveCheckpoint = completed => {
+    if (completed && !requireEvidence('Add your evidence here to complete this milestone.')) return;
+    clearNoteError();
+    lock('checkpoint', 'saveDraft');
+    send('checkpoint', {note: $('note').value, help: $('externalHelp').value, completed});
+  };
+  $('checkpoint').onclick = () => saveCheckpoint(true);
+  $('saveDraft').onclick = () => saveCheckpoint(false);
   $('composer').onsubmit = event => {
     event.preventDefault();
     if ($('message').value.trim() && !$('ask').disabled) { clearTimeout(previewTimer); act('ask', {text: $('message').value}); }
   };
   window.addEventListener('message', ({data: s}) => {
+    if (s.type === 'checkpointError') {
+      if (s.scope === currentScope && s.step === currentStep && s.conversationId === conversationId) {
+        $('noteError').textContent = s.text;
+        $('checkpoint').disabled = false; $('saveDraft').disabled = false;
+      }
+      return;
+    }
     if (s.type === 'error') { $('status').textContent = s.text; return; }
     if (s.type === 'contextPreview') { if (s.scope === currentScope && s.text === $('message').value) renderShared(s); return; }
     if (s.type !== 'state') return;
@@ -76,24 +104,25 @@
     const following = content.scrollHeight - content.clientHeight - oldScroll < 80 ||
       Math.abs($('conversation').getBoundingClientRect().bottom - content.getBoundingClientRect().bottom) < 80;
     if (currentScope !== s.scope) {
-      currentScope = s.scope; currentStep = -1; lastSaved = ''; milestoneState = ''; drafts.clear();
+      currentScope = s.scope; currentStep = -1; lastSaved = ''; drafts.clear();
       $('message').value = ''; restoreDraft();
     }
     $('title').textContent = s.title;
     $('check').textContent = s.reading ? 'Run this step' : 'Check this step';
     const stepChanged = currentStep !== s.step;
     const milestones = s.milestones || s.steps.map(() => ({status: 'not_started'}));
-    const labels = {complete: 'Complete (self-reported)', review: 'Review changes', in_progress: 'In progress', not_started: 'Not started'};
+    const labels = {complete: 'Complete (self-reported)', review: 'Review changes'};
     const status = milestones[s.step].status;
     if (stepChanged) {
       if (currentStep >= 0) drafts.set(currentStep, draft());
       currentStep = s.step; $('message').value = '';
       const savedDraft = drafts.get(s.step) || s.checkpoint;
-      restoreDraft({...savedDraft, completed: savedDraft?.completed && status !== 'review'});
+      restoreDraft(savedDraft);
       lastSaved = s.checkpoint?.at;
-      $('checkpointDetails').open = false;
+      $('milestoneBackground').open = false;
+      $('milestoneReflection').open = false;
     }
-    const options = s.steps.map((title, index) => title + ' · ' + labels[milestones[index].status]);
+    const options = s.steps.map((title, index) => [title, labels[milestones[index].status]].filter(Boolean).join(' · '));
     if (stepOptions !== JSON.stringify(options)) {
       stepOptions = JSON.stringify(options);
       $('step').replaceChildren(...options.map((title, index) => { const option = document.createElement('option'); option.value = String(index); option.textContent = title; return option; }));
@@ -102,25 +131,53 @@
     $('previous').disabled = s.step === 0; $('next').disabled = s.step === s.steps.length - 1;
     const completed = milestones.filter(m => m.status === 'complete').length;
     const review = milestones.filter(m => m.status === 'review').length;
-    $('progressText').textContent = `Milestone ${s.step + 1} of ${s.steps.length} · ${completed}/${s.steps.length} marked complete` + (review ? ` · ${review} to review` : '');
+    $('progressText').textContent = `${completed}/${s.steps.length} marked complete` + (review ? ` · ${review} to review` : '');
     $('progress').max = s.steps.length; $('progress').value = completed;
     $('milestoneStatus').textContent = status === 'review'
       ? 'Project files changed since you marked this milestone complete. Review your evidence and save your progress again.'
-      : labels[status] + (status === 'complete' ? ' · Local progress, not an assessment.' : ' · Record your evidence in Save milestone progress below.');
-    if (status === 'review' && milestoneState !== 'review') $('completed').checked = false;
-    milestoneState = status;
+      : '';
+    $('checkpoint').textContent = status === 'complete' ? 'Save changes' : 'Complete milestone';
+    $('saveDraft').textContent = status === 'complete' ? 'Mark in progress' : 'Save draft';
+    $('evidencePrompt').textContent = s.current.evidencePrompt || 'What did you do, and what evidence supports it?';
     $('step').value = String(s.step); $('runtime').value = s.runtime;
     $('runtime').querySelector('[value="course"]').disabled = !s.courseAvailable;
-    for (const id of ['goal','opening','task','reflection']) $(id).textContent = s.current[id];
-    $('expected').textContent = s.current.expected;
-    $('files').replaceChildren(...s.current.files.map(path => {
-      const reference = document.createElement('div'), button = document.createElement('button'), anchor = s.current.anchors?.[path]?.trim();
-      button.className = 'link'; button.textContent = path; button.title = anchor ? 'Open at ' + anchor : 'Open ' + path;
-      button.setAttribute('aria-label', path + (anchor ? ', find ' + anchor : ''));
-      button.onclick = () => send('file', {path}); reference.append(button);
-      if (anchor) { const location = document.createElement('small'); location.className = 'muted'; location.textContent = anchor; reference.append(location); }
-      return reference;
-    }));
+    for (const id of ['goal','opening','reflection']) $(id).textContent = s.current[id];
+    if (stepChanged) {
+      // The guided project's first goal contains the learner's own requirements.
+      const goalParent = s.guided && s.step === 0 ? $('projectContent') : $('milestoneBackground');
+      goalParent.insertBefore($('goal'), goalParent === content ? content.firstChild : $('opening'));
+      const fileButton = path => {
+        const button = document.createElement('button'), anchor = s.current.anchors?.[path];
+        button.className = 'link'; button.textContent = path;
+        button.title = anchor ? 'Open at ' + anchor : 'Open ' + path;
+        button.setAttribute('aria-label', path + (anchor ? ', find ' + anchor : ''));
+        button.onclick = () => send('file', {path});
+        return button;
+      };
+      $('files').replaceChildren(...s.current.files.map(path => {
+        const reference = document.createElement('div'), anchor = s.current.anchors?.[path];
+        reference.append(fileButton(path));
+        if (anchor) { const location = document.createElement('small'); location.className = 'muted'; location.textContent = anchor; reference.append(location); }
+        return reference;
+      }));
+      const lines = (s.current.task || '').split('\n');
+      if (lines.length > 1) {
+        const list = document.createElement('ol');
+        for (const line of lines) {
+          const item = document.createElement('li');
+          for (const [index, part] of line.split(/`([^`]+)`/).entries()) {
+            if (index % 2 === 0) item.append(part);
+            else if (s.current.files.includes(part)) item.append(fileButton(part));
+            else { const code = document.createElement('code'); code.textContent = part; item.append(code); }
+          }
+          list.append(item);
+        }
+        $('task').replaceChildren(list);
+      } else $('task').textContent = lines[0];
+    }
+    $('expectedTitle').textContent = s.current.deliverable ? 'What to finish' : 'Expected outcome';
+    $('expected').textContent = s.current.deliverable || s.current.expected;
+    $('runtimeTip').hidden = s.step !== 0;
     $('checkState').textContent = s.check.state === 'not_run' ? 'Not checked for this step.' :
       (s.check.state === 'changed' ? 'Earlier files · ' : 'Current files · ') + s.check.status + (s.check.truncated ? ' · output truncated' : '');
     const diagnostic = s.check.state !== 'not_run' && s.check.status === 'failed' ? s.checkDiagnostic : undefined;
@@ -128,33 +185,37 @@
     $('checkCause').textContent = diagnostic?.cause || 'The check failed. Expand the output to see what happened.';
     $('checkLocation').textContent = diagnostic?.file ? diagnostic.file + (diagnostic.line ? ':' + diagnostic.line : '') : '';
     $('checkLocation').hidden = !diagnostic?.file;
+    const firstResult = stepChanged || $('checkDetails').hidden;
     $('checkDetails').hidden = s.check.state === 'not_run';
-    if (stepChanged) $('checkDetails').open = false;
-    $('checkSummary').textContent = 'Show check output' + (s.check.truncated ? ' (excerpt)' : '');
+    if (firstResult) $('checkDetails').open = !!s.current.deliverable && s.check.state === 'current' && s.check.status === 'passed';
+    $('checkResult').hidden = !!s.current.deliverable && s.check.state === 'not_run';
+    $('checkSummary').textContent = 'Command output' + (s.check.truncated ? ' (excerpt)' : '');
     $('checkRecovery').textContent = s.check.state === 'changed' ? 'Save your files and run this step again before relying on the earlier output.'
-      : s.check.status === 'runtime_error' ? 'Use Runtime → Set up course, then retry. Open the course terminal if the error needs investigation.'
+      : s.check.status === 'runtime_error' ? 'Open Project tools → Runtime → Set up and verify environment, then retry. Open the course terminal if the error needs investigation.'
       : s.check.status === 'timed_out' ? 'Look for a loop that does not stop. Use “I’m stuck” to narrow the next investigation, then retry.'
       : s.check.status === 'failed' ? (diagnostic ? 'Compare the first captured failure with the expected outcome. Expand the output for traceback details.'
         : 'Compare the output with the expected outcome.') + ' Use “I’m stuck” for a smaller step.'
-      : s.check.status === 'passed' ? 'Compare the output with the expected outcome and record your explanation. A successful run does not mark this milestone complete.'
-      : 'Predict the result, then run this step in the course container.';
+      : s.check.status === 'passed' ? (s.current.deliverable ? s.current.expected : 'Compare the output with the expected outcome and record your explanation.')
+      : '';
     $('output').textContent = s.check.output || '';
     sharedState = s;
     $('status').textContent = s.status;
     $('handoff').hidden = !s.finalStep; $('liveRun').hidden = !s.liveStep;
     $('handoffStatus').textContent = s.handoffStatus || '';
     $('submission').hidden = !s.submissionStep;
+    readingSubmission = s.reading && s.submissionStep;
     $('completion').textContent = s.completion || 'In progress';
     $('submitProject').disabled = s.busy;
     $('projectActions').disabled = s.busy;
-    if(s.guided){$('check').textContent='Inspect project files';$('submitProject').textContent='Open readiness assessment';}
+    if (s.guided) $('check').textContent = 'Inspect project files';
+    $('submitProject').textContent = s.guided ? 'Open readiness assessment' : 'Submit project';
     $('finish').textContent = s.handoffMode === 'teacher' ? 'Submit project for teacher review' : 'Prepare final handoff';
     $('liveOutput').textContent = s.liveOutput || '';
     for (const id of ['finish', 'refreshHandoff', 'runLive']) $(id).disabled = s.busy;
     $('runLive').disabled ||= !s.ai;
     $('check').disabled = s.busy; $('ask').disabled = s.busy || !s.ai; $('hint').disabled = s.busy;
     $('hint').textContent = s.hintLevel >= 2 ? (s.ai && s.signedIn ? 'Ask Coach for help' : 'Review next step') : s.hintLevel === 1 ? 'Try a smaller step' : 'I’m stuck';
-    $('checkpoint').disabled = false;
+    $('checkpoint').disabled = false; $('saveDraft').disabled = false;
     const chatChanged = stepChanged || conversationChanged;
     if (chatChanged) { $('conversation').replaceChildren(); rendered = []; $('message').value = ''; }
     const keys = s.messages.map(message => JSON.stringify([message.role, message.text, message.digest]));
@@ -171,7 +232,8 @@
     });
     const added = common < keys.length;
     rendered = keys;
-    $('emptyChat').hidden = keys.length > 0;
+    $('courseAccess').textContent = s.coachCourse && !s.guided ? `Course access: ${s.coachCourse}` : '';
+    $('newChat').hidden = keys.length === 0;
     if (chatChanged) content.scrollTop = 0;
     else if (added && (following || s.messages.at(-1)?.role === 'learner'))
       content.scrollTop += $('conversation').getBoundingClientRect().bottom - content.getBoundingClientRect().bottom;
@@ -180,10 +242,12 @@
     if (!$('message').value.trim()) renderShared(s); else previewShared();
     if (s.checkpoint?.at !== lastSaved) {
       lastSaved = s.checkpoint?.at;
-      restoreDraft({...s.checkpoint, completed: s.checkpoint?.completed && status === 'complete'});
+      restoreDraft(s.checkpoint);
       drafts.delete(s.step);
     }
-    $('saved').textContent = s.checkpoint ? 'Saved for this milestone ' + new Date(s.checkpoint.at).toLocaleString() + ' · ' + s.checkpoint.assistance + ' Coach help turns recorded.' : 'No checkpoint saved for this milestone yet.';
+    const savedText = s.checkpoint ? (status === 'complete' ? 'Milestone marked complete' : 'Checkpoint saved') + ' on this computer · '
+      + new Date(s.checkpoint.at).toLocaleString() + ' · ' + s.checkpoint.assistance + ' Coach help turns recorded.' : '';
+    if ($('saved').textContent !== savedText) $('saved').textContent = savedText;
   });
   send('ready');
 })();

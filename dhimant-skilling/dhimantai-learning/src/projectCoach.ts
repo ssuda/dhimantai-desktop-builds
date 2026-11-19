@@ -16,14 +16,19 @@ import { ProjectResults, ProjectSubmission, projectResultStatus, submitProject }
 import { projectGitHub } from './projectGitHub';
 import { ProjectProgress, projectMilestones, projectOtherHelp, restoreProjectProgress, smallerProjectStep } from './projectProgress';
 
-/** The server rejects Coach with 403 once course access ends; say so and how to restore it. */
-export function accessEnded(error: unknown) {
-  if (!(error instanceof ApiError) || error.status !== 403) return;
-  const reason = error.message.trim().replace(/\.?$/, '.');
-  void vscode.window.showWarningMessage(reason + ' Access ended — buy again from the course catalog.', 'Open course catalog')
+/** Offer catalog recovery for course access issues while preserving other service errors. */
+function projectAccessError(error: unknown, course?: string) {
+  if (!(error instanceof ApiError) || ![402, 403].includes(error.status) || !/course catalog/i.test(error.message)) return;
+  const reason = course ? `Project course · ${course}. ${error.message}` : error.message;
+  void vscode.window.showWarningMessage(reason, 'Open course catalog')
     .then(choice => choice && vscode.commands.executeCommand('dhimantai.courseCatalog'));
-  return new Error('Access ended — buy again from the course catalog to keep using Coach. ' + reason
-    + ' Milestone guides, checks and saved progress still work.');
+  return new Error(reason + ' You can continue with the milestone guides and local checks.');
+}
+
+// Reading notes are accessible from every reading milestone, including steps whose check tracks only source files.
+function milestoneLinks(curriculum: ProjectCurriculum, step: ProjectCurriculum['steps'][number]) {
+  return curriculum.mode === 'reading' && curriculum.files.includes('READING_NOTES.md') && !step.files.includes('READING_NOTES.md')
+    ? [...step.files, 'READING_NOTES.md'] : step.files;
 }
 
 /** The existing Coach surface, scoped to one multi-file project and account at a time. */
@@ -160,21 +165,38 @@ export class ProjectCoach implements vscode.Disposable {
       this.step = Math.max(0, Math.min(this.step, curriculum.steps.length - 1));
       this.watcher?.dispose();
       this.watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, '**/*'));
-      const changed = async (uri: vscode.Uri) => {
+      const projectRoot = root, trackedFiles = new Set(trackedProjectFiles(curriculum));
+      const changed = async (uri: vscode.Uri, onDisk: boolean) => {
         const path = this.path(uri);
-        if (path && curriculum.id === 'shelf' && /^\.git\/(HEAD|index|packed-refs|refs\/heads\/.+)$/.test(path)) {
+        if (!path || this.root !== projectRoot) return;
+        if (curriculum.id === 'shelf' && /^\.git\/(HEAD|index|packed-refs|refs\/heads\/.+)$/.test(path)) {
           // Git may refresh its index during a check. Recompute evidence without cancelling that check.
           void this.refresh(); return;
         }
-        if (path && (curriculum.mode==='guided'&&/^(src|tests)\//.test(path) || trackedProjectFiles(await this.curriculum).includes(path) || /^(course_agent|shelf|rich|reading|examples|tests|checks)\/.*\.py$/.test(path)
-          || /^(data|scenarios)\/[A-Za-z0-9_-]+\.json$/.test(path))) this.invalidate('Project files changed. Check again to use this version.');
+        const tracked = trackedFiles.has(path) || (curriculum.mode === 'guided' && /^(src|tests)\//.test(path))
+          || /^(course_agent|shelf|rich|reading|examples|tests|checks)\/.*\.py$/.test(path)
+          || /^(data|scenarios)\/[A-Za-z0-9_-]+\.json$/.test(path);
+        if (!tracked) return;
+        // VS Code also reports its own saves through the filesystem watcher. A late duplicate
+        // must not cancel a check the learner started immediately after saving the same text.
+        const editor = onDisk && vscode.workspace.textDocuments.find(doc => doc.uri.fsPath === uri.fsPath && !doc.isDirty);
+        if (editor) {
+          const disk = await publicProjectFile(projectRoot, path).then(file => readFile(file, 'utf8')).catch(() => undefined);
+          if (disk === editor.getText()) return;
+        }
+        if (opening === this.openSequence && !this.disposed) this.invalidate('Project files changed. Check again to use this version.');
       };
-      this.watcher.onDidChange(changed); this.watcher.onDidCreate(changed); this.watcher.onDidDelete(changed);
+      this.watcher.onDidChange(uri => changed(uri, true)); this.watcher.onDidCreate(uri => changed(uri, true));
+      this.watcher.onDidDelete(uri => changed(uri, false));
       await this.resetOwner();
       if (opening !== this.openSequence || this.disposed) return;
       await vscode.commands.executeCommand('setContext', 'dhimantai.projectOpen', true);
-      if (!this.path(vscode.window.activeTextEditor?.document.uri ?? vscode.Uri.parse('untitled:')))
-        await vscode.window.showTextDocument(vscode.Uri.file(join(root, curriculum.mode === 'reading' ? 'READING.md' : 'README.md')), {preview: true});
+      if (!this.path(vscode.window.activeTextEditor?.document.uri ?? vscode.Uri.parse('untitled:'))) {
+        const guide = join(root, curriculum.mode === 'reading' ? 'READING.md' : 'README.md');
+        const firstFile = curriculum.id === 'shelf-reading' && curriculum.steps[this.step].id === 'map'
+          ? await publicProjectFile(root, 'READING_NOTES.md').catch(() => guide) : guide;
+        await vscode.window.showTextDocument(vscode.Uri.file(firstFile), {preview: true});
+      }
       if (opening !== this.openSequence || this.disposed) return;
       this.opening = false;
       this.surface.select(this.render);
@@ -218,14 +240,16 @@ export class ProjectCoach implements vscode.Disposable {
       }
       if (sequence !== this.refreshSequence || this.disposed) return;
       const step = curriculum.steps[this.step];
+      const workspace = this.courses.recordFor(vscode.Uri.file(root));
       void this.surface.webviewFor(this.render)?.postMessage({type: 'state', revision: this.revision, conversationId: this.conversationId, title: curriculum.title,
         scope: this.key(), reading: curriculum.mode === 'reading', guided:curriculum.mode==='guided',
-        steps: curriculum.steps.map(s => s.title), step: this.step, current: step, busy: this.busy,
+        steps: curriculum.steps.map(s => s.title), step: this.step, current: {...step, files: milestoneLinks(curriculum, step)}, busy: this.busy,
         status: [problem, this.status].filter(Boolean).join(' '), contextProblem: problem,
         milestones: projectMilestones(curriculum, this.progress, snapshot ?? ''),
         hintLevel: this.messages.some(m => m.role === 'tutor' && m.text === smallerProjectStep(step)) ? 2
           : this.messages.some(m => m.role === 'tutor' && m.text === step.hint) ? 1 : 0,
         signedIn: this.owner !== 'local',
+        coachCourse: workspace?.account === this.owner && workspace.environment === this.environment() ? workspace.course : undefined,
         messages: this.messages, checkpoint: this.checkpoint, runtime: 'course',
         finalStep: curriculum.id === 'course-agent' && step.id === 'handoff', liveStep: curriculum.id === 'course-agent' && step.id === 'live',
         handoffMode: this.handoff?.mode, handoffStatus: this.handoffStatus, liveOutput: this.liveOutput,
@@ -250,32 +274,43 @@ export class ProjectCoach implements vscode.Disposable {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src ${webview.cspSource} 'nonce-${nonce}'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'">
 <link rel="stylesheet" href="${asset('coach.css')}"><link rel="stylesheet" href="${asset('coachMarkdown.css')}"><link rel="stylesheet" href="${asset('projectCoach.css')}"></head>
 <body><main id="coach" aria-label="Project Coach"><h2 id="title">Course project</h2>
-<div class="runtime-row"><label for="runtime">Runtime</label><select id="runtime"><option value="course">Course container</option><option value="setup">Set up course…</option><option value="terminal">Open course terminal</option></select></div>
-<div class="milestone-nav"><label for="step">Project milestone</label><button id="previous" class="secondary" aria-label="Previous milestone">Previous</button><button id="next" class="secondary" aria-label="Next milestone">Next</button></div><select id="step"></select>
-<p id="progressText" role="status"></p><progress id="progress" value="0" max="1" aria-label="Milestones marked complete"></progress><div id="projectContent"><p id="milestoneStatus" class="muted"></p><p id="goal"></p>
-<section id="submission" hidden><button id="submitProject">Submit Project</button><p class="muted">Runs the final checks in your course container. Signed-in learners also save a scored result for the associated course; reading projects need a rubric assessment.</p></section>
-<p id="completion" role="status"></p><label for="projectActions">Project actions</label><select id="projectActions"><option value="">Choose an action…</option><option value="preview">Preview running application</option><option value="roadmap">Course roadmap & assessment</option><option value="results">View saved results</option><option value="publish">Publish to GitHub…</option><option value="pullRequest">Create pull request…</option></select>
-<details id="handoff" hidden><summary>Teacher review or export</summary><p id="handoffStatus" role="status"></p><p class="muted">Share a copy of public source, tests and explanation with your assistance report. Local check results are learner-reported evidence.</p><div class="row"><button id="finish">Prepare final handoff</button><button id="refreshHandoff" class="secondary">Refresh submission status</button></div></details>
-<p id="task"></p>
-<section aria-labelledby="expectedTitle"><h3 id="expectedTitle">Expected outcome</h3><p id="expected"></p></section>
-<details><summary>Why this step</summary><p id="opening"></p></details>
-<section aria-labelledby="filesTitle"><h3 id="filesTitle">Relevant files</h3><div id="files" class="row"></div></section><div class="row"><button id="check">Check this step</button><button id="hint" class="secondary">I’m stuck</button></div>
+<div class="milestone-nav"><select id="step" aria-label="Project milestone"></select><button id="previous" class="secondary" aria-label="Previous milestone" title="Previous milestone">‹</button><button id="next" class="secondary" aria-label="Next milestone" title="Next milestone">›</button></div>
+<p id="progressText" role="status"></p><progress id="progress" value="0" max="1" aria-label="Milestones marked complete"></progress><div id="projectContent">
+<section aria-labelledby="expectedTitle"><h3 id="expectedTitle">Milestone deliverable</h3><p id="expected"></p></section>
+<div id="task"></div>
+<div class="row"><button id="check">Check this step</button><button id="hint" class="secondary">I’m stuck</button></div>
 <section id="checkResult" aria-label="Check result"><p id="checkState" role="status"></p><div id="checkDiagnostic" hidden><p id="checkCause"></p><p id="checkLocation" class="muted"></p></div><p id="checkRecovery" class="muted"></p><details id="checkDetails" hidden><summary id="checkSummary">Show check output</summary><pre id="output"></pre></details></section>
 <section id="liveRun" hidden><button id="runLive">Run live model</button><p class="muted">Uses platform access in the course container. No personal API key. Up to six model calls per run and 36 per day. These calls are separate from scripted checks.</p><pre id="liveOutput"></pre></section>
-
-<details><summary>Files shared when you ask Coach</summary><p>Coach selects public source, tests and data for each question, with README, a project map, the current milestone and check. This list follows the question you are typing. Likely keys, tokens and passwords are replaced with [redacted]. Shelf Capstone also shares the Git summary below. Context is temporary.</p><pre id="shared"></pre></details>
-<div id="conversation" class="log" role="log" aria-live="polite"></div><p id="emptyChat" class="muted">Ask Coach about this milestone to start a conversation.</p><p id="status" role="status"></p>
-<details><summary>Explain your approach (optional)</summary><p id="reflection"></p><p>Share your explanation in the conversation when you are ready.</p></details>
-<details id="checkpointDetails"><summary>Save milestone progress</summary><label for="note">Your decision, evidence and next step</label><textarea id="note" rows="3" maxlength="1000"></textarea>
-<label for="externalHelp">Other assistance</label><select id="externalHelp"><option value="unknown">Not reported</option><option value="reported">I used other help</option><option value="none_reported">No other help reported</option></select>
-<label class="completion-choice"><input id="completed" type="checkbox"> Mark this milestone complete (self-reported)</label>
-<button id="checkpoint">Save checkpoint</button><p id="saved" class="muted"></p><p class="muted">Local progress and assistance only. This does not submit work, award a grade or establish mastery.</p></details></div>
-<form id="composer"><label for="message">Ask, predict or explain</label><textarea id="message" rows="2" maxlength="600" placeholder="Ask about your project…"></textarea><p id="sharedSummary" class="muted shared-summary" aria-live="polite"></p><div class="row"><button id="ask" type="submit">Send</button><button id="newChat" type="button" class="secondary">New chat</button></div></form>
+<section id="checkpointDetails" aria-labelledby="checkpointTitle"><h3 id="checkpointTitle">Checkpoint</h3>
+<label for="note" id="evidencePrompt">What did you find?</label>
+<textarea id="note" rows="2" maxlength="1000" placeholder="Required to complete this milestone" aria-describedby="noteError"></textarea>
+<p id="noteError" role="alert"></p>
+<div class="row"><button id="checkpoint">Complete milestone</button><button id="saveDraft" class="link">Save draft</button></div>
+<p id="saved" class="muted" role="status"></p><p id="milestoneStatus" class="muted"></p></section>
+<section id="submission" hidden><button id="submitProject">Submit Project</button><p id="completion" role="status"></p><p class="muted">Runs the final checks in your course container. Signed-in learners also save a scored result for the associated course; reading projects need a rubric assessment.</p></section>
+<details id="projectTools"><summary>Project tools</summary>
+<div class="runtime-row"><label for="runtime">Runtime</label><select id="runtime"><option value="course">Course container</option><option value="setup">Set up and verify environment…</option><option value="terminal">Open course terminal</option></select></div>
+<p id="runtimeTip" class="muted">First run? Choose “Set up and verify environment” under Runtime.</p>
+<section aria-labelledby="filesTitle"><h3 id="filesTitle">Project files</h3><div id="files" class="row"></div></section>
+<details id="milestoneBackground"><summary>About this milestone</summary><p id="goal"></p><p id="opening"></p></details>
+<details id="milestoneReflection"><summary>Reflect on this step (optional)</summary><p id="reflection"></p></details>
+<label for="externalHelp">Other assistance (optional)</label><select id="externalHelp"><option value="unknown">Not reported</option><option value="reported">I used other help</option><option value="none_reported">No other help reported</option></select>
+<label for="projectActions">Project actions</label><select id="projectActions"><option value="">Choose an action…</option><option value="preview">Preview running application</option><option value="roadmap">Course roadmap & assessment</option><option value="results">View saved results</option><option value="publish">Publish to GitHub…</option><option value="pullRequest">Create pull request…</option></select>
+<details id="handoff" hidden><summary>Teacher review or export</summary><p id="handoffStatus" role="status"></p><p class="muted">Share a copy of public source, tests and explanation with your assistance report. Local check results are learner-reported evidence.</p><div class="row"><button id="finish">Prepare final handoff</button><button id="refreshHandoff" class="secondary">Refresh submission status</button></div></details>
+</details>
+<div id="conversation" class="log" role="log" aria-live="polite"></div><p id="status" role="status"></p>
+</div>
+<form id="composer"><textarea id="message" aria-label="Ask Coach about this milestone" rows="2" maxlength="600" placeholder="Ask Coach about this milestone…"></textarea><details id="sharingDetails"><summary id="sharedSummary" class="muted shared-summary">Files shared with Coach</summary><p id="courseAccess" class="muted"></p><pre id="shared"></pre></details><div class="row"><button id="ask" type="submit">Send</button><button id="newChat" type="button" class="secondary">New chat</button></div></form>
 </main><script nonce="${nonce}" src="${asset('coachMarkdown.js')}"></script><script nonce="${nonce}" src="${asset('projectCoach.js')}"></script></body></html>`;
     return vscode.Disposable.from(webview.onDidReceiveMessage(message => {
       const scope = this.key(), conversation = this.conversationId;
       void this.handle(message).catch(error => {
         if (scope !== this.key() || conversation !== this.conversationId) return;
+        if (message.type === 'checkpoint') {
+          if (message.step === this.step) void webview.postMessage({type: 'checkpointError', scope, step: this.step, conversationId: conversation,
+            text: 'Checkpoint could not be saved. ' + (error instanceof Error ? error.message : 'Try saving again.')});
+          return;
+        }
         this.status = error instanceof Error ? error.message : 'Project action failed. Retry explicitly.'; void this.refresh();
       });
     }));
@@ -306,7 +341,7 @@ export class ProjectCoach implements vscode.Disposable {
       this.messages = []; this.conversationId = randomBytes(16).toString('hex');
       this.invalidate('New conversation started.'); return this.refresh();
     }
-    if (message.type === 'file' && step.files.includes(message.path)) {
+    if (message.type === 'file' && milestoneLinks(curriculum, step).includes(message.path)) {
       const file = await publicProjectFile(this.root, message.path);
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
       const anchor = step.anchors?.[message.path];
@@ -333,7 +368,9 @@ export class ProjectCoach implements vscode.Disposable {
       this.invalidate(''); this.run = undefined;
       if (message.value === 'setup') {
         const folder = await vscode.commands.executeCommand<vscode.Uri>('dhimantai.setupCourse', vscode.Uri.file(this.root));
-        if (folder) this.status = 'Course folder: ' + folder.fsPath + '. Projects inside that folder can use this runtime.';
+        if (folder) this.status = this.courses.recordFor(vscode.Uri.file(this.root))?.root === folder.fsPath
+          ? 'Environment verified. Course container, packages and code execution are ready for your first milestone.'
+          : 'Course environment verified at ' + folder.fsPath + '. Open a project inside that course folder before starting the first milestone.';
       }
       if (message.value === 'terminal') {
         if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace to open its runtime terminal.');
@@ -353,11 +390,23 @@ export class ProjectCoach implements vscode.Disposable {
       if (message.completed && !message.note.trim()) throw new Error('Add your evidence or explanation before marking this milestone complete.');
       const revision = this.revision;
       const snapshot = await this.snapshot();
-      if (message.scope !== this.key() || message.step !== this.step || revision !== this.revision) return;
-      this.checkpoint = {step: step.id, note: message.note, digest: snapshot.digest, stepDigest: snapshot.steps[step.id], at: new Date().toISOString(), assistance: this.assistance,
+      if (message.scope !== this.key() || message.step !== this.step || message.conversationId !== this.conversationId) return this.refresh();
+      if (revision !== this.revision) throw new Error('The project changed during the save. Review your evidence and try again.');
+      const checkpoint: ProjectCheckpoint = {step: step.id, note: message.note, digest: snapshot.digest, stepDigest: snapshot.steps[step.id], at: new Date().toISOString(), assistance: this.assistance,
         externalHelp: message.help, completed: message.completed === true};
-      this.progress.checkpoints[step.id] = this.checkpoint;
-      await this.persist(); this.status = this.checkpoint.completed ? 'Milestone marked complete on this computer (self-reported).' : 'Checkpoint saved on this computer.'; return this.refresh();
+      const checkpoints = this.progress.checkpoints, previous = checkpoints[step.id];
+      this.checkpoint = checkpoints[step.id] = checkpoint;
+      try { await this.persist(); }
+      catch (error) {
+        if (checkpoints[step.id] === checkpoint) {
+          if (previous) checkpoints[step.id] = previous;
+          else delete checkpoints[step.id];
+        }
+        if (this.checkpoint === checkpoint) this.checkpoint = previous;
+        throw error;
+      }
+      if (this.checkpoint === checkpoint) this.status = '';
+      return this.refresh();
     }
     if (this.busy) return;
     if(message.type==='projectAction'&&message.action==='preview')return vscode.commands.executeCommand('dhimantai.projectPreview');
@@ -542,7 +591,7 @@ export class ProjectCoach implements vscode.Disposable {
       const result = await runManagedProject(root, runner, question, controller.signal, engine,
         (messages, signal) => api.projectModel(runId, messages, signal));
       if (revision === this.revision) this.liveOutput = result.output + '\n' + (result.passed ? 'Run completed. Inspect the citations and trace; this is not an assessment.' : 'Run did not complete successfully. Inspect the output and retry explicitly.');
-    } catch (error) { throw accessEnded(error) ?? error; }
+    } catch (error) { throw projectAccessError(error) ?? error; }
     finally { if (revision === this.revision) { this.busy = false; this.request = undefined; await this.refresh(); } }
   }
 
@@ -551,6 +600,10 @@ export class ProjectCoach implements vscode.Disposable {
     const account = (await this.auth.session())?.user.id;
     if (revision !== this.revision) return;
     if (!account || account !== this.owner) throw new Error('Sign in to dhimantAI, then send your question again.');
+    const workspace = this.courses.recordFor(vscode.Uri.file(this.root!));
+    if (workspace && (workspace.account !== account || workspace.environment !== environment))
+      throw new Error('Sign in with the learning account and service used for this project workspace.');
+    const courseQuery = workspace && curriculum.mode !== 'guided' ? '?course=' + encodeURIComponent(workspace.course) : '';
     const snapshot = await this.snapshot(text), selected = snapshot.files[0];
     if (revision !== this.revision) return;
     if (!selected) throw new Error('Open an available project source file before asking Coach.');
@@ -560,9 +613,10 @@ export class ProjectCoach implements vscode.Disposable {
     this.messages.push({role: 'learner', text, digest: snapshot.digest}); this.busy = true; this.status = 'Coach is reading the shared project context…'; void this.refresh();
     try {
       const api = new Api(this.auth, () => backend, account);
-      const reply = await api.notebookCoach('/notebook-coach/project', {stage: 'guide', language: curriculum.language??'python',
-        question: `${curriculum.title}: ${step.goal}\n${step.task}`, source: selected.text, message: text, history,
-        project_context: {project_id: curriculum.id, ...(curriculum.courseId?{course_id:curriculum.courseId}:{}), milestone: step.title, goal: step.goal, task: step.task,
+      const task = [step.task, step.evidencePrompt && 'Checkpoint evidence: ' + step.evidencePrompt].filter(Boolean).join('\n');
+      const reply = await api.notebookCoach('/notebook-coach/project' + courseQuery, {stage: 'guide', language: curriculum.language??'python',
+        question: `${curriculum.title}: ${step.goal}\n${task}`, source: selected.text, message: text, history,
+        project_context: {project_id: curriculum.id, ...(curriculum.courseId?{course_id:curriculum.courseId}:{}), milestone: step.title, goal: step.goal, task,
           selected_file: selected.path, files: snapshot.files, omitted: snapshot.omitted,
           omitted_count: snapshot.omitted_count, structure: snapshot.structure,
           ...(snapshot.git ? {git: snapshot.git} : {}),
@@ -578,7 +632,7 @@ export class ProjectCoach implements vscode.Disposable {
       this.messages = this.messages.slice(-40); this.assistance++; this.status = ''; await this.persist();
     } catch (error) {
       // A cancelled/obsolete request must not repaint the new conversation with its error.
-      if (revision === this.revision && !controller.signal.aborted) throw accessEnded(error) ?? error;
+      if (revision === this.revision && !controller.signal.aborted) throw projectAccessError(error, workspace?.course) ?? error;
     } finally { if (revision === this.revision) { this.busy = false; this.request = undefined; void this.refresh(); } }
   }
   dispose() { this.disposed = true; this.request?.abort(); this.watcher?.dispose(); this.surface.dispose(); this.subscriptions.forEach(s => s.dispose()); }

@@ -35,7 +35,7 @@ export function audioControls(webview: vscode.Webview, media: vscode.Uri, nonce:
     microphoneControl +
     '<button type="button" id="audio-toggle" aria-pressed="false" aria-describedby="audio-help">Enable spoken explanations</button>' +
     '<span id="audio-status" class="audio-sr-only" role="status">Spoken explanations off</span>' +
-    '<p id="audio-help" class="audio-sr-only">Select the speaker for an explanation of the idea. The same control pauses, resumes or explains it again. Open the arrow menu to mute, choose an output or turn spoken explanations off.</p></div>' +
+    '<p id="audio-help" class="audio-sr-only">Select the speaker for an explanation of the idea. The same control pauses, resumes or explains it again. Open the arrow menu to choose voice speed, mute, choose an output or turn spoken explanations off.</p></div>' +
     script('livekit-client.umd.js') + script('learning-room/audioControls.js') + script('coachAudio.js');
 }
 
@@ -66,7 +66,8 @@ export class CoachAudio {
         if (m.type === 'audioStart') {
           const issued = ticket;
           ticket = undefined;
-          await api.startAudio(target.path, target.text, issued!);
+          const speed = [0.5, 1, 1.5, 2].includes(m.speed) ? m.speed : 1;
+          await api.startAudio(target.path, target.text, issued!, speed);
           return;
         }
         const grant = await api.audioGrant(target.path, target.text);

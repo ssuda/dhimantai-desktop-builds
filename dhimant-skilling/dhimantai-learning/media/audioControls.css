@@ -15,6 +15,8 @@
 .audio-picker button:hover { outline: 1px solid var(--vscode-focusBorder); }
 .audio-picker p { margin: 8px 0 0; font-size: .9em; color: var(--vscode-descriptionForeground); }
 .audio-picker p:empty { display: none; }
+.audio-speed { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--vscode-widget-border, #888); }
+.audio-speed select { font: inherit; color: var(--vscode-dropdown-foreground, #eee); background: var(--vscode-dropdown-background, #333); border: 1px solid var(--vscode-dropdown-border, #888); border-radius: 4px; padding: 4px 8px; }
 .audio-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 #audio-microphone, #audio-camera { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 8px; border: 0; border-radius: 50%; background: transparent; color: var(--vscode-foreground); cursor: pointer; }
 #audio-microphone:disabled, #audio-camera:disabled { color: var(--vscode-disabledForeground, #888); cursor: default; }

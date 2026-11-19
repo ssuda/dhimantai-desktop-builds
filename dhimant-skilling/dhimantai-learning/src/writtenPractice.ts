@@ -72,27 +72,30 @@ export function writtenHtml(task: WrittenPractice, draft: Draft, nonce: string, 
 }
 
 export async function openWrittenPractice(context: vscode.ExtensionContext, task: WrittenPractice, api: Api,
-    auth: Auth, account: string, env: EnvironmentName, environment: () => EnvironmentName, store: HelpStore): Promise<vscode.WebviewPanel> {
+    auth: Auth, account: string, env: EnvironmentName, environment: () => EnvironmentName, store: HelpStore,
+    navigation?: {panel:vscode.WebviewPanel; back():void; cleanup(dispose:()=>void):void}): Promise<vscode.WebviewPanel> {
   const key = `writtenPractice.${env}.${account}.${task.id}`;
   const raw = context.globalState.get<Draft>(key);
   const draft = raw && typeof raw.answer === 'string' && typeof raw.assistance === 'string'
     ? {answer:raw.answer.slice(0,12000),assistance:raw.assistance.slice(0,900),usedTutor:raw.usedTutor === true}
     : {answer:'',assistance:'',usedTutor:false};
-  const panel = vscode.window.createWebviewPanel('dhimantai.learningRoom', 'Practice notebook · ' + task.course,
+  const panel = navigation?.panel ?? vscode.window.createWebviewPanel('dhimantai.learningRoom', 'Practice notebook · ' + task.course,
     vscode.ViewColumn.One, {enableScripts:true,retainContextWhenHidden:true});
   const helpState = (all: ProblemRecord[]) => nextLevel(all.find(r => r.id === task.id));
   const opened = await store.note(account, {type:'open', id:task.id, title:task.title || task.course, language:'', kind:'written'});
   const {level, waiting} = helpState(opened);
   const nonce = randomBytes(16).toString('base64');
-  panel.webview.html = writtenHtml(task,draft,nonce,{next:level,waiting});
+  panel.webview.html = writtenHtml(task,draft,nonce,{next:level,waiting}).replace('</body>',navigation
+    ? `<button id="back-course" type="button">Back to course</button><script nonce="${nonce}">document.getElementById('back-course').onclick=()=>host.postMessage({type:'backToCourse',...data()});</script></body>` : '</body>');
   // A changed answer after help is the written equivalent of running code: it earns the next rung.
   const tokenKey = 'written\0' + task.id;
   let answerAtHelp: string | undefined, attempted = true;
   let closed = false, pending: AbortController | undefined, writes = Promise.resolve(), sequence = 0;
   const active = async () => !closed && environment() === env && (await auth.session())?.user.id === account;
-  panel.onDidDispose(() => {closed=true;pending?.abort();});
+  const dispose = () => {closed=true;pending?.abort();receiver.dispose();disposal.dispose();};
+  const disposal = panel.onDidDispose(dispose);
   let files: PracticeAttachment[] = [];
-  panel.webview.onDidReceiveMessage(async msg => {
+  const receiver = panel.webview.onDidReceiveMessage(async msg => {
     if ((msg?.type === 'attach' || msg?.type === 'detach') && !pending && await active()) {
       let error = '';
       try {
@@ -108,6 +111,14 @@ export async function openWrittenPractice(context: vscode.ExtensionContext, task
     }
     if (!await active() || !msg || typeof msg.answer !== 'string' || msg.answer.length > 12000
         || typeof msg.assistance !== 'string' || msg.assistance.length > 900 || typeof msg.usedTutor !== 'boolean') return;
+    if (msg.type==='backToCourse' && navigation) {
+      try {
+        await writes;
+        await context.globalState.update(key,{answer:msg.answer,assistance:msg.assistance,usedTutor:msg.usedTutor});
+        if (await active()) {dispose();navigation.back();}
+      } catch { if (await active()) await panel.webview.postMessage({type:'saveError',error:'Could not save this draft. Try again before returning to the course.'}); }
+      return;
+    }
     if (msg.type === 'save' && Number.isSafeInteger(msg.sequence) && msg.sequence > sequence) {
       sequence = msg.sequence;
       if (!attempted && msg.answer !== answerAtHelp) {
@@ -145,5 +156,6 @@ export async function openWrittenPractice(context: vscode.ExtensionContext, task
       if (await active()) await panel.webview.postMessage({type:'feedback',error:error instanceof Error ? error.message : 'Feedback unavailable. Try again.'});
     } finally { if (pending === abort) pending=undefined; }
   });
+  navigation?.cleanup(dispose);
   return panel;
 }

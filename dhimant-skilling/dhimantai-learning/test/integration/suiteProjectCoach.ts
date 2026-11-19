@@ -29,8 +29,9 @@ export async function run() {
   const originalEngine = CourseWorkspaces.prototype.forFile, originalRecord = CourseWorkspaces.prototype.recordFor;
   const courseEngine = new CourseEngine(process.env.DHIMANTAI_PROJECT_PODMAN!,process.env.DHIMANTAI_PROJECT_CONTAINER!,dirname(root));
   CourseWorkspaces.prototype.forFile = async () => courseEngine;
-  CourseWorkspaces.prototype.recordFor = () => ({root,course:'Project test',key:'project-test',account:'test',environment:'staging'});
-  await auth.signInWithPassword(EMAIL, PASSWORD);
+  const session = await auth.signInWithPassword(EMAIL, PASSWORD);
+  CourseWorkspaces.prototype.recordFor = () => ({root,course:'Build AI Agents with Python',key:'project-test',account:session.user.id,
+    environment:vscode.workspace.getConfiguration('dhimantai').get('environment', 'production')});
   const cdp = await connect(), original = Api.prototype.notebookCoach;
   const originalAvailability = Api.prototype.projectHandoffAvailability, originalSend = Api.prototype.sendProjectHandoff,
     originalDetail = Api.prototype.projectHandoffDetail, originalInfo = vscode.window.showInformationMessage, originalSave = vscode.window.showSaveDialog;
@@ -40,7 +41,7 @@ export async function run() {
     messages:d.getElementById('conversation').textContent, saved:d.getElementById('saved').textContent,
     note:d.getElementById('note').value, askDisabled:d.getElementById('ask').disabled, checkDisabled:d.getElementById('check').disabled,
     progress:d.getElementById('progressText').textContent, milestoneStatus:d.getElementById('milestoneStatus').textContent,
-    completed:d.getElementById('completed').checked, hint:d.getElementById('hint').textContent,
+    completed:d.getElementById('saveDraft').textContent === 'Mark in progress', hint:d.getElementById('hint').textContent,
     handoff:d.getElementById('handoffStatus').textContent, finishDisabled:d.getElementById('finish').disabled,
     refreshDisabled:d.getElementById('refreshHandoff').disabled, handoffHidden:d.getElementById('handoff').hidden})`);
   const click = (id: string) => until(async () => ui(`d => {const button=d.getElementById('${id}');
@@ -51,7 +52,7 @@ export async function run() {
     const image = await cdp.send('Page.captureScreenshot', {format:'png'}); writeFileSync(join(out,name+'.png'), Buffer.from(image.data,'base64')); };
   try {
     Api.prototype.notebookCoach = async (path, body: any) => {
-      assert.equal(path, '/notebook-coach/project'); requests.push(body);
+      assert.equal(path, '/notebook-coach/project?course=Build%20AI%20Agents%20with%20Python'); requests.push(body);
       return {guidance: body.project_context.project_id === 'rich-reading'
         ? 'You are in **Console.print**. Follow `_collect_renderables` to see how the inputs become renderables, then find `render_str` for the string path.'
         : 'Trace the **tool observation** from tools.py into the next model request.\n\n' +
@@ -124,7 +125,7 @@ export async function run() {
     const edit = new vscode.WorkspaceEdit(); edit.insert(doc.uri,new vscode.Position(0,0),'# My investigation\n');
     assert.ok(await vscode.workspace.applyEdit(edit)); await doc.save();
     await until(visible, value => value?.check.startsWith('Earlier files'), 'stale check label');
-    await ui(`d => {d.getElementById('note').value='Next: trace tied search scores.'; d.getElementById('externalHelp').value='reported'; d.getElementById('completed').checked=true; return true;}`);
+    await ui(`d => {d.getElementById('note').value='Next: trace tied search scores.'; d.getElementById('externalHelp').value='reported'; return true;}`);
     await click('checkpoint');
     await until(visible, value => value?.saved.includes('2 Coach help turns'), 'checkpoint assistance count');
     await vscode.commands.executeCommand('dhimantai.hideCoach');
@@ -222,8 +223,11 @@ export async function run() {
     assert.equal(JSON.parse(readFileSync(exportPath, 'utf8')).project_id, 'course-agent');
     assert.equal(submissions.length, 2, 'independent export never sends a submission');
     results.push({step:'teacher-submission-retry-status-and-independent-handoff',pass:true});
-    Api.prototype.notebookCoach = async (_path, body: any) => {
-      requests.push(body); return {guidance: 'Follow Console.print and the supplied method.', prompt: '', line: null};
+    Api.prototype.notebookCoach = async (path, body: any) => {
+      assert.equal(path, '/notebook-coach/project?course=Build%20AI%20Agents%20with%20Python');
+      requests.push(body);
+      return {guidance: body.project_context.project_id === 'shelf-reading'
+        ? 'Compare the query with the title in books.json.' : 'Follow Console.print and the supplied method.', prompt: '', line: null};
     };
     const richRoot = join(dirname(root),'rich-reading');
     await vscode.commands.executeCommand('dhimantai.openProjectCoach',richRoot);
@@ -258,6 +262,41 @@ export async function run() {
     await vscode.commands.executeCommand('dhimantai.openProjectCoach',join(dirname(root),'shelf-reading'));
     await until(visible,value=>value?.title==='Read a codebase · shelf','shelf reading panel');
     assert.match((await visible()).progress, /0\/7 marked complete/);
+    assert.ok(vscode.window.activeTextEditor?.document.fileName.endsWith('READING_NOTES.md'), 'the map opens beside its editable notes');
+    await shot('05-shelf-map');
+    const mapTask = await ui(`d => [...d.querySelectorAll('#task li')].map(item => item.textContent).join(' ')`);
+    assert.match(mapTask, /READING_NOTES\.md.*Repository map and question/);
+    assert.match(mapTask, /python -m shelf --help/);
+    assert.doesNotMatch(mapTask, /python -m shelf list|book lines/i);
+    await ui(`d => { [...d.querySelectorAll('#task button')].find(b => b.textContent === 'READING_NOTES.md').click(); return true; }`);
+    await until(async () => {
+      const editor = vscode.window.activeTextEditor;
+      return editor?.document.fileName.endsWith('READING_NOTES.md') && editor.document.lineAt(editor.selection.active.line).text;
+    }, text => typeof text === 'string' && text.includes('Repository map and question'), 'map notes open at the linked heading');
+    const notes = vscode.window.activeTextEditor!;
+    assert.match(notes.document.lineAt(notes.selection.active.line).text, /Repository map and question/);
+    const mapEdit = new vscode.WorkspaceEdit();
+    mapEdit.insert(notes.document.uri, notes.document.lineAt(notes.selection.active.line).range.end,
+      '\n- shelf/ — Python package\n- tests/ — checks for expected behaviour\n- books.json — sample input\n');
+    assert.ok(await vscode.workspace.applyEdit(mapEdit)); await notes.document.save();
+    await click('check');
+    await until(visible, value => value?.check === 'Current files · passed', 'shelf help ran');
+    assert.match(await ui(`d => d.getElementById('output').textContent`), /usage: shelf/);
+    assert.ok(await ui(`d => d.getElementById('checkDetails').open`));
+    await click('checkpoint');
+    assert.equal(await ui(`d => d.activeElement.id === 'note' && d.activeElement.getAttribute('aria-invalid') === 'true'`), true);
+    assert.match((await visible()).progress, /0\/7 marked complete/);
+    await shot('05-shelf-evidence');
+    await ui(`d => { const note = d.getElementById('note'); note.value = 'The search command finds books by query.';
+      note.dispatchEvent(new Event('input')); return true; }`);
+    await click('checkpoint');
+    await until(visible, value => value?.progress.includes('1/7 marked complete') && value.saved.includes('Milestone marked complete'), 'shelf map checkpoint saved');
+    await click('next');
+    await until(visible, value => value?.step === '1' && !value.completed && value.note === '', 'next shelf milestone');
+    assert.match(await ui(`d => d.getElementById('task').textContent`), /python -m shelf list/);
+    await click('previous');
+    await until(visible, value => value?.step === '0' && value.completed && value.note.includes('search command'), 'map checkpoint restored');
+    results.push({step:'shelf-map-notes-help-validation-and-completion',pass:true});
     await ui(`d => {const step=d.getElementById('step'); step.value='3'; step.dispatchEvent(new Event('change')); return true;}`);
     await until(visible,value=>value?.step==='3' && value.goal.includes('prediction'),'shelf search step');
     assert.equal(await ui(`d => d.getElementById('projectContent').scrollTop`),0,'new steps start at their goal');
@@ -266,6 +305,10 @@ export async function run() {
     assert.match(await ui(`d => d.getElementById('output').textContent`),/No books found/);
     assert.match((await visible()).status,/not an assessment/);
     assert.equal((await visible()).messages,'','reading projects do not share chat');
+    await ask('Why does search dune return No books found?');
+    await until(async () => requests.at(-1)?.project_context.project_id, value => value === 'shelf-reading', 'shelf search question reaches Coach');
+    assert.match(requests.at(-1).project_context.check.output, /No books found/);
+    await until(visible, value => value?.messages.includes('Compare the query') && !value.askDisabled, 'shelf Coach reply');
     await shot('05-shelf-reading'); results.push({step:'shelf-reading-output-and-isolation',pass:true});
     const shelfRoot = join(dirname(root), 'shelf-capstone');
     await vscode.commands.executeCommand('dhimantai.openProjectCoach', shelfRoot);

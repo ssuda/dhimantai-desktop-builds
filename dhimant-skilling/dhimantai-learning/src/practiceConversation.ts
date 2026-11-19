@@ -7,6 +7,10 @@ export const notebookHelpActions = [
   {label:'Explain errors', message:'Help me understand the error in my latest run.', strategy:'read_error', stage:'error'},
   {label:'Explain failed tests', message:'Explain the first failing public test and guide my next debugging step.', strategy:'by_hand', stage:'review'},
   {label:'Next step', message:'Guide me through the next small step without giving the solution.', strategy:'small_steps', stage:'steps'},
+  {label:'Explain simply', message:'Explain the current concept in simple language, using our current lesson or question as context.', strategy:'simplify', stage:'guide'},
+  {label:'Give an example', message:'Give me a small, different example of the current concept without solving my unfinished task.', strategy:'walkthrough', stage:'guide'},
+  {label:'Quiz me', message:'Ask me one question about the current concept and wait for my answer before explaining it.', strategy:'by_hand', stage:'question'},
+  {label:'Summarise', message:'Summarise the key ideas from our current discussion and the next step I should practise.', strategy:'reflect', stage:'review'},
 ] as const;
 export const practiceStrategies = ['plan','small_steps','predict','read_error','trace','walkthrough','by_hand','simplify','edge_cases','hypothesis','reflect','decompose'];
 export const practiceStrategy = (value: unknown) => typeof value === 'string' && practiceStrategies.includes(value) ? value : 'decompose';

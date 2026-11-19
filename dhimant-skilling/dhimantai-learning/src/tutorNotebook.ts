@@ -1,6 +1,8 @@
 import {cellLanguage, cellLanguages, validCellInputs} from './roomCode';
 import { validSkillDraft } from './skillPractice';
 import type { SkillDraft } from './skillPractice';
+import { executionFollowup, validExecutionIssues } from './lessonExecution';
+import type { ExecutionIssue } from './lessonExecution';
 
 /** Local learning document. Runtime observations and assessment authority are never restored. */
 export interface NotebookCell {
@@ -21,13 +23,18 @@ export interface TutorNotebook {
   title: string;
   exerciseId?: string;
   lessonId?: string;
+  doubtId?: string;
+  doubtCourse?: string;
   textDraft?: string;
+  attemptDraft?: string;
   /** Course data this notebook asked about last ("sample:shop", "import:sales"), so a vague question uses it. */
   dataset?: string;
   /** The learner's imported files this notebook uses, beside the course's preloaded samples. */
   dataImports?: string[];
   cells: NotebookCell[];
   drafts: NotebookDraft[];
+  /** Historical local follow-up only; never used as execution or mastery evidence. */
+  executionIssues?: ExecutionIssue[];
 }
 export const emptyNotebook = (): TutorNotebook => ({version: 1, title: 'Instructor notebook', cells: [], drafts: []});
 export const NOTEBOOK_LIMIT = 4 * 1024 * 1024;
@@ -42,12 +49,17 @@ export function readNotebook(value: unknown): TutorNotebook {
   if (JSON.stringify(n).length > NOTEBOOK_LIMIT) throw new Error('The Instructor notebook content exceeds 4 million characters. Save a smaller notebook.');
   if (!text(n.title, 300) || (n.exerciseId !== undefined && !text(n.exerciseId, 100)) || (n.lessonId !== undefined && !text(n.lessonId, 100)) || (n.textDraft !== undefined && !text(n.textDraft, 4000)) || !Array.isArray(n.cells)
       || !Array.isArray(n.drafts)) throw new Error('The saved Instructor notebook has invalid document fields.');
+  if (n.attemptDraft !== undefined && !text(n.attemptDraft,1500)) throw new Error('The saved attempt note is too large.');
+  if ((n.doubtId !== undefined && !/^[0-9a-f-]{36}$/i.test(n.doubtId)) ||
+      (n.doubtCourse !== undefined && !text(n.doubtCourse, 300))) throw new Error('Invalid saved chat identity.');
   const dataId = /^(?:sample|import):[a-z][a-z0-9_]{0,31}$/;
   if ((n.dataset !== undefined && (typeof n.dataset !== 'string' || !dataId.test(n.dataset)))
       || (n.dataImports !== undefined && (!Array.isArray(n.dataImports) || n.dataImports.length > 10
         || !n.dataImports.every(name => typeof name === 'string' && /^[a-z][a-z0-9_]{0,31}$/.test(name)))))
     throw new Error('The saved Instructor notebook has invalid course data fields.');
   if (n.cells.length > 1000 || n.drafts.length > 1000) throw new Error('This notebook exceeds the limit of 1,000 cells or code drafts.');
+  if (n.executionIssues !== undefined && !validExecutionIssues(n.executionIssues))
+    throw new Error('This notebook contains invalid coding follow-up notes.');
   const ids = new Set<string>();
   for (const cell of n.cells) {
     if (!cell || !text(cell.id, 100) || !/^[\w-]+$/.test(cell.id) || ids.has(cell.id)
@@ -115,7 +127,8 @@ export function exportNotebook(notebook: TutorNotebook) {
   const code = (draft: NotebookDraft) => cells.push({id: draft.snippet, cell_type: 'code', source: draft.source,
     metadata: {vscode:{languageId:['bash','zsh','pglab'].includes(draft.language)?'shellscript':draft.language}, dhimantai: {author: 'learner', language:draft.language, assisted: draft.helped}}, execution_count: null, outputs: []});
   for (const cell of notebook.cells) {
-    if (cell.kind !== 'code') cells.push({id: cell.id, cell_type: 'markdown', source: cell.text,
+    if (cell.kind !== 'code') cells.push({id: cell.id, cell_type: 'markdown', source: cell.text
+      + (cell.packet?.session_summary && notebook.executionIssues?.length ? '\n\n' + executionFollowup(notebook.executionIssues) : ''),
       metadata: {dhimantai: {author: ['message', 'note'].includes(cell.kind) ? 'learner' : 'tutor', kind: cell.kind}}});
     for (const draft of notebook.drafts.filter(d => d.key.startsWith(cell.id + ':'))) code(draft);
   }

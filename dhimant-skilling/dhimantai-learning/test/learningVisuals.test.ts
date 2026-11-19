@@ -10,6 +10,21 @@ import { chapterId, lessonPicker, selectLesson } from './lessonPicker';
 const visualBundle = buildSync({stdin:{contents:"export * from './webview/visual'; export * from './webview/markdown'; export * from './webview/diagram';", resolveDir:resolve(__dirname,'../..')},
   bundle:true, write:false, format:'iife', globalName:'Visual', loader:{'.woff2':'dataurl','.woff':'dataurl','.ttf':'dataurl'}}).outputFiles[0].text;
 
+test('Markdown previews retain readable content and literal code without formatting syntax', () => {
+  const dom = new JSDOM('<!doctype html>', {runScripts:'outside-only'});
+  try {
+    dom.window.eval(visualBundle);
+    const plain = dom.window.Visual.markdownPlainText;
+    assert.equal(plain('## Your turn\n\n*Section check*\n\nMeena has **five** sentences.'), 'Your turn Section check Meena has five sentences.');
+    assert.equal(plain('> Read [the source](https://example.test) &amp; explain.\n\n- First\n- Second\n\n![A **map**](https://example.test/map.png)'), 'Read the source & explain. First Second A map');
+    assert.equal(plain('Use `student_name`, `2 ** 3` and C#.\n\n```python\nprint("# * _")\n```'), 'Use student_name, 2 ** 3 and C#. print("# * _")');
+    assert.equal(plain('First\nline  \nbreak.\n\n| A | B |\n|---|---|\n| 1 | 2 |'), 'First line break. A B 1 2');
+    assert.equal(plain('Find $x^2$ and \\(y + 1\\).'), 'Find x^2 and y + 1.');
+    assert.equal(plain('Compare <img src=x onerror=alert(1)> with text.'), 'Compare <img src=x onerror=alert(1)> with text.');
+    assert.equal(plain(' \n\n '), '');
+  } finally { dom.window.close(); }
+});
+
 test('textbook Markdown keeps original URLs and captions, while active/local sources remain inert', () => {
   const dom = new JSDOM('<!doctype html><main></main>', {runScripts:'outside-only'});
   try {
@@ -32,6 +47,29 @@ test('textbook Markdown keeps original URLs and captions, while active/local sou
     const source = 'data:image/png;base64,iVBORw0KGgo=';
     assert.equal(w.Visual.imageSource(source), source);
     assert.equal(w.Visual.imageSource('https://host/' + 'a'.repeat(16000)), undefined);
+  } finally { dom.window.close(); }
+});
+
+test('SVG question previews omit source while board diagrams still render safely', () => {
+  const dom = new JSDOM('<!doctype html><main></main>', {runScripts:'outside-only'});
+  try {
+    const w = dom.window; w.eval(visualBundle);
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120" onload="bad()"><text x="10" y="30">Terminal → shell</text><script>bad()</script></svg>';
+    const question = 'Which part worked out what `pwd` means — the terminal or the shell?';
+    const main = w.document.querySelector('main')!;
+    for (const visual of [svg, '```svg\n' + svg + '\n```', '```xml\n<?xml version="1.0"?>\n' + svg + '\n```', '```\n' + svg + '\n```']) {
+      assert.equal(w.Visual.markdownPlainText(visual + '\n\n' + question), 'Diagram Which part worked out what pwd means — the terminal or the shell?');
+      assert.equal(w.Visual.markdownPlainText(visual), 'Diagram');
+      main.innerHTML = w.Visual.renderBoard(visual + '\n\n' + question);
+      const image = main.querySelector<HTMLImageElement>('img.board-diagram')!;
+      assert.ok(image, 'the full question retains its diagram');
+      assert.doesNotMatch(decodeURIComponent(image.src), /onload|<script/);
+      assert.doesNotMatch(main.textContent!, /<svg|xmlns|viewBox|bad\(\)/);
+      assert.match(main.textContent!, /the terminal or the shell/);
+    }
+    for (const visual of ['`' + svg + '`', svg.replaceAll('<', '&lt;').replaceAll('>', '&gt;'), '<svg viewBox="0 0 320 120"><path d="M0 0"/>']) {
+      assert.equal(w.Visual.markdownPlainText(visual), 'Diagram', 'literal, escaped and incomplete SVG cannot leak into a preview');
+    }
   } finally { dom.window.close(); }
 });
 

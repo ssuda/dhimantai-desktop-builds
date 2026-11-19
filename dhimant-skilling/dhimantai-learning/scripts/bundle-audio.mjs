@@ -9,15 +9,25 @@ await copyFile(resolve(dirname(sdk), '../LICENSE'), new URL('../media/livekit-cl
 const { build } = await import('esbuild');
 const { fileURLToPath } = await import('node:url');
 const root = fileURLToPath(new URL('../', import.meta.url));
+// Instructor and desktop consume one authored business shift.
+await copyFile(resolve(root, '../../agent/course_projects/data/erpnext_shift.json'), resolve(root, 'media/browser/erpnext/shift.json'));
+await copyFile(resolve(root, '../../agent/course_projects/data/inference_runtime.json'), resolve(root, 'media/course/inference_runtime.json'));
+await copyFile(resolve(root, '../../agent/course_projects/data/lab_compute.json'), resolve(root, 'media/course/lab_compute.json'));
+await copyFile(resolve(root, '../../content/courses/inference-engineering/labs/cluster.py'), resolve(root, 'media/course/inference_cluster.py'));
 await build({entryPoints: [resolve(root, 'webview/coachMarkdown.ts')], bundle: true, minify: true,
   outfile: resolve(root, 'media/coachMarkdown.js'), format: 'iife', target: 'es2022',
   assetNames: 'fonts/[name]', loader: {'.woff2': 'file', '.woff': 'file', '.ttf': 'file'}});
 const outdir = resolve(root, 'media/learning-room');
+await build({entryPoints:[resolve(root, 'webview/diagramEngines.ts')], bundle:true, minify:true,
+  outfile:resolve(outdir, 'diagramEngines.js'), format:'iife', globalName:'DhimantDiagrams',
+  footer:{js:'globalThis.DhimantDiagrams = DhimantDiagrams;'}, target:'es2022', legalComments:'eof'});
+await copyFile(resolve(root, 'node_modules/mermaid/LICENSE'), resolve(outdir, 'mermaid.LICENSE'));
+await copyFile(resolve(root, 'webview/diagramEngines.LICENSE'), resolve(outdir, 'diagramEngines.LICENSE'));
 await build({entryPoints: [resolve(root, 'webview/audioControls.ts')], bundle: true, minify: true,
   outfile: resolve(outdir, 'audioControls.js'), format: 'iife', globalName: 'DhimantAudio',
   footer: {js: 'globalThis.DhimantAudio = DhimantAudio;'}, target: 'es2022'});
 await build({
-  entryPoints: [resolve(root, 'webview/room.ts')], bundle: true, minify: true,
+  entryPoints: [resolve(root, 'webview/room.ts'), resolve(root, 'webview/learningWorkspace.ts'), resolve(root, 'webview/courseNotes.ts')], bundle: true, minify: true,
   outdir, target: 'es2022', assetNames: 'fonts/[name]', legalComments: 'eof',
   loader: {'.woff2': 'file', '.woff': 'file', '.ttf': 'file'},
 });
@@ -62,6 +72,8 @@ await writeFile(resolve(outdir, 'editor-licenses.txt'), (await Promise.all(edito
   name + '\n\n' + await readFile(resolve(root, 'node_modules', name, 'LICENSE'), 'utf8')))).join('\n\n'));
 const lessons = resolve(root, '../../content/courses/build-an-llm-from-scratch');
 const labs = resolve(root, 'media/course/labs');
+const computeCatalog=JSON.parse(await readFile(resolve(root,'media/course/lab_compute.json'),'utf8'));
+const llmCompute={version:1,status:'specified',...computeCatalog.courses['build an llm from scratch'].default,cloud:computeCatalog.cloud};
 await mkdir(labs, {recursive:true});
 for (const file of (await readdir(lessons)).filter(n => /^\d\d-.*\.md$/.test(n)).sort()) {
   const source = await readFile(resolve(lessons,file),'utf8');
@@ -69,8 +81,9 @@ for (const file of (await readdir(lessons)).filter(n => /^\d\d-.*\.md$/.test(n))
     .map((s,i) => ({id:'part-'+i, cell_type:i%2?'code':'markdown', source:s.trim(), metadata:{},
       ...(i%2?{execution_count:null,outputs:[]}:{})})).filter(c=>c.source);
   cells.push({id:'practice',cell_type:'code',source:'# Try the practice tasks here.\n',metadata:{},execution_count:null,outputs:[]});
+  cells.unshift({id:'compute-requirements',cell_type:'markdown',metadata:{},source:'**Lab compute: 0 GPUs · CPU lab.** '+llmCompute.note+' Compute, storage and network charges are separate from the course fee.'});
   await writeFile(resolve(labs,file.replace(/\.md$/,'.ipynb')),JSON.stringify({nbformat:4,nbformat_minor:5,
-    metadata:{kernelspec:{name:'python3',display_name:'Python (PyTorch)',language:'python'},language_info:{name:'python'}},cells},null,2));
+    metadata:{dhimantai_compute:llmCompute,kernelspec:{name:'python3',display_name:'Python (CPU lab)',language:'python'},language_info:{name:'python'}},cells},null,2));
 }
 await build({entryPoints:[resolve(root,'scripts/course-runner.ts')],outfile:resolve(root,'media/course/runner.cjs'),
   platform:'node',bundle:true,target:'node22'});

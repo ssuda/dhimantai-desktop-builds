@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { Environment, EnvironmentName } from './environments';
-import { openAuthPage } from './authPage';
+import { cancelProviderLogin, openAuthPage, type CourseSignup } from './authPage';
 import { learnerRpc } from './learnerCatalog';
 import { createHash, randomBytes } from 'node:crypto';
+import { requestProviderCode, type LoginProvider } from './providerLogin';
 import { authInputErrors } from './authValidation';
 
 /** A Supabase GoTrue session, the same identity the Flutter app sends as a Bearer token. */
@@ -99,7 +100,7 @@ export class Auth {
     }
   }
 
-  private async store(session: Session | undefined, key = this.key(), expected?: Session) {
+  private async store(session: Session | undefined, key = this.key(), expected?: Session, check?: () => void) {
     // Serialize the comparison and write with sign-out/sign-in across Auth helpers.
     const write = (sessionWrites.get(this.secrets) ?? Promise.resolve()).catch(() => {}).then(async () => {
       if (expected) {
@@ -108,6 +109,7 @@ export class Auth {
           throw new Error('Your session changed. Reopen the lesson.');
         }
       }
+      check?.();
       if (session) await this.secrets.store(key, JSON.stringify(session));
       else await this.secrets.delete(key);
       if (key === this.key()) this.changed.fire(session);
@@ -119,6 +121,7 @@ export class Auth {
 
   /** Forgets the local session immediately, then revokes it on the server (best effort). */
   async signOut() {
+    cancelProviderLogin(this.secrets);
     const key = this.key(), env = this.env();
     const current = await this.session(key);
     // Forget immediately so a refresh completing during logout cannot restore the session.
@@ -198,6 +201,24 @@ export class Auth {
     const environment = this.envName(), env = this.env();
     const data = await gotrue(env, 'token?grant_type=password', { email: email.trim(), password });
     return this.acceptSession(data, environment, env);
+  }
+
+  async signInWithProvider(provider: LoginProvider, cancelled: AbortSignal): Promise<Session> {
+    const environment = this.envName(), env = this.env();
+    const signal = AbortSignal.any([cancelled, AbortSignal.timeout(5 * 60_000)]);
+    const check = () => {
+      signal.throwIfAborted();
+      if (environment !== this.envName() || env.supabaseUrl !== this.env().supabaseUrl)
+        throw new Error('Your service changed. Start sign-in again.');
+    };
+    const proof = await requestProviderCode(env, provider, signal);
+    check();
+    const session = toSession(await gotrue(env, 'token?grant_type=pkce', proof));
+    check();
+    await learnerRpc(env, 'complete_skilling_signin', {}, session.access_token);
+    check();
+    await this.store(session, this.key(), undefined, check);
+    return session;
   }
 
   private recoveryKey(environment = this.envName(), env = this.env()) {
@@ -292,11 +313,11 @@ export class Auth {
   }
 
   /** Opens the account page and resumes the caller after successful authentication. */
-  signUp(): Promise<Session | undefined> {
-    return openAuthPage(this.secrets, this, this.envName, 'signUp');
+  signUp(course?: CourseSignup): Promise<Session | undefined> {
+    return openAuthPage(this.secrets, this, this.envName, 'signUp', course);
   }
 
-  signIn(): Promise<Session | undefined> {
-    return openAuthPage(this.secrets, this, this.envName, 'signIn');
+  signIn(course?: CourseSignup): Promise<Session | undefined> {
+    return openAuthPage(this.secrets, this, this.envName, 'signIn', course);
   }
 }

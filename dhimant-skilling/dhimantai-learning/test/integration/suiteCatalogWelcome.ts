@@ -175,7 +175,8 @@ export async function run() {
     });
     await check('offline Catalog opens separate Instructor and Doubt Solver tabs and reuses each one', async () => {
       await settings(true);
-      await catalog.refresh();
+      panel()!.dispose();
+      await catalog.open();
       assert.equal((catalog as any).selection, undefined);
       const html = panel()!.webview.html;
       await (catalog as any).handle({type:'ready'});

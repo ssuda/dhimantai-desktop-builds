@@ -1,3 +1,5 @@
+import type { Course } from './api';
+
 /** Bundled projects shared by the catalog and the course-project launcher. */
 export const CATALOG_PROJECTS = [
   {
@@ -54,7 +56,7 @@ export const CATALOG_PROJECTS = [
   },
 ] as const;
 
-/** Projects that belong to a catalog course follow that course's access period. Other bundled projects stay open. */
+/** Companion courses for the four bundled Python projects. */
 export const PROJECT_COURSES: Readonly<Record<string, string>> = {
   'shelf': 'python',
   'course-agent': 'build-ai-agents',
@@ -62,7 +64,19 @@ export const PROJECT_COURSES: Readonly<Record<string, string>> = {
   'rich-reading': 'engineering-code-reading',
 };
 
-export function projectAccessEnded(projectId: string, courses: readonly {id: string; expired?: boolean}[] = []) {
+export function projectCourseChoices(projectId: string, courses: readonly Course[]) {
+  return courses.flatMap(course => {
+    // Before the service advertised project compatibility it accepted only the subject Python.
+    const access = course.project_coach === undefined && course.name === 'Python' && course.chapters.some(ch => !ch.locked && !ch.expired)
+      ? {course_id: 'python'} : course.project_coach;
+    if (!access) return [];
+    const companion = access.course_id === PROJECT_COURSES[projectId];
+    return [{label: course.name, companion, description: companion ? 'Companion course' : undefined,
+      detail: course.chapters.some(ch => ch.locked) ? 'Project Coach included with active chapter access' : 'Project Coach included'}];
+  }).sort((a, b) => Number(b.companion) - Number(a.companion));
+}
+
+export function projectAccessEnded(projectId: string, courses: readonly {id: string; expired?: boolean}[] = [], lessons?: readonly Course[]) {
   const course = PROJECT_COURSES[projectId];
-  return !!course && !!courses.find(c => c.id === course)?.expired;
+  return !!lessons && !!courses.find(c => c.id === course)?.expired && !projectCourseChoices(projectId, lessons).length;
 }

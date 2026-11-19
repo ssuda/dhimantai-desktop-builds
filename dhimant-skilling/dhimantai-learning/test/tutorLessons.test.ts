@@ -7,7 +7,7 @@ import { emptyNotebook } from '../src/tutorNotebook';
 import { chapterId, lessonPicker, selectLesson } from './lessonPicker';
 
 test('lesson chooser handles empty/offline catalogs and isolates drafts, stale restores and account changes', async () => {
-  const dom = new JSDOM('<!doctype html>' + lessonPicker +
+  const dom = new JSDOM('<!doctype html>' + lessonPicker + '<button id="reload-lessons"></button>' +
     ['wide','latest','tutor','doubt_solver','end','sound','send','teach-back','video'].map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('') +
     '<span id="status"></span><input id="follow-code"><input id="stuck-hints"><small id="code-observer-status"></small><main id="feed"></main><form id="composer"><textarea id="message"></textarea></form>',
     {runScripts:'outside-only', url:'https://webview.example'});
@@ -28,17 +28,26 @@ test('lesson chooser handles empty/offline catalogs and isolates drafts, stale r
     assert.equal(sent.some(message => message.type === 'join'),false);
     post({type:'tutorLessons',attempt,courses:[],error:'Course service unavailable'});
     assert.match(w.document.getElementById('status')!.textContent!,/unavailable/);
-    button('tutor').click();
+    assert.doesNotMatch(w.document.getElementById('lesson-list')!.textContent!,/No lessons available/);
+    assert.equal(w.document.getElementById('lesson-course')!.hidden, true);
+    button('reload-lessons').click();
     assert.equal(sent.at(-1).type,'tutorLessons');
+    assert.equal(sent.at(-1).browse, undefined, 'retry resumes the original lesson request');
     selectLesson(w,sent.at(-1).attempt);
+    assert.equal(w.document.getElementById('lesson-course')!.hidden, false);
     attempt = sent.at(-1).attempt;
     assert.equal(sent.at(-1).chapterId,chapterId);
     const tutor = {...emptyNotebook(),textDraft:'Instructor draft',cells:[{id:'tutor-note',kind:'note',text:'Instructor-only note'}]};
     post({type:'restoreNotebook',attempt,documentKey:'tutor-key',notebook:tutor});
     field.value = 'Latest unsent Instructor draft'; field.dispatchEvent(new w.Event('input'));
     button('doubt_solver').click();
-    assert.equal(sent.at(-1).type, 'openOtherMode', 'the menu opens Doubt Solver in its own tab');
-    assert.equal(field.value,'Latest unsent Instructor draft','and leaves this lesson as it was');
+    const change = sent.at(-1);
+    assert.equal(change.type, 'workspaceMode', 'the menu asks the host to switch the workspace to Doubt Solver');
+    assert.equal(change.mode, 'doubt_solver');
+    assert.equal(change.documentKey, 'tutor-key');
+    assert.equal(change.notebook.textDraft, 'Latest unsent Instructor draft');
+    assert.equal(change.carryDraft, false, 'ordinary mode changes keep separate drafts');
+    assert.equal(field.value,'Latest unsent Instructor draft','the draft stays visible until the host switches modes');
     post({type:'openTutor',mode:'doubt_solver'});
     const doubtAttempt = sent.at(-1).attempt;
     const saved = sent.filter(message => message.type === 'notebookChanged').at(-1);
@@ -48,9 +57,10 @@ test('lesson chooser handles empty/offline catalogs and isolates drafts, stale r
     post({type:'restoreNotebook',attempt,documentKey:'stale',notebook:tutor});
     post({type:'tutorLessons',attempt,courses:[{name:'Stale course',chapters:[]}]});
     assert.equal(field.value,''); assert.equal(feed.textContent,'');
-    assert.equal(w.document.getElementById('tutor-lessons')!.hidden,true);
+    assert.equal(w.document.getElementById('tutor-lessons')!.hidden,false,'Doubt Solver also starts with course and chapter selection');
+    selectLesson(w,doubtAttempt);
     const doubt = {...emptyNotebook(),textDraft:'Doubt draft',cells:[{id:'doubt-note',kind:'note',text:'Doubt-only note'}]};
-    post({type:'restoreNotebook',attempt:doubtAttempt,documentKey:'doubt-key',notebook:doubt});
+    post({type:'restoreNotebook',attempt:sent.at(-1).attempt,documentKey:'doubt-key',notebook:doubt});
     post({type:'openTutor'});
     assert.equal(field.value,''); assert.equal(feed.textContent,'');
     assert.equal(sent.at(-1).type,'tutorLessons','returning to Instructor always opens lesson selection');
@@ -62,7 +72,7 @@ test('lesson chooser handles empty/offline catalogs and isolates drafts, stale r
     await new Promise(resolve => setTimeout(resolve,300));
     assert.equal(sent.filter(message => message.type === 'notebookChanged').at(-1).documentKey,'doubt-key',
       'a previous autosave timer cannot write the new document');
-    post({type:'openTutor'});
+    post({type:'chooseCourse',course:'Python'});
     const chapters=[{id:chapterId,name:'Lists'},{id:'locked-middle',name:'Locked',locked:true},{id:'next-open',name:'Dictionaries'}];
     post({type:'tutorLessons',attempt:sent.at(-1).attempt,courses:[{name:'Python',chapters}]});
     w.document.querySelector<HTMLButtonElement>('#lesson-list button')!.click();

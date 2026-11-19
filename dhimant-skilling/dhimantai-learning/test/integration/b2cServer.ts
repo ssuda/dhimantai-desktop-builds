@@ -3,12 +3,14 @@ import { createHash, randomUUID } from 'node:crypto';
 
 /** Local auth/catalog contract. No real email is sent and no shared account is created. */
 export class B2cServer {
+  constructor(private readonly course = {id:'python', title:'Python'}, private readonly alternatives: {id:string;title:string}[] = []) {}
   private server?: Server;
   private url = '';
   private users = new Map<string, { name: string; password: string; verified: boolean; profile: boolean; joined: boolean }>();
   private tokens = new Map<string, string>();
   private settings = { confirmation: false, profileFailure: false, unavailable: false, institute: false };
   private signups = 0;
+  private social?: {scopes: string | null; email: string; challenge: string; code: string; link: string};
   private recovery?: {email: string; challenge: string; code: string; link: string};
   async start() {
     this.server = createServer((request, response) => { void this.handle(request, response); });
@@ -35,6 +37,23 @@ export class B2cServer {
     if (path === '/__settings') { Object.assign(this.settings, body); return send(200, {}); }
     if (path === '/__verify') { this.users.get(body.email)!.verified = true; return send(200, {}); }
     if (path === '/__recovery') return send(200, {link: this.recovery?.link});
+    if (path === '/__social') return send(200, {link: this.social?.link, scopes: this.social?.scopes});
+    if (path === '/auth/v1/authorize') {
+      const provider = url.searchParams.get('provider');
+      const endpoints = new Map([
+        ['google', 'https://accounts.google.com/o/oauth2/auth'],
+        ['github', 'https://github.com/login/oauth/authorize'],
+        ['azure', 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'],
+      ]);
+      const location = endpoints.get(provider ?? '');
+      if (!location || url.searchParams.get('code_challenge_method') !== 's256')
+        return send(400, {});
+      const code = randomUUID(), link = new URL(url.searchParams.get('redirect_to')!);
+      link.searchParams.set('code', code);
+      this.social = {scopes: url.searchParams.get('scopes'), email: provider + '@example.test', challenge: url.searchParams.get('code_challenge')!, code, link: link.href};
+      response.writeHead(302, {Location: location});
+      return response.end();
+    }
     if (path === '/auth/v1/recover') {
       if (request.headers.apikey !== 'test-anon-key' || body.code_challenge_method !== 's256') return send(400, {});
       if (this.users.has(body.email)) {
@@ -57,6 +76,13 @@ export class B2cServer {
     }
     if (path === '/auth/v1/token') {
       if (url.searchParams.get('grant_type') === 'pkce') {
+        if (this.social && body.auth_code === this.social.code) {
+          const {email, challenge} = this.social;
+          this.social = undefined;
+          if (createHash('sha256').update(body.code_verifier).digest('base64url') !== challenge) return send(400, {});
+          if (!this.users.has(email)) this.users.set(email, {name: 'Provider learner', password: randomUUID(), verified:true, profile:false, joined:false});
+          return send(200, {...session(email), provider_token:'provider-token', user:{id:email,email}});
+        }
         const recovery = this.recovery;
         if (!recovery || body.auth_code !== recovery.code || typeof body.code_verifier !== 'string'
             || createHash('sha256').update(body.code_verifier).digest('base64url') !== recovery.challenge) return send(400, {msg: 'Invalid recovery proof'});
@@ -71,28 +97,30 @@ export class B2cServer {
     if (path === '/auth/v1/logout') { this.tokens.delete(token); return send(200, {}); }
     if (path === '/rest/v1/rpc/public_learning_catalog') {
       if (this.settings.unavailable) return send(404, { code: 'PGRST202' });
-      return send(200, { individual: !!user?.profile && !this.settings.institute, courses: [{ id: 'python', title: 'Python', summary: 'Learn with practice.',
+      return send(200, { individual: !!user?.profile && !this.settings.institute, courses: [{ ...this.course, summary: 'Learn with practice.',
         level: 'Beginner', prerequisites: 'None', can_join: true, enrolled: !!user?.joined && !this.settings.institute,
         chapters: [{ id: '10000000-0000-0000-0000-000000000001', name: 'Lists', lesson: 'Indexing', free: true },
-          { id: '10000000-0000-0000-0000-000000000002', name: 'Loops', lesson: 'For loops', free: false }] }],
+          { id: '10000000-0000-0000-0000-000000000002', name: 'Loops', lesson: 'For loops', free: false }] },
+        ...this.alternatives.map(course => ({...course, summary:'Introductory course', level:'Beginner', prerequisites:'None', can_join:true, enrolled:false,
+          chapters:[{id:'20000000-0000-0000-0000-000000000001',name:'Getting started',free:true}]}))],
         offers: [{id:'python-once',title:'Python access',amount:49900,currency:'INR',course_ids:['python'],owned:false},
           {id:'bundle',title:'Programming bundle',amount:79900,currency:'INR',course_ids:['python','build-an-llm'],owned:false}] });
     }
-    if (path === '/rest/v1/rpc/complete_individual_signup') {
+    if (path === '/rest/v1/rpc/complete_individual_signup' || path === '/rest/v1/rpc/complete_skilling_signin') {
       if (!user?.verified) return send(403, { message: 'Verify your email.' });
       if (this.settings.profileFailure) return send(503, { message: 'Please retry profile setup.' });
       user.profile = true;
       return send(200, { learner_type: 'individual' });
     }
     if (path === '/rest/v1/rpc/join_learning_course') {
-      if (!user?.profile || body.p_course !== 'python') return send(403, { message: 'Course unavailable' });
+      if (!user?.profile || body.p_course !== this.course.id) return send(403, { message: 'Course unavailable' });
       user.joined = true;
-      return send(200, { course_id: 'python', enrolled: true });
+      return send(200, { course_id: this.course.id, enrolled: true });
     }
     if (path === '/learning-billing/purchases') return send(200, {payments_ready:true,purchases:[]});
     if (path === '/notebook-coach/study') return send(200, {courses:user?.joined && !this.settings.institute
       ? [{id:'python',title:'Python',chapters:[{id:'10000000-0000-0000-0000-000000000001',title:'Lists'}]}] : []});
-    if (path === '/notebook-coach/exercises') return send(200, { courses: user?.joined && !this.settings.institute ? [{ name: 'Python', chapters: [
+    if (path === '/notebook-coach/exercises') return send(200, { courses: user?.joined && !this.settings.institute ? [{ name: this.course.title, chapters: [
       { id: '10000000-0000-0000-0000-000000000001', name: 'Lists', locked:false,
         progress:{status:'covered',covered:1,total:1,topics:[{id:'indexing',title:'Indexing',status:'covered'}]} },
       { id: '10000000-0000-0000-0000-000000000002', name: 'Loops', locked:true,

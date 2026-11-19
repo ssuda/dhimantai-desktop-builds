@@ -15,7 +15,7 @@ export interface NotebookLink {
 }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const languages = ['python', 'rust', 'c', 'java', 'javascript', 'typescript', 'go'];
+const languages = ['python', 'rust', 'c', 'cpp', 'java', 'javascript', 'typescript', 'go'];
 
 export function notebookLink(metadata: any): NotebookLink {
   const link = metadata?.dhimantai;

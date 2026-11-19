@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { ApiError } from '../src/api';
+import { ACCESS_ENDED, ApiError } from '../src/api';
 
 const extension = resolve(__dirname, '../..');
 const deferred = <T>() => {
@@ -19,7 +19,8 @@ const step = (id: string) => ({id, title: id.toUpperCase(), goal: 'Goal ' + id, 
 
 /** Loads the compiled host class with stubbed VS Code and project services. */
 function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Promise<unknown>; projectFiles?: () => Promise<string[]>;
-    runCheck?: () => Promise<unknown>; inputBox?: () => Promise<string | undefined>; notebookCoach?: () => Promise<unknown>;
+    runCheck?: () => Promise<unknown>; inputBox?: () => Promise<string | undefined>; notebookCoach?: (path: string) => Promise<unknown>;
+    workspace?: {course: string; account: string; environment: string};
     saved?: unknown; root?: string} = {}) {
   const curriculum = {id: 'course-agent', version: 1, title: 'Agent', files: [], steps: [step('a'), step('b')]};
   const store = new Map<string, unknown>(), posted: any[] = [], calls = {projectFiles: 0, runCheck: 0, submitted: [] as unknown[][], warnings: [] as string[]};
@@ -57,7 +58,7 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
     './courseTerminal': {courseTerminalOptions: () => ({})},
     './projectLive': {runManagedProject: async () => ({output: '', passed: true})},
     './projectGitHub': {projectGitHub: async () => undefined},
-    './api': {ApiError, Api: class { notebookCoach() { return options.notebookCoach!(); } }},
+    './api': {ApiError, Api: class { notebookCoach(path: string) { return options.notebookCoach!(path); } }},
   };
   const sandbox = {exports: {}, Error, AbortController, Buffer, setTimeout, console,
     require: (name: string) => name in modules ? modules[name] : name.startsWith('./') ? require('../src/' + name.slice(2)) : require(name)};
@@ -66,7 +67,7 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
     update: async (key: string, value: unknown) => { store.set(key, JSON.parse(JSON.stringify(value))); }}};
   const auth = {onDidChange: listener, session: options.session ?? (async () => ({user: {id: 'learner'}}))};
   const results = {get: () => undefined, save: async () => {}};
-  const courses = {forFile: async () => ({bin: 'podman', execArgs: () => []}), recordFor: () => undefined};
+  const courses = {forFile: async () => ({bin: 'podman', execArgs: () => []}), recordFor: () => options.workspace};
   const coach: any = new (sandbox.exports as any).ProjectCoach(context, auth, () => 'production', () => ({}), courses, results);
   const state = () => posted.filter(m => m.type === 'state').at(-1);
   const message = (type: string, data = {}) => ({type, scope: coach.key(), step: coach.step, conversationId: coach.conversationId, ...data});
@@ -134,6 +135,17 @@ test('Submit uses the note the learner typed, with the checkpoint length limit',
   assert.equal(calls.submitted.length, 1, 'an oversized or missing note is rejected');
 });
 
+test('a failed checkpoint write preserves the previously saved evidence and completion', async () => {
+  const {coach, open, message} = harness({snapshot: async () => ({digest: 'd1', steps: {a: 'a1'},
+    files: [], omitted: [], omitted_count: 0, structure: {files: [], total_files: 0, truncated: false}})});
+  await open();
+  await coach.handle(message('checkpoint', {completed: false, note: 'My draft', help: 'unknown'}));
+  coach.context.workspaceState.update = async () => { throw new Error('Storage unavailable'); };
+  await assert.rejects(coach.handle(message('checkpoint', {completed: true, note: 'Help lists search.', help: 'unknown'})), /Storage unavailable/);
+  assert.equal(coach.checkpoint.note, 'My draft');
+  assert.equal(coach.progress.checkpoints.a.completed, false);
+});
+
 test('a snapshot failure still sends a usable state that names the file and limit', async () => {
   const root = await mkdtemp(join(tmpdir(), 'project-coach-'));
   try {
@@ -152,10 +164,25 @@ test('a snapshot failure still sends a usable state that names the file and limi
 });
 
 test('ended course access explains how to restore Coach instead of a raw error', async () => {
-  const {coach, open, message, calls} = harness({notebookCoach: async () => { throw new ApiError(403, 'Your course access has ended.'); }});
+  const {coach, open, message, calls} = harness({notebookCoach: async () => { throw new ApiError(403, ACCESS_ENDED, 'access_ended'); }});
   await open();
   await assert.rejects(coach.handle(message('ask', {text: 'Why does this fail?'})),
-    (error: Error) => /^Access ended — buy again from the course catalog/.test(error.message) && error.message.includes('Your course access has ended.'));
-  assert.match(calls.warnings[0], /buy again from the course catalog/);
+    (error: Error) => error.message.startsWith(ACCESS_ENDED));
+  assert.deepEqual(calls.warnings, [ACCESS_ENDED]);
   assert.equal(coach.busy, false);
+});
+
+test('reopened Coach checks its workspace course and preserves unrelated service refusal reasons', async () => {
+  const workspace = {course: 'Build AI Agents with Python', account: 'learner', environment: 'production'};
+  const paths: string[] = [];
+  const notebookCoach = async (path: string) => { paths.push(path); throw new ApiError(403, 'Your learner profile is unavailable.'); };
+  const current = harness({workspace, notebookCoach});
+  await current.open();
+  await assert.rejects(current.coach.handle(current.message('ask', {text:'Why?'})), /Your learner profile is unavailable/);
+  assert.deepEqual(paths, ['/notebook-coach/project?course=Build%20AI%20Agents%20with%20Python']);
+  assert.deepEqual(current.calls.warnings, []);
+  const other = harness({workspace: {...workspace, account: 'other'}, notebookCoach});
+  await other.open();
+  await assert.rejects(other.coach.handle(other.message('ask', {text:'Why?'})), /learning account and service/);
+  assert.equal(paths.length, 1);
 });

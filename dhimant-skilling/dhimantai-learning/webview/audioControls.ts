@@ -11,12 +11,16 @@ export class SpeakerControl {
   private selecting = false;
   private revision = 0;
   private selected = 'default';
+  private speed = 1;
+  private speedSelect?: HTMLSelectElement;
+  private speedNotice?: HTMLElement;
 
   constructor(private readonly main: HTMLButtonElement, private readonly options: {
     supported: () => boolean;
     select: (deviceId: string) => Promise<void>;
     actions?: HTMLElement;
     menuLabel?: string;
+    playback?: (speed: number) => Promise<void>;
   }) {
     this.group.className = 'audio-split';
     main.before(this.group);
@@ -38,6 +42,39 @@ export class SpeakerControl {
     this.devices.setAttribute('aria-label', 'Audio output devices');
     this.notice.setAttribute('role', 'status');
     this.picker.append(title, this.devices, this.notice);
+    if (options.playback) {
+      try {
+        const saved = Number(localStorage.getItem('dhimantai.voicePlaybackSpeed'));
+        if ([0.5, 1, 1.5, 2].includes(saved)) this.speed = saved;
+      } catch { /* Storage can be unavailable in a restricted webview. */ }
+      const label = document.createElement('label'), select = document.createElement('select');
+      label.className = 'audio-speed'; label.textContent = 'Voice speed';
+      select.setAttribute('aria-label', 'Voice playback speed');
+      for (const speed of [0.5, 1, 1.5, 2]) {
+        const option = document.createElement('option');
+        option.value = String(speed); option.textContent = speed + 'x'; select.append(option);
+      }
+      select.value = String(this.speed);
+      this.speedSelect = select;
+      this.speedNotice = document.createElement('p');
+      this.speedNotice.textContent = 'Applies to the next spoken explanation or replay.';
+      this.speedNotice.setAttribute('role', 'status');
+      select.onchange = async () => {
+        const speed = Number(select.value);
+        select.disabled = true;
+        try {
+          if (![0.5, 1, 1.5, 2].includes(speed)) throw new Error('Invalid speed');
+          await options.playback!(speed);
+          this.speed = speed;
+          try { localStorage.setItem('dhimantai.voicePlaybackSpeed', String(speed)); } catch { /* Optional persistence. */ }
+          this.speedNotice!.textContent = 'Applies to the next spoken explanation or replay.';
+        } catch {
+          select.value = String(this.speed);
+          this.speedNotice!.textContent = 'Could not change voice speed. Reconnect or update the service and try again.';
+        } finally { select.disabled = false; }
+      };
+      label.append(select); this.picker.append(label, this.speedNotice);
+    }
     if (options.actions) this.picker.append(options.actions);
     this.chevron.onclick = () => {
       if (this.picker.hidden) {
@@ -60,6 +97,13 @@ export class SpeakerControl {
   }
 
   get deviceId() { return this.selected; }
+  get playbackSpeed() { return this.speed; }
+
+  resetPlaybackSpeed() {
+    this.speed = 1;
+    if (this.speedSelect) this.speedSelect.value = '1';
+    if (this.speedNotice) this.speedNotice.textContent = 'Voice speed is 1x. Reconnect or update the service to change it.';
+  }
 
   update(muted: boolean, disabled = false, action?: string, icon: 'speaker' | 'play' | 'pause' = 'speaker') {
     this.disabled = disabled;

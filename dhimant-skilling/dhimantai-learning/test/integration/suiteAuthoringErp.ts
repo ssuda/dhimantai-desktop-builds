@@ -30,7 +30,7 @@ export async function run(){
     const replayer=new Replayer(tab.client,tab.sessionId,server,new TaskVerifier(server,media+'/player'),login,config.learner.slice(0,10),media+'/player',undefined,
       expression=>page.evaluate(expression));
     const results=await replayer.run(tasks);
-    if(!replayPassed(tasks,results)) console.log('ERP validation:',await page.evaluate('({errors:window.dhimantaiApp?.errors(),isNew:window.dhimantaiApp?.current()?.isNew,dirty:window.dhimantaiApp?.current()?.dirty,form:window.dhimantaiApp?.current()?.form})'));
+    if(!replayPassed(tasks,results)) console.log('ERP validation:',await page.evaluate('({errors:window.dhimantaiApp?.errors(),isNew:window.dhimantaiApp?.current()?.isNew,dirty:window.dhimantaiApp?.current()?.dirty,form:window.dhimantaiApp?.current()?.form})')); 
     assert.equal(replayPassed(tasks,results),true,JSON.stringify(results));
     const mcp=await discoverWebMcp(page);
     writeFileSync(process.env.DHIMANTAI_TEST_RESULTS!,JSON.stringify({passed:true,erpnextReplay:results.map(r=>({task:r.task,ok:r.ok,discriminates:r.discriminates})),webmcp:mcp.status}));

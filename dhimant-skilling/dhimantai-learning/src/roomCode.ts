@@ -1,8 +1,9 @@
 import type { Api, Execution } from './api';
+import { RuntimePreparationError } from './runtimeErrors';
 export type { Execution } from './api';
 
 export const codeLanguages: Record<string, string> = {
-  python: 'Python', javascript: 'JavaScript', typescript: 'TypeScript', c: 'C',
+  python: 'Python', javascript: 'JavaScript', typescript: 'TypeScript', c: 'C', cpp: 'C++',
   java: 'Java', go: 'Go', rust: 'Rust',
 };
 /** Languages only the notebook editor supports; the earlier Practice panel has no SQL editor or runner. */
@@ -14,6 +15,16 @@ export function codeLanguage(label: string, notebook = false): string | undefine
   const value = label.trim().toLowerCase().split(/\s/)[0];
   const language = aliases[value] ?? value;
   return Object.hasOwn(codeLanguages, language) || (notebook && Object.hasOwn(notebookOnlyLanguages, language)) ? language : undefined;
+}
+
+/** Only flag distinctive C/Java syntax; ambiguous snippets keep their chosen language. */
+export function cellLanguageMismatch(language: string, source: string): 'c' | 'java' | undefined {
+  if (!['c', 'java'].includes(language) || /^\s*%%writefile\s/.test(source)) return;
+  // Examples inside comments, string literals and Java text blocks are not executable code.
+  const code = source.replace(/"""[\s\S]*?(?:"""|$)|\/\*[\s\S]*?(?:\*\/|$)|\/\/[^\n]*|"(?:\\[\s\S]|[^"\\])*(?:"|$)|'(?:\\[\s\S]|[^'\\])*(?:'|$)/g,
+    literal => literal.replace(/[^\r\n]/g, ' '));
+  if (language === 'java' && /^\s*#\s*include\b/m.test(code)) return 'c';
+  if (language === 'c' && /\bclass\s+\w+/.test(code) && /\bstatic\s+void\s+main\s*\(/.test(code)) return 'java';
 }
 export interface CodeSnapshot {
   snippet: string; revision: number; language: string; source: string; stdin: string; question: string;
@@ -27,6 +38,7 @@ export type CodeFeedback = Awaited<ReturnType<Api['notebookCoach']>>;
 export interface CodeResult {
   type: 'codeResult'; attempt: number; snippet: string; revision: number; request: number;
   execution?: Execution; feedback?: CodeFeedback; error?: string;
+  failureStage?: 'preparing';
   event?:import('./notebookCells').CellEvent;
 }
 export function validCellInputs(value:any):boolean {
@@ -104,6 +116,8 @@ export class RoomCodeSession {
       // Check always runs the exact current buffer. A previous output never stands in for a fresh check.
       if (message.action === 'run' || message.action === 'check') {
         if (!message.source.trim()) throw new Error('Write some code before running it.');
+        const mismatch = cellLanguageMismatch(language, source);
+        if (mismatch) throw new Error(`This looks like ${cellLanguages[mismatch]} code, but the cell is set to ${cellLanguages[language]}. Change the cell language to ${cellLanguages[mismatch]} before running.`);
         entry.execution = undefined;
         const execution = await this.deps.run(snapshot, operation.abort.signal, event=>{void current().then(ok=>{if(ok)reply({event});});});
         if (!await current()) return;
@@ -131,7 +145,8 @@ export class RoomCodeSession {
         reply({feedback});
       }
     } catch (error) {
-      if (await current()) reply({error: error instanceof Error ? error.message : 'Could not complete this action. Your edits are still here.'});
+      if (await current()) reply({error: error instanceof Error ? error.message : 'Could not complete this action. Your edits are still here.',
+        ...(error instanceof RuntimePreparationError ? {failureStage:'preparing' as const} : {})});
     } finally { if (this.busy === operation) this.busy = undefined; }
   }
 }

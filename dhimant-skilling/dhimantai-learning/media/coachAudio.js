@@ -17,6 +17,7 @@ window.installCoachAudio = api => {
     },
     actions,
     menuLabel: 'Spoken explanation options',
+    playback: async () => {},
   });
 
   function draw() {
@@ -119,7 +120,8 @@ window.installCoachAudio = api => {
           await audio.setSinkId(speaker.deviceId);
           if (!active()) return;
         }
-        buffer = new AudioWorkletNode(audio, 'coach-audio-buffer', {channelCount: 1, channelCountMode: 'explicit', outputChannelCount: [1]});
+        buffer = new AudioWorkletNode(audio, 'coach-audio-buffer', {channelCount: 1, channelCountMode: 'explicit', outputChannelCount: [1],
+          processorOptions: {maxSeconds: 380}});
         buffer.port.postMessage({type: 'mute', value: muted});
         buffer.port.onmessage = ({data}) => {
           if (!active()) return;
@@ -159,8 +161,8 @@ window.installCoachAudio = api => {
             if (drained) { complete(); return; }
             if (!requested) {
               requested = true;
-              clearTimeout(timer); timer = setTimeout(fail, 185000);
-              api.postMessage({type: 'audioStart', id, attempt: number});
+              clearTimeout(timer); timer = setTimeout(fail, 185000 / Math.min(speaker.playbackSpeed, 1));
+              api.postMessage({type: 'audioStart', id, attempt: number, speed: speaker.playbackSpeed});
             }
           } catch {
             if (active()) { paused = false; phase = 'blocked'; status.textContent = 'Audio paused · select the play icon to continue'; draw(); }

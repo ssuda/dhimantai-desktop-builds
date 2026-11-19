@@ -18,7 +18,7 @@ export function registerCourseProjects(context: vscode.ExtensionContext, auth: A
         if (environment() !== selectedEnvironment) throw new Error('Your service changed. Choose your project again.');
         return backend;
       }, owner);
-      const {pathway} = await api.skillingPathway(course);
+      const {pathway, course_titles} = await api.skillingPathway(course);
       if (!await current()) return;
       if (!pathway.profile) throw new Error('Project briefs are not available for this course yet.');
       const levels = [
@@ -27,7 +27,7 @@ export function registerCourseProjects(context: vscode.ExtensionContext, auth: A
         {id:'major', label:'Final capstone project', detail:'Build, test, demonstrate and hand off an end-to-end application.'},
       ].map(level => ({...level, unlocked: !!pathway.milestones.find(m => m.id === level.id)?.unlocked,
         description: pathway.milestones.find(m => m.id === level.id)?.unlocked ? 'Ready to start' : 'Prerequisites required'}));
-      const level = await vscode.window.showQuickPick(levels, {title:`Projects · ${pathway.profile.title}`});
+      const level = await vscode.window.showQuickPick(levels, {title:`Projects · ${course_titles?.[course] ?? pathway.profile.title}`});
       if (!level || !await current()) return;
       if (!level.unlocked) {
         const action = await vscode.window.showInformationMessage('Complete the prerequisite milestones in your course roadmap before starting this project.', 'Open roadmap');

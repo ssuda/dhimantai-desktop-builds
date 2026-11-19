@@ -14,14 +14,14 @@ export async function run(): Promise<void> {
   const ext = vscode.extensions.getExtension<{ auth: Auth; practice: PracticeBrowser; uriHandler: vscode.UriHandler }>('optficial.dhimantai-learning')!;
   const { auth, practice, uriHandler } = await ext.activate();
   const driver = new AuthPageDriver();
-  const original = { pick: vscode.window.showQuickPick, input: vscode.window.showInputBox };
+  const original = { pick: vscode.window.showQuickPick, input: vscode.window.showInputBox, external: vscode.env.openExternal };
   (vscode.window as any).showQuickPick = () => { throw new Error('Authentication must not open a picker'); };
   (vscode.window as any).showInputBox = () => { throw new Error('Authentication must not open an input prompt'); };
   const server = process.env.DHIMANTAI_TEST_SERVER!;
   const call = async (path: string, body = {}) => (await fetch(server + path, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })).json() as Promise<any>;
   const account = {name: 'Page Learner', email: 'page@example.test', password: 'page test password', confirmation: 'page test password'};
   try {
-    await check('signup command opens a complete email-only page and links to sign-in', async () => {
+    await check('signup command opens the account page and links to sign-in', async () => {
       assert.ok((await practice.getChildren()).some(node => practice.getTreeItem(node).command?.command === 'dhimantai.signUp'));
       const command = vscode.commands.executeCommand('dhimantai.signUp');
       await driver.waitForPage();
@@ -113,14 +113,60 @@ export async function run(): Promise<void> {
       await driver.submit({email, password:account.password});
       assert.equal((await pending)?.user.email, email);
     });
+    const providerHosts = {google: 'accounts.google.com', github: 'github.com', azure: 'login.microsoftonline.com'};
+    for (const [provider, host] of Object.entries(providerHosts)) {
+      await check(provider + ' opens the external browser, completes onboarding and resumes the account page', async () => {
+        await auth.signOut();
+        const pending = provider === 'google' ? auth.signUp() : auth.signIn();
+        let opened!: (url: vscode.Uri) => void;
+        const browser = new Promise<vscode.Uri>(resolve => { opened = resolve; });
+        (vscode.env as any).openExternal = async (url: vscode.Uri) => { opened(url); return true; };
+        const doc = driver.document();
+        doc.querySelector<HTMLButtonElement>(`[data-provider="${provider}"]`)!.click();
+        const target = await browser;
+        assert.equal(target.authority, host);
+        const social = await call('/__social');
+        assert.equal(social.scopes, provider === 'azure' ? 'email' : null);
+        const link = vscode.Uri.parse(social.link);
+        await uriHandler.handleUri(link.with({path:'/oauth-callback/incorrect'}));
+        assert.equal(await auth.session(), undefined);
+        await uriHandler.handleUri(link);
+        await driver.flush();
+        assert.equal((await pending)?.user.email, provider + '@example.test');
+        assert.ok((await call('/__state')).users.find((u: any) => u.email === provider + '@example.test').profile);
+        assert.equal(driver.panel, undefined);
+        assert.equal(Object.hasOwn((await auth.session())!, 'provider_token'), false);
+        await auth.signOut();
+        await uriHandler.handleUri(link);
+        assert.equal(await auth.session(), undefined);
+      });
+    }
+    await check('cancelling a browser attempt allows immediate retry and invalidates its callback', async () => {
+      const pending = auth.signIn();
+      let opened!: () => void;
+      const browser = new Promise<void>(resolve => { opened = resolve; });
+      (vscode.env as any).openExternal = async () => {opened(); return true;};
+      const doc = driver.document();
+      doc.querySelector<HTMLButtonElement>('[data-provider="google"]')!.click();
+      await browser;
+      const link = vscode.Uri.parse((await call('/__social')).link);
+      doc.querySelector<HTMLButtonElement>('#cancel-provider')!.click(); await driver.flush();
+      assert.match(doc.getElementById('status')!.textContent!, /cancelled/);
+      await uriHandler.handleUri(link);
+      assert.equal(await auth.session(), undefined);
+      driver.close(); assert.equal(await pending, undefined);
+    });
     await check('changing service closes the old form without authenticating to another service', async () => {
       const pending = auth.signIn();
-      await vscode.workspace.getConfiguration('dhimantai').update('environment', 'staging', vscode.ConfigurationTarget.Global);
+      const config = vscode.workspace.getConfiguration('dhimantai');
+      const next = config.get('environment') === 'staging' ? 'production' : 'staging';
+      await config.update('environment', next, vscode.ConfigurationTarget.Global);
       assert.equal(await pending, undefined);
       assert.equal(driver.panel, undefined);
       assert.equal(await auth.session(), undefined);
     });
   } finally {
+    (vscode.env as any).openExternal = original.external;
     driver.dispose();
     (vscode.window as any).showQuickPick = original.pick;
     (vscode.window as any).showInputBox = original.input;

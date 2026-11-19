@@ -16,6 +16,7 @@ const git = (root: string, args: string[]) => promisify(execFile)('git', ['--no-
 export interface ProjectStep {
   id: string; title: string; goal: string; opening: string; task: string;
   files: string[]; check: string; expected: string; hint: string; reflection: string;
+  deliverable?: string; evidencePrompt?: string;
   anchors?: Record<string, string>;
   nextAction?: {file: string; task: string};
 }
@@ -121,7 +122,7 @@ export async function loadProjectCurriculum(media: string, id: string, root?:str
     if((await stat(file)).size>12000||await realpath(file)!==join(await realpath(root),'.dhimantai-skilling.json'))throw new Error('Invalid guided project metadata.');
     const metadata=JSON.parse(await readFile(file,'utf8'));
     if(typeof metadata.course_id!=='string'||!/^[a-z0-9-]{1,100}$/.test(metadata.course_id)||typeof metadata.requirements!=='string'||metadata.requirements.length>6000||typeof metadata.title!=='string'||metadata.title.length>200)throw new Error('Invalid guided project metadata.');
-    curriculum.title=metadata.title;curriculum.courseId=metadata.course_id;curriculum.language=['python','java','c','sql','javascript','rust','go'].includes(metadata.language)?metadata.language:'python';
+    curriculum.title=metadata.title;curriculum.courseId=metadata.course_id;curriculum.language=['python','java','c','cpp','sql','javascript','rust','go'].includes(metadata.language)?metadata.language:'python';
     curriculum.steps[0].goal=metadata.requirements.slice(0,500);
   }
   if (id === 'rich-reading') curriculum.evidenceFiles = JSON.parse(await readFile(join(media, 'projects/rich-source.json'), 'utf8')).evidenceFiles;

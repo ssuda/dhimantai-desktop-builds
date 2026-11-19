@@ -29,7 +29,7 @@ export async function run() {
   try {
     (vscode.extensions as any).getExtension = (id: string) => id === COLAB_EXTENSION
       ? installed ? { activate: async () => { activations++; await activateProvider?.(); } } : undefined
-      : original.get(id);
+      : id === 'ms-toolsai.jupyter' ? {activate:async()=>({createJupyterServerCollection(){}})} : original.get(id);
     (vscode.commands as any).executeCommand = async (id: string, ...args: any[]) => {
       commands.push(id);
       if (id === 'workbench.extensions.installExtension') {
@@ -128,12 +128,15 @@ export async function run() {
       assert.ok(await vscode.workspace.applyEdit(edit));
       let receive!: (message: any) => Promise<void>;
       const messages: any[] = [], containers: vscode.NotebookDocument[] = [];
+      let posted!: () => void;
+      const ready = new Promise<void>(resolve => {posted=resolve;});
       const binding = bindNotebookRuntime({
-        postMessage: async (message: any) => { messages.push(message); return true; },
+        postMessage: async (message: any) => { messages.push(message); posted(); return true; },
         onDidReceiveMessage: (listener: typeof receive) => { receive = listener; return new vscode.Disposable(() => {}); },
       } as any, async target => { containers.push(target); });
       try {
         await receive({type: 'ready'});
+        await ready;
         assert.equal(messages.at(-1).uri, doc.uri.toString());
         await receive({type: 'runtime', uri: 'file:///another.ipynb', runtime: 'colab'});
         await receive({type: 'runtime', uri: doc.uri.toString(), runtime: 'unknown'});
@@ -158,6 +161,29 @@ export async function run() {
         assert.equal(messages.at(-1).busy, false, 'failed connections can be retried');
         await doc.save();
       } finally { binding.dispose(); }
+    });
+    await check('copying a legacy Colab GPU connection into a course preserves compute and learner edits without Podman', async () => {
+      activateProvider=undefined;
+      await auth.signInWithPassword(EMAIL,PASSWORD);
+      const uri=vscode.Uri.file(join(root,'legacy-colab-gpu.ipynb'));
+      const source="import os, subprocess\nassert 'COLAB_RELEASE_TAG' in os.environ\nsubprocess.check_output(['nvidia-smi'])\nprint('DHIMANTAI_GPU_READY')";
+      await writeFile(uri.fsPath,JSON.stringify({nbformat:4,nbformat_minor:5,
+        metadata:{kernelspec:{name:'python3',language:'python',display_name:'Python 3'}},
+        cells:[{cell_type:'markdown',source:'My GPU setup notes',metadata:{}},
+          {cell_type:'code',source,metadata:{},outputs:[],execution_count:null}]}));
+      const doc=await vscode.workspace.openNotebookDocument(uri);
+      const before=await readFile(uri.fsPath,'utf8');
+      const picksBefore=kernelPicks;
+      await practice.openCopyInCourse(doc);
+      const copy=vscode.window.activeNotebookEditor!.notebook;
+      assert.match(copy.uri.fsPath,/[/\\]colab[/\\]/);
+      assert.equal(copy.metadata.metadata.dhimantai_runtime.provider,'google.colab');
+      assert.equal(copy.metadata.metadata.dhimantai_runtime.accelerator,'gpu');
+      assert.equal(copy.cellAt(0).document.getText(),'My GPU setup notes');
+      assert.equal(copy.cellAt(1).document.getText(),source);
+      assert.equal(await readFile(uri.fsPath,'utf8'),before);
+      assert.equal(kernelPicks,picksBefore+1);
+      assert.equal(copy.cellAt(1).executionSummary?.success,undefined);
     });
     await check('real VS Code kernel picker opens and cancels without the null-context error', async () => {
       // This call crosses the real extension-host bridge, unlike the provider contract checks above.

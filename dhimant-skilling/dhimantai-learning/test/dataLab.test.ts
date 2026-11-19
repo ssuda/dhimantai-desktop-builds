@@ -16,7 +16,7 @@ test('the sample generator reproduces the shipped seeds byte for byte', () => {
   const out = mkdtempSync(join(tmpdir(), 'datalab-seeds-'));
   try {
     execFileSync('python3', [join(extension, 'scripts/datalab/generate_seeds.py'), '--out', out], {stdio: 'pipe'});
-    const shipped = join(extension, 'media/datalab');
+    const shipped = join(extension,'../../content/courses/runtime-assets/data');
     assert.deepEqual(readdirSync(out).sort(), ['about.json', 'clinic.sql', 'school.sql', 'shop.sql']);
     assert.deepEqual(readdirSync(shipped).sort(), readdirSync(out).sort());
     for (const file of readdirSync(out)) assert.ok(readFileSync(join(out, file)).equals(readFileSync(join(shipped, file))), file + ' differs');
@@ -33,7 +33,7 @@ test('the sample generator reproduces the shipped seeds byte for byte', () => {
 });
 
 test('the shop sample suggests the questions AI at Work Chapter 4 walks through, in the same words', () => {
-  const about = JSON.parse(readFileSync(join(extension, 'media/datalab/about.json'), 'utf8'));
+  const about = JSON.parse(readFileSync(join(extension,'../../content/courses/runtime-assets/data/about.json'), 'utf8'));
   const lesson = readFileSync(join(extension, '../../content/courses/ai-at-work/chapters/ch04_documents_data.py'), 'utf8')
     .replace(/\s+/g, ' ');
   const walkThrough = ['Which branch sold the most in May?', 'Which branch sold the most in May, net of returns?',
@@ -119,7 +119,7 @@ test('the client check accepts one read query and refuses anything else', () => 
 
 // ---- Course data through ordinary Instructor turns --------------------------------------------------------------------
 
-const about = JSON.parse(readFileSync(join(extension, 'media/datalab/about.json'), 'utf8'));
+const about = JSON.parse(readFileSync(join(extension,'../../content/courses/runtime-assets/data/about.json'), 'utf8'));
 /** The shipped samples with their real tables and a few long example rows. */
 function samples(): CourseDataset[] {
   return ['shop', 'school', 'clinic'].map(name => ({id: 'sample:' + name, title: about[name].title.split(':')[0], source: 'sample' as const, about: about[name],
@@ -128,13 +128,13 @@ function samples(): CourseDataset[] {
 }
 
 test('AI at Work ships the shop, school and clinic samples; other courses ship none', () => {
-  const profiles: Record<string, Recipe> = JSON.parse(readFileSync(join(extension, 'media/course/profiles.json'), 'utf8'));
+  const profiles: Record<string, Recipe> = JSON.parse(readFileSync(join(extension,'../../content/courses/runtime-profiles.json'), 'utf8'));
   assert.deepEqual(courseData(profiles, 'AI at Work'), ['shop', 'school', 'clinic']);
   assert.deepEqual(profiles['ai at work'].services, ['postgres'], 'the course container has PostgreSQL for the samples');
   assert.deepEqual(courseData(profiles, 'Databases with PostgreSQL'), []);
   assert.deepEqual(courseData(profiles, 'Python'), []);
   assert.deepEqual(courseData({x: {data: ['shop']}}, 'x'), [], 'data without the PostgreSQL service is never preloaded');
-  for (const name of courseData(profiles, 'AI at Work')) assert.ok(readdirSync(join(extension, 'media/datalab')).includes(name + '.sql'));
+  for (const name of courseData(profiles, 'AI at Work')) assert.ok(readdirSync(join(extension,'../../content/courses/runtime-assets/data')).includes(name + '.sql'));
 });
 
 test('the table structure fits the turn: at most 5 example rows per table, trimmed first, then whole tables', () => {

@@ -3,32 +3,37 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { CourseEngine } from './courseEngine';
-import { courseData, Recipe } from './courseRecipe';
+import { courseData } from './courseRecipe';
+import type {CourseConfiguration} from './courseConfiguration';
 import { About, CourseDataset, datasetName, ImportPlan, LabReply, LIMITS, parseCsv, planImport, TableSchema } from './dataLab';
 import { labExecArgs, LabRequest, LabSource, runLab } from './dataLabEngine';
 
 type Lab = <T>(engine: CourseEngine, request: LabRequest) => Promise<T>;
 
 /**
- * Course data for the learning notebook. A course whose recipe lists data (media/course/profiles.json) has its samples
+ * Course data for the learning notebook. A course whose Supabase configuration lists data has its samples
  * preloaded into the course container's read-only lab database once per container; a seed is reloaded only when its
  * checksum changes (media/course/data_lab.py also checks). A learner's CSV or Excel file is added alongside.
  */
 export class CourseData {
   private readonly schemas = new Map<string, TableSchema[]>();
   private plan?: ImportPlan;
+  private configured:CourseConfiguration['datasets'] = {};
 
   constructor(private readonly extensionPath: string, private readonly state: vscode.Memento,
-      private readonly lab: Lab = (engine, request) => runLab(engine.bin, labExecArgs(engine.name), request)) {}
+      private readonly lab: Lab = (engine, request) => runLab(engine.bin, labExecArgs(engine.name), request),
+      private readonly configuration?: (course:string) => Promise<CourseConfiguration>) {}
 
   /** The samples a course ships, from its recipe; empty for every other course. */
   async samples(course: string | undefined): Promise<string[]> {
-    const recipes = JSON.parse(await readFile(join(this.extensionPath, 'media', 'course', 'profiles.json'), 'utf8')) as Record<string, Recipe>;
-    return courseData(recipes, course);
+    if(!course||!this.configuration)return [];
+    const config=await this.configuration(course);
+    this.configured=config.datasets;
+    return courseData({[course.toLowerCase()]:config.recipe}, course);
   }
 
   private async about(): Promise<Record<string, About>> {
-    return JSON.parse(await readFile(join(this.extensionPath, 'media', 'datalab', 'about.json'), 'utf8'));
+    return Object.fromEntries(Object.entries(this.configured).map(([name,item])=>[name,item.about]));
   }
 
   /** Copies the runtime and seeds into the course folder and loads every sample, unless this container already has them. */
@@ -41,7 +46,13 @@ export class CourseData {
       return text;
     };
     const hash = createHash('sha256').update(await copy(join(this.extensionPath, 'media', 'course', 'data_lab.py'), folder('data_lab.py')));
-    for (const name of names) hash.update('\0' + name + '\0' + await copy(join(this.extensionPath, 'media', 'datalab', name + '.sql'), folder('samples', name + '.sql')));
+    for (const name of names) {
+      const item=this.configured[name];
+      if(!item||!/^[a-z][a-z0-9_]{0,31}$/.test(name))throw new Error('Course dataset configuration is missing.');
+      const file=folder('samples',name+'.sql');
+      if(await readFile(file,'utf8').catch(()=>null)!==item.sql){await writeFile(file+'.tmp',item.sql);await rename(file+'.tmp',file);}
+      hash.update('\0'+name+'\0'+item.sql);
+    }
     const key = 'dhimantai.courseData.' + engine.name + '.' + hash.digest('hex').slice(0, 24);
     const cached = this.state.get<Record<string, TableSchema[]>>(key);
     const about = await this.about();
