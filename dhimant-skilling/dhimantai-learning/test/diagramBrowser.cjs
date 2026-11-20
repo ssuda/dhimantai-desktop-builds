@@ -5,13 +5,14 @@ const {resolve} = require('node:path');
 const {createServer} = require('node:http');
 const {chromium} = require('playwright-core');
 const {emptyNotebook, serializeNotebook, importNotebook} = require('../out/src/tutorNotebook');
+const {notebookMessageBar} = require('../out/src/learningComposer');
 const root = resolve(__dirname, '..');
 const policy = readFileSync(resolve(root,'src/learningRoom.ts'),'utf8').match(/<meta http-equiv="Content-Security-Policy"[^\n]+/)[0]
   .replaceAll('${nonce}', 'test').replaceAll('${view.cspSource}', "'self'").replaceAll('${audioPolicy}', "'none'").replaceAll('${origin}', 'https://unused.invalid');
 const html = `<!doctype html><html><head>${policy}<link rel="stylesheet" href="/room.css"><style>body{margin:0;font:14px system-ui,sans-serif}#feed{padding:20px}article{margin:0 auto 12px;padding:20px;max-width:720px}</style></head><body>
-  <button id="wide" hidden></button><button id="latest" hidden></button><button id="tutor" hidden></button><button id="doubt_solver" hidden></button><button id="end" hidden></button><button id="sound" hidden></button><span id="status"></span>
+  <button id="wide" hidden></button><button id="latest" hidden></button><button id="tutor" hidden></button><button id="doubt_solver" hidden></button><button id="end" hidden></button><span id="status"></span>
   <input id="follow-code" type="checkbox" hidden><input id="stuck-hints" type="checkbox" hidden><small id="code-observer-status"></small>
-  <main id="feed" data-diagram-renderer="/diagramEngines.js"></main><form id="composer" hidden><textarea id="message"></textarea><button id="send"></button><button id="teach-back"></button><button id="video"></button></form>
+  <main id="feed" data-diagram-renderer="/diagramEngines.js"></main><div hidden>${notebookMessageBar('Instructor', false, '<button type="button" id="sound"></button>')}</div>
   <script nonce="test">
   window.sent=[];window.acquireVsCodeApi=()=>({postMessage:m=>sent.push(m)});
   window.peer={identity:'worker',isAgent:true,trackPublications:new Map()};window.rooms=[];

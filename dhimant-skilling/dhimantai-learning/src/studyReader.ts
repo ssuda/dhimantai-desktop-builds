@@ -6,6 +6,7 @@ import { Api } from './api';
 import { trustedRoomUrl } from './coachAudio';
 import { Environment, EnvironmentName } from './environments';
 import { CompanionCourse, readingCursor, readingFontSize, readingUrl, StudyChoice, StudySource } from './studyContent';
+import { bindDictation } from './dictation';
 import { studyHtml } from './studyHtml';
 import { downloadStudyDocument } from './studyDocument';
 import { STUDY_ENABLED } from './desktopFeatures';
@@ -138,7 +139,7 @@ export async function registerStudyReader(context: vscode.ExtensionContext, auth
   function html(view: vscode.Webview) {
     const asset = (path: string) => view.asWebviewUri(vscode.Uri.joinPath(media,path));
     const nonce = randomBytes(16).toString('hex');
-    view.html = studyHtml(asset, view.cspSource, nonce);
+    view.html = studyHtml(asset, view.cspSource, nonce, vscode.env.appName === 'dhimantAI');
   }
 
   function open(target?: unknown) {
@@ -148,7 +149,10 @@ export async function registerStudyReader(context: vscode.ExtensionContext, auth
       panel = vscode.window.createWebviewPanel('dhimantai.study', 'dhimantAI Study', vscode.ViewColumn.One,
         {enableScripts:true, retainContextWhenHidden:true, localResourceRoots:[media]});
       selectCopilotCourse = copilot?.bindPanel(panel);
-      panel.onDidDispose(() => { cancel(); epoch++; panel = undefined; active = undefined; initialized = false; });
+      const dictation = bindDictation(panel.webview, () => panel?.visible && active && account && env === environment() &&
+        vscode.workspace.getConfiguration('dhimantai').get('aiAssistance', true) ? {key:active.key, api:api(),
+          language:context.globalState.get<string>(`dhimantai.coachingLanguage.${env}.${account}`)} : undefined);
+      panel.onDidDispose(() => { dictation.dispose(); cancel(); epoch++; panel = undefined; active = undefined; initialized = false; });
       panel.webview.onDidReceiveMessage(message => { void handle(message).catch(error => send({type:'error', message:fail(error)})); });
       panel.onDidChangeViewState(e => { void send({type:'visibility',visible:e.webviewPanel.visible}); });
       html(panel.webview);

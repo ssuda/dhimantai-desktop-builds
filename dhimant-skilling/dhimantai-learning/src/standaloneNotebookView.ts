@@ -15,7 +15,7 @@ export function standaloneNotebookView(media: vscode.Uri, surface: CoachSurface)
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};">
 <meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="${webview.asWebviewUri(vscode.Uri.joinPath(media, 'coach.css'))}"></head>
 <body>${notebookRuntimeControls(webview, media, nonce)}
-<p class="muted">To learn with Instructor or practise an exercise, open <strong>DhimantAI Practice</strong> in the Explorer.</p>
+<p class="muted">To learn with Instructor or practise an exercise, open <strong>dhimantAI Practice</strong> in the Explorer.</p>
 <script nonce="${nonce}">const api = acquireVsCodeApi(); window.installNotebookRuntime?.(api); api.postMessage({type: 'ready'});</script></body></html>`;
     return vscode.Disposable.from(surface.bindRuntime(webview));
   };

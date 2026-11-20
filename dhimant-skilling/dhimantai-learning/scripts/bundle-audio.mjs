@@ -18,6 +18,8 @@ await build({entryPoints: [resolve(root, 'webview/coachMarkdown.ts')], bundle: t
   outfile: resolve(root, 'media/coachMarkdown.js'), format: 'iife', target: 'es2022',
   assetNames: 'fonts/[name]', loader: {'.woff2': 'file', '.woff': 'file', '.ttf': 'file'}});
 const outdir = resolve(root, 'media/learning-room');
+await build({entryPoints:[resolve(root,'webview/composer.ts'),resolve(root,'webview/composer.css')], bundle:true, minify:true,
+  outdir, format:'iife', globalName:'LearningComposer', target:'es2022'});
 await build({entryPoints:[resolve(root, 'webview/diagramEngines.ts')], bundle:true, minify:true,
   outfile:resolve(outdir, 'diagramEngines.js'), format:'iife', globalName:'DhimantDiagrams',
   footer:{js:'globalThis.DhimantDiagrams = DhimantDiagrams;'}, target:'es2022', legalComments:'eof'});

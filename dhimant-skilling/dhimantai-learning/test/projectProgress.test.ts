@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { loadProjectCurriculum, ProjectCheckpoint, stepDigests } from '../src/projectCore';
-import { projectMilestones, projectOtherHelp, restoreProjectProgress, smallerProjectStep } from '../src/projectProgress';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { checkDigest, createReadingProject, loadProjectCurriculum, ProjectCheckpoint, projectSnapshot, stepDigests } from '../src/projectCore';
+import { checkpointCurrent, checkpointEvidence, readingGuidance, projectMilestones, projectOtherHelp, restoreProjectProgress, smallerProjectStep } from '../src/projectProgress';
 
 const media = join(__dirname, '../../media');
 const checkpoint: ProjectCheckpoint = {step: 'map', note: 'Application in shelf/, assertions in tests/.', digest: 'original',
@@ -72,4 +74,55 @@ test('editing one milestone’s files leaves other completed milestones complete
   // A deleted file is a change too.
   const removed = new Map(files); removed.delete('course_agent/search.py');
   assert.notEqual(stepDigests(plan, removed)[search.id], before.steps[search.id]);
+});
+
+test('Shelf checkpoints survive later notebook work, preserve old baselines, and flag an edit to saved evidence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'shelf-checkpoints-')), folder = join(root, 'shelf');
+  try {
+    await createReadingProject(media, 'shelf-reading', folder);
+    const curriculum = await loadProjectCurriculum(media, 'shelf-reading');
+    const [map, entry] = curriculum.steps;
+    const file = join(folder, 'READING_NOTES.md');
+    let notes = (await readFile(file, 'utf8')).replace('## Repository map and question',
+      '## Repository map and question\n- shelf/ application\n- tests/ assertions\n- books.json catalog');
+    await writeFile(file, notes);
+    const snapshot = () => projectSnapshot(folder, curriculum, []);
+    const initial = await snapshot(), progress = restoreProjectProgress(curriculum);
+    const legacy = {...checkpoint, completed: true, digest: initial.digest, stepDigest: initial.steps.map};
+    assert.ok(checkpointCurrent(legacy, initial));
+    progress.checkpoints.map = {...legacy, ...checkpointEvidence(map, initial)};
+    notes = notes.replace('## Call and data trace (paths and symbols)',
+      '## Call and data trace (paths and symbols)\n- __main__.py calls main and load to read books.json.');
+    const unsaved = await projectSnapshot(folder, curriculum, [], new Map([['READING_NOTES.md', notes]]));
+    const prompt = (index: number, current: typeof initial) => readingGuidance(curriculum, index,
+      projectMilestones(curriculum, progress, current), progress, {state: 'not_run'}, current);
+    assert.match(prompt(1, unsaved)!, /Open .*__main__/);
+    await writeFile(file, notes);
+    const traced = await snapshot();
+    assert.equal(checkDigest(initial, map), checkDigest(traced, map), 'writing notes does not change what the command runs');
+    assert.equal(checkpointCurrent(legacy, traced), false, 'a stale old baseline still needs the learner’s review');
+    assert.match(prompt(1, traced)!, /python -m shelf list/);
+    progress.checkpoints.entry = {...checkpoint, step: entry.id, note: 'load read Dune.', completed: true,
+      digest: traced.digest, ...checkpointEvidence(entry, traced)};
+    const status = (s: typeof initial) => projectMilestones(curriculum, progress, s).slice(0, 2).map(m => m.status);
+    assert.deepEqual(status(traced), ['complete', 'complete']);
+    assert.match(prompt(2, traced)!, /Choose one book/, 'the prior trace does not count as work on the next milestone');
+    const extended = notes.replace('to read books.json.', 'to read books.json.\n- load converts a JSON record to a Book object.');
+    await writeFile(file, extended);
+    const appended = await snapshot();
+    assert.deepEqual(status(appended), ['complete', 'complete'], 'appending to the same heading preserves the entry checkpoint');
+    assert.match(prompt(2, appended)!, /unittest tests.test_storage/);
+    await writeFile(file, extended.replace('tests/ assertions', 'tests/ revised purpose'));
+    const edited = await snapshot();
+    assert.deepEqual(status(edited), ['review', 'complete']);
+    const restored = restoreProjectProgress(curriculum, JSON.parse(JSON.stringify({progress})));
+    assert.equal(restored.checkpoints.map.at, checkpoint.at);
+    assert.equal(restored.checkpoints.map.note, checkpoint.note);
+    progress.checkpoints.map = {...restored.checkpoints.map, digest: edited.digest, ...checkpointEvidence(map, edited)};
+    assert.deepEqual(status(edited), ['complete', 'complete']);
+    await writeFile(join(folder, 'shelf/cli.py'), '# CLI source changed');
+    const newCode = await snapshot();
+    assert.notEqual(checkDigest(newCode, entry), checkDigest(traced, entry));
+    assert.deepEqual(status(newCode), ['complete', 'review']);
+  } finally { await rm(root, {recursive: true, force: true}); }
 });

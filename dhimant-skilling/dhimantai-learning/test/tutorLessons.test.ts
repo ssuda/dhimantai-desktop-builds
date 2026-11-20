@@ -1,3 +1,4 @@
+import { notebookMessageBar } from '../src/learningComposer';
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -8,8 +9,8 @@ import { chapterId, lessonPicker, selectLesson } from './lessonPicker';
 
 test('lesson chooser handles empty/offline catalogs and isolates drafts, stale restores and account changes', async () => {
   const dom = new JSDOM('<!doctype html>' + lessonPicker + '<button id="reload-lessons"></button>' +
-    ['wide','latest','tutor','doubt_solver','end','sound','send','teach-back','video'].map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('') +
-    '<span id="status"></span><input id="follow-code"><input id="stuck-hints"><small id="code-observer-status"></small><main id="feed"></main><form id="composer"><textarea id="message"></textarea></form>',
+    ['wide','latest','tutor','doubt_solver','end'].map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('') +
+    '<span id="status"></span><input id="follow-code"><input id="stuck-hints"><small id="code-observer-status"></small><main id="feed"></main>' + notebookMessageBar('Instructor', false, '<button type="button" id="sound"></button>'),
     {runScripts:'outside-only', url:'https://webview.example'});
   const w = dom.window, sent: any[] = [];
   w.LivekitClient = {RoomEvent:{}};

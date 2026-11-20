@@ -29,7 +29,7 @@ export async function run(): Promise<void> {
       assert.doesNotMatch(driver.document().body.textContent!, /institute|roll number|phone|SMS/i);
       assert.match(driver.panel!.title, /Sign up/);
       await vscode.commands.executeCommand('dhimantai.courseCatalog');
-      assert.ok(vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tab.label === 'DhimantAI Course Catalog')), 'an open account page does not block other commands');
+      assert.ok(vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tab.label === 'dhimantAI Course Catalog')), 'an open account page does not block other commands');
       await driver.navigate();
       assert.deepEqual([...driver.document().querySelectorAll('input')].map(input => input.id), ['email','password']);
       assert.match(driver.panel!.title, /Sign in/);
@@ -53,7 +53,7 @@ export async function run(): Promise<void> {
       const state = await call('/__state');
       assert.ok(state.users[0].profile);
       assert.equal(state.signups, 1, 'repeated submission creates only one identity');
-      assert.ok(vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tab.label === 'DhimantAI Course Catalog')));
+      assert.ok(vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tab.label === 'dhimantAI Course Catalog')));
     });
     await check('sign-in errors stay inline, clear passwords, and allow a successful retry', async () => {
       await auth.signOut();

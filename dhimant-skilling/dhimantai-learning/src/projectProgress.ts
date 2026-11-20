@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { checkCommand, checkState } from './projectCore';
 import type { ProjectCheckpoint, ProjectCurriculum, ProjectSnapshot, ProjectStep } from './projectCore';
 
 export interface ProjectProgress {
@@ -16,22 +18,76 @@ export function restoreProjectProgress(curriculum: ProjectCurriculum,
   return {visited: [...new Set([...(saved?.progress?.visited ?? []), ...Object.keys(checkpoints)])].filter(id => ids.has(id)), checkpoints};
 }
 
-/**
- * A completed milestone needs review only when its own files change. Pass the snapshot (or its step digests) so
- * checkpoints saved with stepDigest compare per milestone; a bare project digest keeps the older whole-project rule.
- */
-export function projectMilestones(curriculum: ProjectCurriculum, progress: ProjectProgress,
-    snapshot: string | Pick<ProjectSnapshot, 'digest' | 'steps'>) {
-  const digest = typeof snapshot === 'string' ? snapshot : snapshot.digest;
-  const steps = typeof snapshot === 'string' ? undefined : snapshot.steps;
+type EvidenceSnapshot = Pick<ProjectSnapshot, 'digest' | 'steps' | 'reading'>;
+
+function readingDigest(stepId: string, reading: NonNullable<ProjectSnapshot['reading']>, counts: Record<string, number>) {
+  const hash = createHash('sha256').update(reading.sources[stepId]);
+  for (const section of Object.keys(counts).sort()) {
+    hash.update(JSON.stringify([section, reading.sections[section]?.slice(0, counts[section]) ?? []]));
+  }
+  return hash.digest('hex');
+}
+
+export function checkpointEvidence(step: ProjectStep, snapshot: EvidenceSnapshot) {
+  if (!step.guide || !snapshot.reading) return {stepDigest: snapshot.steps[step.id]};
+  const {reading} = snapshot;
+  const noteLines = Object.fromEntries(step.guide.sections.map(name => [name, reading.sections[name]?.length ?? 0]));
+  return {noteLines, stepDigest: readingDigest(step.id, reading, noteLines)};
+}
+
+export function checkpointCurrent(checkpoint: ProjectCheckpoint, snapshot: string | EvidenceSnapshot) {
+  if (typeof snapshot === 'string') return checkpoint.digest === snapshot;
+  if (checkpoint.noteLines) {
+    return snapshot.reading ? checkpoint.stepDigest === readingDigest(checkpoint.step, snapshot.reading, checkpoint.noteLines)
+      : checkpoint.digest === snapshot.digest;
+  }
+  if (checkpoint.stepDigest && snapshot.steps?.[checkpoint.step]) return checkpoint.stepDigest === snapshot.steps[checkpoint.step];
+  return checkpoint.digest === snapshot.digest;
+}
+
+export function projectMilestones(curriculum: ProjectCurriculum, progress: ProjectProgress, snapshot?: string | EvidenceSnapshot) {
   return curriculum.steps.map(step => {
     const checkpoint = progress.checkpoints[step.id];
-    const current = checkpoint?.stepDigest && steps?.[step.id] ? checkpoint.stepDigest === steps[step.id]
-      : checkpoint?.digest === digest; // Older checkpoints (or callers) only know the whole-project digest.
     return {id: step.id, status: checkpoint?.completed
-      ? (current ? 'complete' : 'review')
+      ? (snapshot && !checkpointCurrent(checkpoint, snapshot) ? 'review' : 'complete')
       : (checkpoint || progress.visited.includes(step.id) ? 'in_progress' : 'not_started')};
   });
+}
+
+/** Prompts follow observable work. The learner always controls the check and the self-reported checkpoint. */
+export function readingGuidance(curriculum: ProjectCurriculum, index: number, milestones: ReturnType<typeof projectMilestones>,
+    progress: ProjectProgress, check: ReturnType<typeof checkState>, snapshot?: ProjectSnapshot) {
+  const step = curriculum.steps[index], guide = step.guide;
+  if (!guide) return;
+  if (!snapshot?.reading) return 'Coach could not read the project files. Open the milestone instructions below to continue.';
+  if (milestones[index].status === 'review') return 'Revisit your saved evidence for this milestone. After reviewing the changes, select Save changes to confirm it.';
+  if (milestones[index].status === 'complete') {
+    const next = milestones.findIndex((m, i) => i > index && m.status !== 'complete');
+    const remaining = next >= 0 ? next : milestones.findIndex(m => m.status !== 'complete');
+    if (remaining >= 0) return `Checkpoint saved. Select “${curriculum.steps[remaining].title}” to continue.`;
+    return index === milestones.length - 1 ? 'All milestones are marked complete. Select Submit project when you are ready.'
+      : 'All milestones are marked complete. Open the final milestone to submit your project.';
+  }
+  if (check.state === 'changed') return 'The project files used by the command changed. Save your files and select Run this step to check the current version.';
+  if (check.state === 'current' && check.status !== 'passed') {
+    if (check.status === 'runtime_error') return 'Open Project tools, then Runtime, and select Set up and verify environment. Then retry Run this step.';
+    return 'Inspect the command output below. Use I’m stuck for help with the failure, then retry Run this step.';
+  }
+  // Several milestones share a heading. Earlier checkpoints' lines do not establish work on a later task.
+  const section = guide.sections[0];
+  // The final handoff deliberately reuses the trace built in earlier milestones.
+  const priorCount = index === curriculum.steps.length - 1 ? 0 : Math.max(0, ...milestones.slice(0, index).map(m =>
+    m.status === 'complete' ? progress.checkpoints[m.id].noteLines?.[section] ?? 0 : 0));
+  const lines = snapshot.reading.savedSections[section] ?? [];
+  const notes = lines.slice(priorCount).join('\n').toLowerCase();
+  const hasNotes = guide.cues.every(cue => notes.includes(cue.toLowerCase()));
+  // Cues can suggest a run, but a learner can use different wording and choose to run the command themselves.
+  if (!notes || (!hasNotes && check.state !== 'current')) return check.state === 'current' ? 'The command passed. ' + guide.prepare : guide.prepare;
+  if (check.state === 'current') {
+    return ['The command passed.', guide.afterRun, step.evidencePrompt, 'Enter your answer in Checkpoint and select Complete milestone.']
+      .filter(Boolean).join(' ');
+  }
+  return `${guide.beforeRun} Select Run this step to execute \`${checkCommand(step)}\` and inspect its output.`;
 }
 
 export function projectOtherHelp(progress: ProjectProgress, current: ProjectCheckpoint['externalHelp']) {

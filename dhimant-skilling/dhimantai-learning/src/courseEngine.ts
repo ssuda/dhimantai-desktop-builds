@@ -1,3 +1,4 @@
+import type { ProjectRuntime } from './projectRuntime';
 import { spawn } from 'node:child_process';
 import { isAbsolute, relative, sep } from 'node:path';
 import type { Execution, PublicTest } from './api';
@@ -19,6 +20,7 @@ export function sameRows(expected: string, actual: string, ordered: boolean): bo
 
 export class CourseEngine {
   pythonEnvironment = false;
+  project?: ProjectRuntime;
   constructor(
     readonly bin: string,
     readonly name: string,
@@ -33,6 +35,11 @@ export class CourseEngine {
   }
 
   path(local: string) {
+    if (this.project) {
+      const rel = relative(this.project.folder, local);
+      if (!isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + sep))
+        return '/course/' + this.project.mount + (rel ? '/' + rel.split(sep).join('/') : '');
+    }
     const rel = relative(this.root, local);
     if (isAbsolute(rel) || rel === '..' || rel.startsWith('..' + sep))
       throw new Error('The file is outside this course folder.');

@@ -23,7 +23,7 @@ export function notebookLink(metadata: any): NotebookLink {
       || typeof link.account_id !== 'string' || !link.account_id || link.account_id.length > 100
       || !Object.hasOwn(ENVIRONMENTS, link.environment) || !['practice', 'doubt_practice'].includes(link.workspace)
       || !Number.isSafeInteger(link.draft_version) || link.draft_version < 0 || !languages.includes(link.language)) {
-    throw new Error('This notebook has no valid DhimantAI question link. Export it again from the question in the updated app, then bring your code into that notebook.');
+    throw new Error('This notebook has no valid dhimantAI question link. Export it again from the question in the updated app, then bring your code into that notebook.');
   }
   // Whitelist fields: a notebook cannot supply an API URL or credentials.
   return { protocol: 1, exercise_id: link.exercise_id, export_id: link.export_id, account_id: link.account_id,

@@ -6,8 +6,8 @@ import {JSDOM} from 'jsdom';
 import {studyHtml} from '../src/studyHtml';
 const tick=()=>new Promise(r=>setTimeout(r,0));
 function surface() {
-  const dom=new JSDOM(studyHtml(path=>path,'https://webview.example','test'),{url:'https://webview.example',runScripts:'outside-only'});
-  const w=dom.window,sent:any[]=[],rpcs:any[]=[],rooms:Room[]=[];
+  const dom=new JSDOM(studyHtml(path=>path,'https://webview.example','test',true),{url:'https://webview.example',runScripts:'outside-only'});
+  const w=dom.window,sent:any[]=[],rpcs:any[]=[],uploads:any[]=[],rooms:Room[]=[];
   w.HTMLElement.prototype.scrollIntoView=()=>{};
   const dialog=w.document.querySelector('dialog')!;
   dialog.showModal=()=>{dialog.open=true;};dialog.close=()=>{dialog.open=false;};
@@ -15,7 +15,7 @@ function surface() {
   const peer={identity:'worker',isAgent:true,trackPublications:new Map()};
   class Room{
     listeners=new Map<string,Function>();remoteParticipants=new Map([['worker',peer]]);closed=false;
-    localParticipant={registerRpcMethod(){},performRpc:async(r:any)=>{rpcs.push(r);if(deferNext){deferNext=false;return new Promise<string>(resolve=>{finishOld=resolve;});}const reply=nextReply;nextReply='ok';return reply;}};
+    localParticipant={registerRpcMethod(){},streamBytes:async (options:any)=>{uploads.push(options);return {write:async()=>{},close:async()=>{}};},performRpc:async(r:any)=>{rpcs.push(r);if(deferNext){deferNext=false;return new Promise<string>(resolve=>{finishOld=resolve;});}const reply=nextReply;nextReply='ok';return reply;}};
     constructor(){rooms.push(this);}on(name:string,fn:Function){this.listeners.set(name,fn);}
     async connect(){}async disconnect(){this.closed=true;}registerTextStreamHandler(){}
   }
@@ -33,7 +33,7 @@ function surface() {
   const grant=async(key='first')=>{post({type:'studyGrant',documentKey:key,requestId:sent.filter(m=>m.type==='studyConnect').at(-1).requestId,grant:{url:'unused',token:'unused'}});await tick();await tick();};
   const input=(text:string)=>{const field=el('question') as HTMLTextAreaElement;field.value=text;field.dispatchEvent(new w.Event('input'));return field;};
   w.eval(readFileSync(resolve(__dirname,'../../media/study/study.js'),'utf8'));chapter();
-  return {w,dom,sent,rpcs,rooms,dialog,post,el,button,chapter,publish,request,grant,input,readerDestroys:()=>readerDestroys,
+  return {w,dom,sent,rpcs,uploads,rooms,dialog,post,el,button,chapter,publish,request,grant,input,readerDestroys:()=>readerDestroys,
     defer:()=>{deferNext=true;},finish:(reply:string)=>finishOld!(reply),fail:()=>{nextReply='{"message":"Try again"}';}};
 }
 
@@ -220,4 +220,29 @@ test('crop follow-ups retain complete exchanges and show authored Your turn befo
     assert.equal(el('response').querySelector('.study-turn-marker')!.textContent,'Your turn');
     assert.match(el('response').querySelector('.study-your-turn')!.textContent!,/Predict[\s\S]*What does/);
   } finally {s.dom.window.close();}
+});
+
+test('Study sends a staged photo with its chapter question only after Send', async () => {
+  const s = surface(), {w, button, el} = s;
+  try {
+    button('open-study').click();
+    assert.equal(button('audio-camera').disabled, false);
+    w.URL.createObjectURL = () => 'blob:photo'; w.URL.revokeObjectURL = () => {};
+    const photo = new w.File(['image'], 'notes.jpg', {type:'image/jpeg'});
+    photo.arrayBuffer = async () => new Uint8Array([1,2,3,4,5]).buffer;
+    const paste = new w.Event('paste', {bubbles:true, cancelable:true});
+    Object.defineProperty(paste, 'clipboardData', {value:{files:[photo]}});
+    el('question').dispatchEvent(paste);
+    assert.ok(el('attachments').querySelector('img'));
+    assert.equal(s.uploads.length, 0);
+    button('send').click(); await s.grant();
+    assert.equal(s.uploads.length, 1);
+    const rpc = s.rpcs.find(r => r.method === 'study_question');
+    const request = JSON.parse(rpc.payload);
+    assert.equal(request.source_id, 'book:test');
+    assert.equal(request.image_submission_id, s.uploads[0].attributes.image_submission_id);
+    assert.equal(request.image_count, 1); assert.match(request.question, /attached/);
+    s.publish({method:'display_on_screen',content:'About the notes.',study_request_id:request.request_id});
+    assert.equal(el('attachments').querySelector('img'), null);
+  } finally { w.close(); }
 });

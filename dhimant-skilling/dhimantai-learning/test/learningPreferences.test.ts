@@ -29,8 +29,8 @@ test('microphone stop reports a failed submission and never restarts capture', a
   const devices = new exports.LearningDevices({current:()=>connection,
     capture:async()=>{captures++;return {stop:()=>{stopped++;},mediaStreamTrack:{addEventListener(){}}};},
     pause:async()=>true,changed:()=>{},report:(message:string)=>messages.push(message)});
-  await devices.toggle('microphone');
-  await devices.toggle('microphone');
+  await devices.toggle();
+  await devices.toggle();
   await new Promise(resolve=>setTimeout(resolve,0));
   assert.equal(stopped,1); assert.equal(captures,1);
   assert.match(messages.at(-1)!, /response could not be confirmed/);

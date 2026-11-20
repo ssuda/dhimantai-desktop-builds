@@ -17,7 +17,7 @@ test('written Practice escapes content, submits explicit evidence and never offe
   dom.window.eval(dom.window.document.querySelector('script')!.textContent!);
   assert.equal(dom.window.document.querySelectorAll('script').length,1);
   assert.match(dom.window.document.body.textContent!,/without completing this task/);
-  assert.deepEqual([...dom.window.document.querySelectorAll('button')].map(b=>b.id),['attach','detach','review','hint']);
+  assert.deepEqual([...dom.window.document.querySelectorAll('button')].map(b=>b.id),['audio-microphone','attach','detach','review','hint']);
   (dom.window.document.querySelector('#attach') as HTMLButtonElement).click();
   assert.equal(sent.pop().type,'attach');
   dom.window.dispatchEvent(new dom.window.MessageEvent('message',{data:{type:'attached',names:['plan.jpg'],error:''}}));
@@ -55,5 +55,55 @@ test('written hints climb the shared help ladder one step at a time',()=>{
   dom.window.dispatchEvent(new dom.window.MessageEvent('message',{data:{type:'helpState',next:3,waiting:false}}));
   assert.equal(doc.querySelector('#hint')!.textContent,'Show me where to look');
   assert.equal(doc.querySelector<HTMLElement>('#help-note')!.hidden,true);
+  dom.window.close();
+});
+
+test('plays authored CRT audio and preserves the column alignment of text figures', () => {
+  const base = 'https://db.vidyai.in/storage/v1/object/public/vidyai/course-media/crt/';
+  const clip = base + 'a'.repeat(64) + '/entry.mp3';
+  const question = 'Play [entry recording](' + clip + ')\n\n```text\nX.   ..\n.X   XX\n```\n'
+    + '[external](https://example.org/file.mp3) [invalid](' + base + '../other.mp3)';
+  const dom = new JSDOM(writtenHtml({id:'q', course:'CRT', question}, {answer:'', assistance:'', usedTutor:false}, 'test'));
+  const doc = dom.window.document;
+  assert.equal(doc.querySelectorAll('audio').length, 1);
+  assert.equal(doc.querySelector('audio')!.getAttribute('src'), clip);
+  assert.equal(doc.querySelector('audio')!.getAttribute('preload'), 'none');
+  assert.equal(doc.querySelector('audio')!.hasAttribute('autoplay'), false);
+  assert.equal(doc.querySelector('audio')!.hasAttribute('controls'), true);
+  assert.equal(doc.querySelector('code.figure')!.textContent, 'X.   ..\n.X   XX');
+  assert.ok(doc.querySelector('meta[http-equiv]')!.getAttribute('content')!.includes('media-src ' + base));
+});
+
+test('the first listening capture and transcript reach the webview only after a host response', () => {
+  const {practiceReviews} = require('../src/crtPracticeReview');
+  const [id, guide] = Object.entries(practiceReviews).find(([, value]: any) =>
+    value.transcript?.includes('design lab')) as [string, {transcript: string; review: string}];
+  const html = writtenHtml({id, course:'Communication', question:'Listen and record two messages.'},
+    {answer:'', assistance:'', usedTutor:false}, 'test');
+  assert.ok(!html.includes(guide.transcript) && !html.includes(guide.review));
+  const dom = new JSDOM(html, {runScripts:'outside-only'});
+  const messages: any[] = [];
+  (dom.window as any).acquireVsCodeApi = () => ({postMessage:(msg: any) => messages.push(msg)});
+  const document = dom.window.document;
+  dom.window.eval(document.querySelector('script')!.textContent!);
+  assert.equal(messages.pop().action, 'read');
+  document.querySelector<HTMLButtonElement>('#capture')!.click();
+  assert.equal(messages.length, 0);
+  document.querySelector<HTMLButtonElement>('#accommodation')!.click();
+  assert.equal(messages.pop().action, 'transcript');
+  dom.window.dispatchEvent(new dom.window.MessageEvent('message', {data:{
+    type:'firstCapture', supported:true, transcript:guide.transcript
+  }}));
+  assert.equal(document.querySelector('#guide')!.textContent, '');
+  const answer = document.querySelector<HTMLTextAreaElement>('#answer')!;
+  answer.value = 'My first response';
+  document.querySelector<HTMLButtonElement>('#capture')!.click();
+  assert.equal(messages.pop().answer, answer.value);
+  dom.window.dispatchEvent(new dom.window.MessageEvent('message', {data:{
+    type:'firstCapture', supported:true, answer:answer.value, transcript:guide.transcript, review:guide.review
+  }}));
+  assert.equal(document.querySelector('#guide')!.textContent, guide.review);
+  assert.match(document.querySelector('#original')!.textContent!, /Transcript-supported first response/);
+  assert.ok(document.querySelector<HTMLButtonElement>('#capture')!.hidden);
   dom.window.close();
 });

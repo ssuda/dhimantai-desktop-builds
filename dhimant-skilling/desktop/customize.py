@@ -38,6 +38,10 @@ def customize(root):
     customize_navigation(root)
     customize_appearance(root)
     configure_app_bar(root)
+    # The catalog or chapter click starts the lesson. Its WebRTC audio element
+    # attaches later, after the grant and agent handoff, often in a new webview.
+    replace(root, 'src/vs/platform/windows/electron-main/windows.ts',
+        "autoplayPolicy: 'user-gesture-required'", "autoplayPolicy: 'document-user-activation-required'")
     configure_course_copilot(root)
     configure_learning_updates(root)
     for source in (ROOT / 'overlays').rglob('*'):
@@ -148,7 +152,23 @@ def customize_navigation(root):
     replace(root, views, '\t\t\t\t\t\torder: order,', "\t\t\t\t\t\torder: item.id === 'dhimantai.learningNavigation' ? -10 : order,")
 
 
+# Developer tool containers a new learner does not need on the Activity Bar.
+# They stay registered: opening one (a debugging lesson, Git & GitHub, the
+# Command Palette or the View menu) shows it while it is open, and a learner
+# can pin it. Only containers new to a profile are affected, so existing
+# layouts and explicit pins are kept.
+LEARNER_UNPINNED_CONTAINERS = ('workbench.view.search', 'workbench.view.scm', 'workbench.view.debug', 'workbench.view.extensions')
+
+
+def hide_developer_activity(root):
+    ids = ', '.join(f"'{c}'" for c in LEARNER_UNPINNED_CONTAINERS)
+    replace(root, 'src/vs/workbench/browser/parts/paneCompositeBar.ts',
+        '\t\t\tif (!cachedViewContainer) {\n\t\t\t\tthis.compositeBar.pin(viewContainer.id);',
+        f'\t\t\tif (!cachedViewContainer && ![{ids}].includes(viewContainer.id)) {{\n\t\t\t\tthis.compositeBar.pin(viewContainer.id);')
+
+
 def hide_developer_views(root):
+    hide_developer_activity(root)
     replace(root, 'src/vs/workbench/contrib/outline/browser/outline.contribution.ts',
         'hideByDefault: false,', 'hideByDefault: true,')
     replace(root, 'src/vs/workbench/contrib/timeline/browser/timeline.contribution.ts',

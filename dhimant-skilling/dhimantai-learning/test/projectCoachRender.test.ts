@@ -2,15 +2,31 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { messageComposer } from '../src/learningComposer';
 import { JSDOM } from 'jsdom';
 
-function panel() {
+function panel(withSpeaker = false) {
   // Use the actual renderer's HTML, so missing controls fail this test.
   const source = readFileSync(join(__dirname, '../../src/projectCoach.ts'), 'utf8');
-  const html = source.slice(source.indexOf('<body>'), source.indexOf('</body>') + 7).replace(/<script[\s\S]*?<\/script>/g, '');
+  const html = source.slice(source.indexOf('<body>'), source.indexOf('</body>') + 7).replace(/<script[\s\S]*?<\/script>/g, '')
+    .replace(/\$\{messageComposer\(\{assistant:'Coach',[\s\S]*?support:`([\s\S]*?)`\}\)\}/, (_, support) =>
+      messageComposer({assistant:'Coach', maxlength:600, sendId:'ask', camera:true, audio:withSpeaker ? '<div id="coach-audio"><button type="button" id="audio-toggle"></button><span id="audio-status"></span></div>' : '', support}));
   const dom = new JSDOM(html, {runScripts: 'outside-only'}), sent: any[] = [];
   (dom.window as any).acquireVsCodeApi = () => ({postMessage: (m: unknown) => sent.push(m)});
   dom.window.eval(readFileSync(join(__dirname, '../../media/coachMarkdown.js'), 'utf8'));
+  dom.window.eval(readFileSync(join(__dirname, '../../media/learning-room/composer.js'), 'utf8') + ';window.LearningComposer=LearningComposer');
+  if (withSpeaker) {
+    // JSDOM needs a stand-in for the audio output activated by the speaker click.
+    Object.assign(dom.window, {AudioContext: class {
+      createMediaStreamDestination() { return {stream: {getTracks: () => []}}; }
+      async resume() {}
+      async close() {}
+    }});
+    dom.window.HTMLMediaElement.prototype.play = async () => {};
+    dom.window.HTMLMediaElement.prototype.pause = () => {};
+    dom.window.eval(readFileSync(join(__dirname, '../../media/learning-room/audioControls.js'), 'utf8'));
+    dom.window.eval(readFileSync(join(__dirname, '../../media/coachAudio.js'), 'utf8'));
+  }
   dom.window.eval(readFileSync(join(__dirname, '../../media/projectCoach.js'), 'utf8'));
   const state = {type: 'state', scope: 'owner:project', conversationId: 'first', revision: 1,
     title: 'Project', steps: ['One'], step: 0, current: {files: [], expected: ''}, runtime: 'course', courseAvailable: true,
@@ -162,8 +178,12 @@ test('milestone navigation shows completion honestly and preserves separate draf
     assert.equal(sent.at(-1).completed, false);
     assert.equal(sent.at(-1).note, 'Map evidence');
     post({steps, milestones: [{status: 'review'}, {status: 'in_progress'}], checkpoint, revision: 5});
-    assert.match(doc.getElementById('progressText')!.textContent!, /0\/2 marked complete · 1 to review/);
-    assert.equal(button('checkpoint').textContent, 'Complete milestone', 'changed evidence requires an explicit new completion choice');
+    assert.equal(doc.getElementById('progressText')!.textContent, '1/2 marked complete');
+    assert.match(doc.getElementById('reviewTitle')!.textContent!, /Review changes · 1. Map/);
+    assert.match(doc.getElementById('reviewList')!.textContent!, /Files used by these checkpoints changed/);
+    assert.equal(button('checkpoint').textContent, 'Save changes');
+    assert.equal(button('saveDraft').textContent, 'Mark in progress');
+    assert.match(doc.getElementById('saved')!.textContent!, /Milestone marked complete/);
     assert.equal(note.value, 'Map evidence');
     post({scope: 'another-account', steps, milestones, revision: 6});
     assert.equal(note.value, '', 'drafts do not cross accounts or projects');
@@ -263,5 +283,59 @@ test('a context problem is shown with working controls, and sharing follows the 
     dom.window.dispatchEvent(new dom.window.MessageEvent('message', {data: preview}));
     assert.equal(doc.getElementById('sharedSummary')!.textContent, '1 project file included when you send');
     assert.match(doc.getElementById('shared')!.textContent!, /course_agent\/search.py:1–20/);
+  } finally { dom.window.close(); }
+});
+
+test('project Send delivers one snapshot and drops a pending photo when the milestone changes', async () => {
+  const {dom, doc, post, sent} = panel(), w = dom.window;
+  const field = doc.querySelector<HTMLTextAreaElement>('#message')!, send = doc.querySelector<HTMLButtonElement>('#ask')!;
+  const camera = doc.querySelector<HTMLButtonElement>('#audio-camera')!;
+  w.URL.createObjectURL = () => 'blob:photo'; w.URL.revokeObjectURL = () => {};
+  const paste = (file: File) => {
+    const e = new w.Event('paste', {bubbles:true, cancelable:true});
+    Object.defineProperty(e, 'clipboardData', {value:{files:[file]}}); field.dispatchEvent(e);
+  };
+  try {
+    post(); assert.equal(send.disabled, true); assert.equal(camera.disabled, false);
+    const photo = new w.File(['x'], 'diagram.jpg', {type:'image/jpeg'});
+    let ready!: (value:ArrayBuffer) => void;
+    photo.arrayBuffer = () => new Promise(resolve => {ready=resolve;});
+    paste(photo); assert.equal(send.disabled,false);
+    send.click(); send.click();
+    post({step:1, steps:['One','Two'], current:{files:[],expected:''}});
+    ready(new Uint8Array([1]).buffer); await new Promise(r=>setTimeout(r,0));
+    assert.equal(sent.filter(m=>m.type==='ask').length,0);
+    photo.arrayBuffer = async () => new Uint8Array([1]).buffer;
+    paste(photo); send.click(); send.click(); await new Promise(r=>setTimeout(r,0));
+    const asks = sent.filter(m=>m.type==='ask');
+    assert.equal(asks.length,1);
+    assert.equal(asks[0].step,1); assert.equal(asks[0].scope,'owner:project');
+    assert.deepEqual(asks[0].attachments.map((f:any)=>f.name).join(','),'diagram.jpg');
+    assert.match(asks[0].text,/attached/);
+  } finally { w.close(); }
+});
+
+test('one speaker gesture follows new milestone prompts and stops on account change', () => {
+  const {dom, doc, post, sent} = panel(true);
+  const joins = () => sent.filter(m => m.type === 'audioJoin').map(m => m.id);
+  const steps = ['1. Map', '2. Entry'];
+  const state = {steps, guide: 'Open the notebook.', audioId: 'map-start', voiceAvailable: true};
+  try {
+    post(state);
+    assert.deepEqual(joins(), []);
+    const speaker = doc.getElementById('audio-toggle') as HTMLButtonElement;
+    speaker.click();
+    assert.equal(speaker.getAttribute('aria-pressed'), 'true');
+    post({...state, revision: 2});
+    assert.deepEqual(joins(), ['map-start'], 'refreshing the same prompt does not replay it');
+    post({...state, revision: 2, guide: 'Run help.', audioId: 'map-run'});
+    assert.equal(doc.getElementById('guide')!.textContent, 'Run help.');
+    (doc.getElementById('next') as HTMLButtonElement).click();
+    post({...state, step: 1, revision: 3, guide: 'Follow main.', conversationId: 'second', audioId: 'entry-start'});
+    assert.deepEqual(joins(), ['map-start', 'map-run', 'entry-start']);
+    post({...state, revision: 4, scope: 'another-account', conversationId: 'third', audioId: 'other'});
+    assert.deepEqual(joins(), ['map-start', 'map-run', 'entry-start']);
+    assert.equal(speaker.getAttribute('aria-pressed'), 'false');
+    assert.equal(doc.getElementById('conversation')!.textContent, '');
   } finally { dom.window.close(); }
 });

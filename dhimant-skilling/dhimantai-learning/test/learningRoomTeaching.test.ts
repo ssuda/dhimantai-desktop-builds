@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { EditorView } from '@codemirror/view';
-import { learningComposer } from '../src/learningComposer';
+import { notebookMessageBar } from '../src/learningComposer';
 import { cellLanguages } from '../src/roomCode';
 import { emptyNotebook } from '../src/tutorNotebook';
 import { lessonPicker, selectLesson } from './lessonPicker';
@@ -26,14 +26,14 @@ function room(assistant: 'Instructor' | 'Doubt Solver', workspace = false, rpcRe
   }
   const ids = ['tutor','doubt_solver','end','wide','latest','add-note','add-code','save-notebook','open-notebook','restart-runtime'];
   const dom = new JSDOM('<!doctype html><header class="workspace-header"><div class="workspace-title"><h1>Notebook</h1></div><div class="workspace-status"><span id="status"></span><small id="notebook-save-status"></small></div></header><main id="feed"></main>'
-    + learningComposer(assistant, false, '<button type="button" id="sound"></button>')
+    + notebookMessageBar(assistant, false, '<button type="button" id="sound"></button>')
     + '<div class="notebook-tools">' + ids.map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('') + '</div>'
     + '<input id="follow-code" type="checkbox"><input id="stuck-hints" type="checkbox"><span id="code-observer-status"></span>'
     + '<select id="cell-language">' + Object.keys(cellLanguages).map(language => `<option>${language}</option>`).join('') + '</select>',
     {runScripts:'outside-only', url:'https://webview.example', pretendToBeVisual:true});
   const w = dom.window, sent: any[] = [];
   w.document.body.insertAdjacentHTML('afterbegin', lessonPicker);
-  if (workspace) w.document.body.insertAdjacentHTML('afterbegin', '<select id="workspace-mode"><option value="tutor">Instructor</option><option value="doubt_solver">Doubt Solver</option><option value="practice">Practice</option></select><select id="coaching-language"><option value="en-IN">English</option><option value="te-IN">Telugu</option></select><section id="workspace-practice" hidden><select id="practice-chapter"></select><div id="practice-questions"></div><button id="practice-back"></button></section>');
+  if (workspace) w.document.body.insertAdjacentHTML('afterbegin', '<fieldset id="workspace-mode"><button data-room="tutor">Instructor</button><button data-room="doubt_solver">Doubt Solver</button><button data-room="practice">Practice</button></fieldset><select id="coaching-language"><option value="en-IN">English</option><option value="te-IN">Telugu</option></select><section id="workspace-practice" hidden><select id="practice-chapter"></select><div id="practice-questions"></div><button id="practice-back"></button></section>');
   w.acquireVsCodeApi = () => ({postMessage:(message: unknown) => sent.push(message)});
   w.LivekitClient = {Room, RoomEvent:Object.fromEntries(events.map(name => [name, name]))};
   w.TextEncoder = TextEncoder; w.TextDecoder = TextDecoder;
@@ -826,13 +826,18 @@ test('course workspace filters lessons, offers scoped Practice and saves the cur
     const attempt=sent.at(-1).attempt;
     post({type:'restoreNotebook',attempt,documentKey:'python',notebook:emptyNotebook()});
     post({type:'grant',attempt,url:'unused',token:'unused',chapterId:'c1'}); await tick();
-    const picker=$<HTMLSelectElement>('#workspace-mode');picker.value='practice';picker.dispatchEvent(new w.Event('change'));
+    const picker=$<HTMLFieldSetElement>('#workspace-mode');
+    $<HTMLButtonElement>('[data-room="practice"]').click();
     assert.equal(sent.at(-1).type,'workspacePractice');assert.equal(sent.at(-1).chapterId,'c1');
-    post({type:'workspacePractice',course:'Python',chapterId:'c1',chapters,questions:[{id:'p1',title:'Write a loop'}]});
+    const request = sent.at(-1).request;
+    post({type:'workspacePractice',request,course:'Python',chapterId:'c1',chapters,questions:[{id:'p1',title:'Write a loop'}]});
     assert.equal($('#practice-questions').textContent,'Write a loop');
     $<HTMLButtonElement>('#practice-back').click();
+    post({type:'workspacePractice',request,course:'Python',chapterId:'c1',chapters,questions:[]});
+    assert.equal($('#workspace-practice').hidden,true);
+    assert.equal($('[data-room="tutor"]').getAttribute('aria-pressed'),'true');
     $<HTMLTextAreaElement>('#message').value='My unsent reasoning';
-    picker.value='doubt_solver';picker.dispatchEvent(new w.Event('change'));
+    $<HTMLButtonElement>('[data-room="doubt_solver"]').click();
     const change=sent.at(-1);
     assert.equal(change.type,'workspaceMode');assert.equal(change.mode,'doubt_solver');
     assert.equal(change.documentKey,'python');assert.equal(change.notebook.textDraft,'My unsent reasoning');

@@ -11,6 +11,7 @@ import { acceptProviderCallback, providerCallbackPath } from './providerLogin';
 import { ProjectResults } from './projectResults';
 import { openProject } from './capstone';
 import { validateProjectWorkspace } from './projectSetup';
+import { CODE_READING_PAUSED, desktopProjectEnabled } from './desktopFeatures';
 import { projectFolderMissing } from './projectCore';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -33,7 +34,7 @@ import { registerCourseShellProfile } from './courseShellProfile';
 import { openLegacyExercise } from './legacyExercise';
 import { useColabForNotebook } from './colab';
 import { newNotebook } from './notebookRuntime';
-import { ExtensionUpdates, automaticUpdates } from './updates';
+import { ExtensionUpdates, automaticUpdates, quietStart } from './updates';
 import { DesktopAppControls } from './desktopAppControls';
 import { preserveDesktopDefaults } from './desktopConfiguration';
 import { registerNotebookSubmission } from './notebookCommands';
@@ -50,6 +51,7 @@ import { jupyterMetadata } from './notebookCommands';
 
 export async function activate(context: vscode.ExtensionContext) {
   const desktop = vscode.env.appName === 'dhimantAI';
+  const activatedAt = Date.now();
   if (desktop) {
     const settings = vscode.workspace.getConfiguration();
     await preserveDesktopDefaults(vscode.env.appRoot, {
@@ -90,7 +92,7 @@ export async function activate(context: vscode.ExtensionContext) {
         return service;
       }, scope.account);
       return scoped.courseRuntime(scope.course);
-    });
+    }, async (id, owner) => (await new Api(auth, env, owner).skillingPathway(id)).course_titles?.[id]);
   context.subscriptions.push(vscode.commands.registerCommand('dhimantai.courseMachines', (uri:vscode.Uri) => courses.machineState(uri)),
     vscode.commands.registerCommand('dhimantai.selectCourseMachine', (uri:vscode.Uri,machine:string) => {
       if (notebookRunning(uri)) throw new Error('Wait for the running cell to finish before changing machines.');
@@ -133,6 +135,7 @@ export async function activate(context: vscode.ExtensionContext) {
   };
   context.subscriptions.push(
     vscode.commands.registerCommand('dhimantai.newCourseNotebook', () => workstationAction(() => practice.newCourseNotebook())),
+    vscode.commands.registerCommand('dhimantai.projectFolder', target => practice.projectFolder(target)),
     vscode.commands.registerCommand('dhimantai.setupCourse', target => workstationAction(() => practice.setupCourse(target))),
     vscode.commands.registerCommand('dhimantai.courseTerminal', target => workstationAction(() => practice.openCourseTerminal(target)))
   );
@@ -148,6 +151,10 @@ export async function activate(context: vscode.ExtensionContext) {
       const account = (await auth.session())?.user.id ?? 'local';
       const saved = typeof root === 'string' && projectResults.get(environment, account, root);
       if (!saved) return;
+      if (!desktopProjectEnabled(saved.projectId)) {
+        void vscode.window.showInformationMessage(CODE_READING_PAUSED);
+        return;
+      }
       try {
         await validateProjectWorkspace(projectMedia, saved.projectId, root);
         if ((await auth.session())?.user.id !== (account === 'local' ? undefined : account) || envName() !== environment) return;
@@ -190,6 +197,14 @@ export async function activate(context: vscode.ExtensionContext) {
       config.get<boolean>('autoUpdate', false));
     if (updates.state.status === 'available' && auto && available) {
       await updates.installAutomatically(context.globalState, installPackage);
+      // A new install's bundled extension is usually behind. Apply the update before the learner
+      // starts, instead of a "reload when you are ready" badge on their first launch.
+      const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).map(tab => ({ dirty: tab.isDirty,
+        webview: tab.input instanceof vscode.TabInputWebview ? tab.input.viewType : undefined }));
+      const installedNow = (updates.state as { status: string }).status === 'ready';
+      if (desktop && !testing && installedNow && quietStart(Date.now() - activatedAt, tabs)) {
+        await vscode.commands.executeCommand('workbench.action.reloadWindow');
+      }
       return;
     }
     if (desktop) return; // Desktop background checks never interrupt a lesson with an update/reload prompt.
@@ -247,7 +262,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if(e.affectsConfiguration('dhimantai.environment')||e.affectsConfiguration('dhimantai.courseContainers'))reset();
   })]}));
   context.subscriptions.push(registerPracticeInNotebook({
-    secrets: context.secrets, service, ...learningRoom.help,
+    media, secrets: context.secrets, service, ...learningRoom.help,
     async coursework(environment, account, id, result, api) {
       await coursework.send(environment,account,{kind:'exercise',id,result},v => api.courseworkResult(v.kind,v.id,v.result));
     },
@@ -350,7 +365,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (node?.kind === 'chapter') await practice.generate(node);
       else {
         await vscode.commands.executeCommand('dhimantai.practice.focus');
-        void vscode.window.showInformationMessage('Expand a course and chapter in DhimantAI Practice, then choose Generate an exercise.');
+        void vscode.window.showInformationMessage('Expand a course and chapter in dhimantAI Practice, then choose Generate an exercise.');
       }
     }),
     vscode.commands.registerCommand('dhimantai.checkForUpdates', checkUpdates),

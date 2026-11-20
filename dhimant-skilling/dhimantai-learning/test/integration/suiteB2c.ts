@@ -5,6 +5,7 @@ import type { Auth } from '../../src/auth';
 import type { PracticeBrowser } from '../../src/practiceBrowser';
 import { learnerRpc, PublicCatalog } from '../../src/learnerCatalog';
 import { CourseCatalog } from '../../src/courseCatalog';
+import { CATALOG_PROJECTS } from '../../src/catalogProjects';
 import { JSDOM } from 'jsdom';
 import { AuthPageDriver } from './authPageDriver';
 
@@ -41,7 +42,7 @@ export async function run() {
       await signup;
       assert.equal((await auth.session())?.user.email, 'new@example.test');
       assert.ok((await call('/__state')).users[0].profile);
-      assert.ok(vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tab.label === 'DhimantAI Course Catalog')));
+      assert.ok(vscode.window.tabGroups.all.some(group => group.tabs.some(tab => tab.label === 'dhimantAI Course Catalog')));
       assert.ok(!(await practice.getChildren()).some(node => node.kind === 'course'), 'signup alone does not enroll');
     });
     await check('joining a catalog course makes it available in Practice and survives retries', async () => {
@@ -181,7 +182,8 @@ export async function run() {
           const visible = [...doc.querySelectorAll<HTMLElement>('.essentials .course')].filter(c => !c.hidden).map(c => c.dataset.course);
           assert.deepEqual(visible, ['engineering-sql-data']);
           assert.equal(doc.querySelector('.essentials button[data-action="capstone"]'), null);
-          assert.equal(doc.querySelectorAll('#results > .projects [data-project]').length, 4);
+          const projects = CATALOG_PROJECTS.map(project => project.id);
+          assert.deepEqual([...doc.querySelectorAll<HTMLElement>('#results > .projects [data-project]')].map(card => card.dataset.project), projects);
           assert.ok([...doc.querySelectorAll<HTMLElement>('[data-project]')].every(p => !p.hidden), 'course paths do not filter projects');
           // Categories group the catalog in a fixed order.
           const headings = [...doc.querySelectorAll('.category > h2')].map(h => h.textContent);
@@ -208,7 +210,7 @@ export async function run() {
           assert.equal(doc.querySelector<HTMLElement>('#empty')!.hidden, false);
           assert.match(doc.querySelector('#empty')!.textContent!, /courses or projects/);
           find('');
-          assert.equal(visibleProjects().length, 4);
+          assert.deepEqual(visibleProjects(), projects);
           assert.equal(doc.querySelector<HTMLElement>('.essentials')!.hidden, false);
           assert.equal(doc.querySelector<HTMLElement>('.projects')!.hidden, false);
         } finally { dom.window.close(); }

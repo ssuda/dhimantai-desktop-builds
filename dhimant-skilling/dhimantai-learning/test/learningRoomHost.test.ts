@@ -56,7 +56,7 @@ test('Doubt Solver requires an entitled course chapter and runs in that course c
   const catalog=Api.prototype.practiceCatalog, run=NotebookCells.prototype.run, restart=NotebookCells.prototype.restart, grant=Api.prototype.learningRoom, editor=vscode.window.activeTextEditor;
   let restarts=0;
   const storage=await mkdtemp(join(tmpdir(),'shared-doubt-'));
-  const context:any={extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
+  const context:any={subscriptions: [], extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
     globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:()=>undefined,update:async()=>{}}};
   const session={user:{id:'learner'},access_token:'token'}, calls:any[]=[];
   const shared={fsPath:join(storage,'programming')};
@@ -127,6 +127,64 @@ test('Doubt Solver requires an entitled course chapter and runs in that course c
   }
 });
 
+test('Python recovery reports failures in the card and checks the whole journal before replay', async t => {
+  const {NotebookCells} = require('../src/notebookCells') as typeof import('../src/notebookCells');
+  const storage = await mkdtemp(join(tmpdir(), 'instructor-recovery-'));
+  const session = {user:{id:'learner'},access_token:'token'};
+  const auth:any = {session:async()=>session, signIn:async()=>session};
+  const context:any = {subscriptions: [], extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
+    globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:()=>undefined,update:async()=>{}}};
+  let live = false, fail = false;
+  const calls: string[] = [];
+  t.mock.method(Api.prototype, 'learningRoom', async () => ({url:'wss://lk-prod.dhimant.ai',token:'grant'}));
+  t.mock.getter(NotebookCells.prototype, 'live', () => live);
+  const restart = NotebookCells.prototype.restart;
+  t.mock.method(NotebookCells.prototype, 'restart', function(this:InstanceType<typeof NotebookCells>) {
+    live = false; restart.call(this);
+  });
+  t.mock.method(NotebookCells.prototype, 'run', async (_language:string, source:string) => {
+    calls.push(source); live = true;
+    return {status:'exited',exit_code:fail ? 1 : 0,stdout:'',stderr:fail ? 'missing file' : '',truncated:false};
+  });
+  try {
+    registerLearningRoom(context,()=> 'production',()=>({apiUrl:'https://api.example'}) as any,auth);
+    await commands.get('dhimantai.openLearningRoom')!('Python','python-intro');
+    const panel = panels.at(-1);
+    await panel.send({type:'join',mode:'tutor',attempt:1,chapterId:'python-intro'});
+    const {documentKey} = panel.posted.find((m:any)=>m.type==='restoreNotebook');
+    const latest = (type:string) => panel.posted.filter((m:any)=>m.type===type).at(-1);
+    const action = (type:string) => panel.send({type,documentKey});
+    const run = (request:number, source:string, interactive=false) => panel.send({...snapshot,source,interactive,
+      snippet:'code-'+request,type:'codeAction',attempt:1,request,action:'run',message:''});
+    await run(1,'setup()');
+    await action('restartRuntime');
+    fail = true; await action('restoreRuntime');
+    assert.match(latest('runtimeHistory').error,/missing file/);
+    assert.equal(latest('runtimeHistory').documentKey,documentKey);
+    assert.equal(latest('runtimeError'),undefined);
+    fail = false; await action('restoreRuntime');
+    assert.equal(latest('runtimeHistory').needsRestore,false);
+    await run(2,'input()',true);
+    await action('restartRuntime');
+    const beforeRestore = calls.length;
+    await action('restoreRuntime');
+    const reason = latest('runtimeHistory').restoreBlockReason;
+    assert.match(reason,/interactive input.*Start fresh/);
+    assert.doesNotMatch(reason,/individually|Restore session state/);
+    await run(3,'print(42)');
+    assert.equal(latest('codeResult').error,reason);
+    assert.equal(calls.length,beforeRestore,'neither the earlier setup nor the blocked cell executes');
+    await action('freshRuntime');
+    assert.equal(latest('runtimeHistory').count,0);
+    await run(4,'print(42)');
+    assert.equal(latest('codeResult').execution.exit_code,0);
+    assert.deepEqual(calls.slice(beforeRestore),['print(42)']);
+  } finally {
+    for (const panel of panels) if (!panel.disposed) panel.dispose();
+    await rm(storage,{recursive:true,force:true});
+  }
+});
+
 test('lesson requests cancel on replacement and disposal, and a deadline returns a retryable loading error', async () => {
   const storage = await mkdtemp(join(tmpdir(), 'lesson-loading-'));
   const catalog = Api.prototype.practiceCatalog, timeout = AbortSignal.timeout;
@@ -134,7 +192,7 @@ test('lesson requests cancel on replacement and disposal, and a deadline returns
   const deadlines: AbortController[] = [];
   const session = {user:{id:'learner'},access_token:'token'};
   const auth:any = {session:async()=>session,signIn:async()=>session};
-  const context:any = {extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
+  const context:any = {subscriptions: [], extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
     globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:()=>undefined,update:async()=>{}}};
   try {
     AbortSignal.timeout = ms => {
@@ -188,7 +246,7 @@ test('ERPNext source-folder reopen restores durable task checks without a runnin
   const durable=new Map([[verifiedKey('production','alice'),saved]]);
   let session={user:{id:'alice'},access_token:'token'};
   const auth:any={session:async()=>session,signIn:async()=>session,accessToken:async()=> 'token'};
-  const context:any={extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
+  const context:any={subscriptions: [], extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
     globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:(key:string,fallback:any)=>durable.get(key)??fallback,update:async()=>{}}};
   const chapter=course.lessons[4].instructorChapter;
   const open=async()=>{
@@ -244,7 +302,7 @@ test('only the ERPNext Instructor owns connection state, and an explicit handoff
   let delayed:Promise<typeof session>|undefined;
   const auth:any={session:()=>{const pending=delayed;delayed=undefined;return pending??Promise.resolve(session);},
     signIn:async()=>session,accessToken:async()=> 'token'};
-  const context:any={extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
+  const context:any={subscriptions: [], extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
     globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:()=>undefined,update:async()=>{}}};
   try {
     Api.prototype.learningRoom=async()=>({url:'wss://lk-prod.dhimant.ai',token:'grant'});
@@ -304,7 +362,7 @@ test('generated exercises keep independent tabs and saved work even when titles 
   const storage = await mkdtemp(join(tmpdir(), 'practice-notebooks-'));
   const pick = vscode.window.showQuickPick;
   const opened: any[] = [], documents: any[] = [];
-  const context: any = {extensionUri: {fsPath: resolve(__dirname, '../..')}, extensionPath: resolve(__dirname, '../..'),
+  const context: any = {subscriptions: [], extensionUri: {fsPath: resolve(__dirname, '../..')}, extensionPath: resolve(__dirname, '../..'),
     globalStorageUri: {fsPath: storage}, secrets: {onDidChange: () => disposable}, globalState: {get: () => undefined, update: async () => {}}};
   const session = {user: {id: 'learner'}, access_token: 'token'};
   const auth: any = {session: async () => session, signIn: async () => session, accessToken: async () => 'token'};
@@ -371,7 +429,7 @@ test('learning room host: other mode opens its own tab, mismatched joins fail, a
   const storage = await mkdtemp(join(tmpdir(), 'learning-room-host-'));
   const grant = Api.prototype.learningRoom, coach = Api.prototype.notebookCoach;
   try {
-    const context: any = {extensionUri: {fsPath: resolve(__dirname, '../..')}, extensionPath: resolve(__dirname, '../..'),
+    const context: any = {subscriptions: [], extensionUri: {fsPath: resolve(__dirname, '../..')}, extensionPath: resolve(__dirname, '../..'),
       globalStorageUri: {fsPath: storage}, secrets: {onDidChange: () => disposable}, globalState: {get: () => undefined, update: async () => {}}};
     const session = {user: {id: 'alice'}, access_token: 'token'};
     const auth: any = {session: async () => session, signIn: async () => session, accessToken: async () => 'token'};
@@ -449,7 +507,7 @@ test('learning room host: a notebook without course data says so, and a data que
   const storage = await mkdtemp(join(tmpdir(), 'learning-room-data-'));
   const grant = Api.prototype.learningRoom;
   try {
-    const context: any = {extensionUri: {fsPath: resolve(__dirname, '../..')}, extensionPath: resolve(__dirname, '../..'),
+    const context: any = {subscriptions: [], extensionUri: {fsPath: resolve(__dirname, '../..')}, extensionPath: resolve(__dirname, '../..'),
       globalStorageUri: {fsPath: storage}, secrets: {onDidChange: () => disposable}, globalState: {get: () => undefined, update: async () => {}}};
     const session = {user: {id: 'bob'}, access_token: 'token'};
     const auth: any = {session: async () => session, signIn: async () => session, accessToken: async () => 'token'};
@@ -476,7 +534,7 @@ test('course workspace switches Instructor, Doubt and Practice in one tab withou
   const original={catalog:Api.prototype.practiceCatalog,grant:Api.prototype.learningRoom,questions:Api.prototype.practiceQuestions,workspace:Api.prototype.workspace,written:Api.prototype.writtenPractice};
   const state=new Map<string,unknown>(), session={user:{id:'learner'},access_token:'token'};
   const auth:any={session:async()=>session,signIn:async()=>session,accessToken:async()=> 'token'};
-  const context:any={extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
+  const context:any={subscriptions: [], extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
     globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:(key:string)=>state.get(key),update:async(key:string,value:unknown)=>{state.set(key,value);}}};
   const task='10000000-0000-0000-0000-000000000001', asked:string[]=[];
   try {
@@ -566,7 +624,7 @@ test('speech introduction offers external GPU setup without enabling unreviewed 
   const chapter='11111111-2222-4333-8444-555555555555';
   const session={user:{id:'alice'},access_token:'token'};
   const auth:any={session:async()=>session,signIn:async()=>session,accessToken:async()=> 'token'};
-  const context:any={extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
+  const context:any={subscriptions: [], extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
     globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:()=>undefined,update:async()=>{}}};
   try {
     Api.prototype.learningRoom=async()=>({url:'wss://lk-prod.dhimant.ai',token:'grant'});
@@ -599,7 +657,7 @@ test('Course Notes follows notebook edits and writes through the lesson that own
   const storage = await mkdtemp(join(tmpdir(),'course-notes-host-')), grant = Api.prototype.learningRoom;
   const session = {user:{id:'learner'},access_token:'token'};
   const auth:any = {session:async()=>session, signIn:async()=>session};
-  const context:any = {extensionUri:{fsPath:resolve(__dirname,'../..')}, extensionPath:resolve(__dirname,'../..'),
+  const context:any = {subscriptions: [], extensionUri:{fsPath:resolve(__dirname,'../..')}, extensionPath:resolve(__dirname,'../..'),
     globalStorageUri:{fsPath:storage}, secrets:{onDidChange:()=>disposable}, globalState:{get:()=>undefined,update:async()=>{}}};
   try {
     Api.prototype.learningRoom=async()=>({url:'wss://lk-prod.dhimant.ai',token:'grant'});

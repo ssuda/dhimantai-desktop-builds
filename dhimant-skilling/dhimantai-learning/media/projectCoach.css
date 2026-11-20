@@ -33,9 +33,22 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 250px; overflo
 .bubble { white-space: pre-wrap; }
 #handoffStatus { white-space: pre-wrap; overflow-wrap: anywhere; }
 .shared-summary { margin: 4px 0; font-size: .85em; overflow-wrap: anywhere; }
-#task .link { display: inline; font-family: var(--vscode-editor-font-family); font-size: .95em; padding: 0; text-decoration: underline; overflow-wrap: anywhere; }
+#task .link, #guide .link { display: inline; font-family: var(--vscode-editor-font-family); font-size: .95em; padding: 0; text-decoration: underline; overflow-wrap: anywhere; }
 #projectTools summary, #sharingDetails summary { cursor: pointer; }
 #sharingDetails { border: 0; padding: 0; }
 #shared { max-height: 16vh; }
 #conversation:empty { display: none; }
 #checkpointDetails .row { margin: 0; }
+#composer .audio-picker { top: auto; bottom: calc(100% + 8px); left: 0; }
+#dictation-status { margin: 4px 0; color: var(--vscode-descriptionForeground); }
+#dictation-status:empty { display: none; }
+
+.project-chat-tools, #coach-audio { display:flex; align-items:center; gap:4px; }
+.project-chat-tools { justify-content:space-between; }
+#composer .audio-picker { position:absolute; bottom:100%; top:auto; z-index:5; background:var(--vscode-editorWidget-background); }
+#composer .audio-picker { right:0; left:auto; }
+#composer #coach-audio { flex-wrap:nowrap; }
+
+#reviewList { max-height: 25vh; overflow-y: auto; }
+#reviewSteps { display: grid; justify-items: start; }
+#reviewSteps .link { text-align: left; }

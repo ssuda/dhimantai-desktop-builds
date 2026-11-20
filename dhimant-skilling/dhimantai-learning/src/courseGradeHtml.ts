@@ -1,6 +1,7 @@
 import { skillingHtml, SkillingPathway } from './skilling';
 import type { CourseCertificate, CourseGrade } from './courseworkProgress';
 import { CertificateCourse, certificateStatus } from './certificateDashboard';
+import { desktopProjectEnabled } from './desktopFeatures';
 import { progressBar, UI_TOKENS } from './uiTheme';
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 
@@ -31,7 +32,7 @@ export function courseGradeHtml(nonce: string, grade: CourseGrade | undefined, c
     table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--vscode-panel-border);overflow-wrap:anywhere}
     button{font:inherit;white-space:normal;min-height:38px;padding:6px 12px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:0;border-radius:6px;cursor:pointer}button:disabled{opacity:.5;cursor:default}
     button:focus-visible,summary:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:3px}summary{cursor:pointer}#notice{white-space:pre-wrap}small{display:block}
-    .certificate-filters{display:flex;flex-wrap:wrap;gap:8px;margin:24px 0}.certificate-filters button[aria-pressed=false]{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}.certificate-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px}.certificate-grid section{margin:0}.certificate-course{display:flex;flex-direction:column}.certificate-course .actions{margin-top:auto;padding-top:16px}.certificate-course h2{margin-top:12px}.certificate-guidance{background:var(--dh-surface)}.eligibility-notice{padding:16px;border-left:4px solid var(--dh-success)}[hidden]{display:none!important}small{overflow-wrap:anywhere}
+    .certificate-filters{display:flex;flex-wrap:wrap;gap:8px;margin:24px 0}.certificate-filters button[aria-pressed=false]{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--dh-button-border)}.certificate-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px}.certificate-grid section{margin:0}.certificate-course{display:flex;flex-direction:column}.certificate-course .actions{margin-top:auto;padding-top:16px}.certificate-course h2{margin-top:12px}.certificate-guidance{background:var(--dh-surface)}.eligibility-notice{padding:16px;border-left:4px solid var(--dh-success)}[hidden]{display:none!important}small{overflow-wrap:anywhere}
     @media(max-width:480px){body{padding:14px}th,td{padding:8px 3px;font-size:.9em}.actions button{flex:1 1 auto}}
     </style></head><body><header><h1>${escape(grade?.course_title ?? (library ? 'My certificates' : 'Course grade & certificate'))}</h1>${button('Refresh','refresh')}</header>
     <p id="notice" role="status">${escape(notice)}</p>
@@ -44,7 +45,7 @@ export function courseGradeHtml(nonce: string, grade: CourseGrade | undefined, c
       <p>${escape(grade.policy.description)}</p>${grade.blockers.map(b => `<p>${escape(b)}</p>`).join('')}</section>
       <h2>Topic mastery</h2><p class="muted">An estimate from your latest assessed work, difficulty and reported help. Later independent attempts can improve it. Repeating the same assisted solution does not erase its help history.</p>
       <table><thead><tr><th>Topic</th><th>Mastery</th><th>Independent exercises</th></tr></thead><tbody>${grade.topics.map(t => `<tr><td>${escape(t.topic)}</td><td>${t.score}% · ${t.ready ? 'Ready' : 'Keep practising'}</td><td>${t.independent}/${t.required_independent} needed</td></tr>`).join('')}</tbody></table>
-      <details><summary>Required exercises and projects</summary><table><thead><tr><th>Activity</th><th>Best score</th><th></th></tr></thead><tbody>${grade.requirements.map(r => `<tr><td>${escape(r.title)}</td><td>${r.gradable ? r.score === null ? 'Pending' : escape(r.score) + '/100' : 'Assessment pending'}</td><td>${button('Open',r.kind,r.id)}</td></tr>`).join('')}</tbody></table></details>
+      <details><summary>Required exercises and projects</summary><table><thead><tr><th>Activity</th><th>Best score</th><th></th></tr></thead><tbody>${grade.requirements.map(r => `<tr><td>${escape(r.title)}</td><td>${r.gradable ? r.score === null ? 'Pending' : escape(r.score) + '/100' : 'Assessment pending'}</td><td>${r.kind === 'project' && !desktopProjectEnabled(r.id) ? 'Paused on desktop' : button('Open',r.kind,r.id)}</td></tr>`).join('')}</tbody></table></details>
       <h2>Course certificate</h2>${!grade.certificate_id ? `<p>${grade.eligible ? 'Your independent job-readiness assessments are complete.' : 'Complete the role prerequisites and independent readiness assessments shown in the roadmap to unlock your certificate.'}</p>
       <p class="muted">The certificate uses your account name. Anyone with its verification link can see your name, role, assessed skills, ratings, dates and assessment conditions.</p>
       ${button('Claim certificate','claim','',!grade.eligible)}` : ''}

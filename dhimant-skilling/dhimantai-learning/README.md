@@ -448,8 +448,9 @@ suggestions, without promising Zsh-specific language analysis. Native notebooks 
 [VS Code Tab completion](https://code.visualstudio.com/docs/editing/intellisense#_tab-completion),
 respecting your editor settings. Completion never executes the typed command.
 
-**Review with Instructor** asks for a prediction, runs your current code, and discusses
-that result with Instructor. Press again to skip the prediction. **Ask Instructor** shares
+**Review with Instructor** discusses the result already shown for the current cell.
+When the cell needs a run, enter a prediction in its prediction field or press Review
+again to skip it. **Ask Instructor** shares
 the selected source and any current run. Editing invalidates earlier run evidence;
 earlier output remains visibly marked. Neither action submits an answer or awards
 mastery. The message bar’s **Answer Instructor**, or a task’s **Submit to Instructor**, sends an answer to the
@@ -704,8 +705,7 @@ course container. Failed learner runs are labelled **Run failed**.
 At the final milestone, **Submit Project** runs the full checker in your course container
 and saves the result, source digest, commit details and assistance on this computer.
 Course Catalog and **My courses** show local completion, failed checks and changes since
-submission. Reading projects require a checkpoint explanation and remain labelled as
-self-reported reading completion. Passing public checks is not a grade or proof of mastery.
+submission. Local completion records the outcome of the public checks.
 
 Use **Project actions → View saved results** for the latest 20 attempts. **Publish to
 GitHub** and **Create pull request** are optional: commit and review your work first,
@@ -718,19 +718,9 @@ Current Window** to replace it. Cancel leaves the saved project available to reo
 The project name appears in the workspace window title and Explorer. The workspace
 file is stored in extension storage, outside the project's source repository.
 
-**dhimantAI: Start a Course Project** includes two code-reading routes for
-**Read an Unfamiliar Codebase**: **Rich**, a complete pinned upstream Python source
-snapshot, and **shelf**, a smaller guided introduction. Start at either scale.
-Coach teaches repository mapping, Quick Open, symbol search, call/data tracing,
-output prediction and reading tests. Rich has ten steps; shelf has seven.
-The course card's **Read a project** action opens the same chooser.
-
-Rich v14.3.4 retains its original source, docs, tests and MIT license. Course examples
-live separately in `reading/`. Its first explicit setup run installs pinned packages
-inside the container; later examples and focused tests need no API key or network.
-Long-file links jump to relevant symbols, and questions share bounded excerpts around
-the cursor with their actual line numbers. The source snapshot does not include upstream
-Git history. A successful example run does not assess the student's understanding.
+The Shelf and Rich standalone code-reading projects are paused for Phase 1.
+You can open files from an earlier project in Explorer. The **Read an Unfamiliar
+Codebase** course still offers its regular lessons.
 
 **dhimantAI: Start a Course Project → Build a Course Research Agent** creates an
 independent Python repository. Ten milestones guide the learner through search,
@@ -773,8 +763,7 @@ Git and Python 3.10+. Use `python -m unittest discover -s tests -t .` there to r
 The same commands apply on Windows, macOS and Linux. The repository is built reproducibly by `scripts/capstone/build_shelf.py` into
 `media/capstone/shelf.bundle`; a unit test fails if the two drift apart.
 
-Coach supports this fourth project as well as both reading projects and the Course
-Research Agent. Its seven milestones follow the capstone workflow, including Git,
+The seven Coach milestones follow the capstone workflow, including Git,
 regression tests, debugging and the PR note. Existing Shelf clones open without a
 migration or changes to learner files. Coach shares bounded public excerpts,
 learner-added Python tests, current check/checkpoint state and a visible Git summary.

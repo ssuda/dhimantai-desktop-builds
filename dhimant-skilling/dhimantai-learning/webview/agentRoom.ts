@@ -55,9 +55,9 @@ export class AgentRoom {
     if(!this.room||!this.agent)throw new Error('The agent is not connected.');
     return this.room.localParticipant.performRpc({destinationIdentity:this.agent,method,payload:JSON.stringify(payload),responseTimeout:timeout});
   }
-  async upload(attachments:NotebookAttachments,text:string,current:()=>boolean) {
+  async upload(attachments:NotebookAttachments,files:readonly File[],text:string,current:()=>boolean) {
     if(!this.room||!this.agent)throw new Error('The agent is not connected.');
     const room=this.room;
-    return attachments.upload(room.localParticipant,this.agent,text,()=>this.room===room&&current());
+    return attachments.upload(room.localParticipant,this.agent,text,()=>this.room===room&&current(),files);
   }
 }

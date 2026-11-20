@@ -11,7 +11,7 @@ test('projects that belong to an expired course are closed until it is bought ag
   assert.equal(projectAccessEnded('shelf-reading', active), false);
   assert.equal(projectAccessEnded('shelf-reading'), false, 'an offline catalog keeps bundled projects available');
   assert.equal(projectAccessEnded('course-agent', expired), false);
-  for (const id of Object.keys(PROJECT_COURSES)) assert.ok(CATALOG_PROJECTS.some(project => project.id === id));
+  for (const project of CATALOG_PROJECTS) assert.ok(PROJECT_COURSES[project.id]);
 });
 
 test('project choices include the companion, active free chapters and purchases, and exclude unavailable courses', () => {

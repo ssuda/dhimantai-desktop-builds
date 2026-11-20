@@ -34,6 +34,18 @@ export function automaticUpdates(appName:string, explicit:boolean|undefined, con
   return explicit ?? (appName==='dhimantAI' || configured);
 }
 
+/** How long after launch a finished learning update may still apply itself. */
+export const QUIET_START_MS = 3 * 60 * 1000;
+
+/** A fresh window that shows only the Course Catalog has no learner work to lose, so a learning
+ * update that finished during launch can reload at once and the first lesson runs the new
+ * version. Any other tab (a lesson, the account page, a file) or unsaved change keeps the
+ * update waiting for the learner's next restart. */
+export function quietStart(elapsed: number, tabs: readonly { webview?: string; dirty: boolean }[]) {
+  return elapsed >= 0 && elapsed <= QUIET_START_MS
+    && tabs.every(tab => !tab.dirty && (tab.webview ?? '').endsWith('dhimantai.courseCatalog'));
+}
+
 async function readBounded(response: Response, limit: number): Promise<Buffer> {
   if (!response.ok || !response.body) throw new UpdateCheckError('The update could not be downloaded. Try again later.');
   if (Number(response.headers.get('content-length')) > limit) {

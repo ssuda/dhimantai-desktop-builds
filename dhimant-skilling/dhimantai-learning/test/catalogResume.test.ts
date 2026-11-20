@@ -83,18 +83,30 @@ test('the next chapter is the one in progress, else the first open uncovered one
   assert.equal(nextChapter(unstarted, open), undefined, 'without saved progress nothing is recommended');
 });
 
+test('the companion course keeps its lessons while reading project launches are paused', async () => {
+  const {document, catalog} = render('learner', [course('engineering-code-reading', true, [''])]);
+  assert.ok(document.querySelector('[data-course="engineering-code-reading"] [data-action="practice"]'));
+  assert.equal(document.querySelector('[data-action="capstone"]'), null);
+  assert.deepEqual([...document.querySelectorAll('[data-project]')].map(card => card.getAttribute('data-project')), ['course-agent', 'shelf']);
+  const before = executed.length;
+  for (const id of ['shelf-reading', 'rich-reading']) await catalog.handle({type:'project', id});
+  await catalog.handle({type:'capstone', id:'engineering-code-reading'});
+  assert.equal(executed.length, before);
+  document.defaultView!.close();
+});
+
 test('one saved shelf workspace can be reopened or started under another eligible course', async t => {
   const {catalog} = render('learner', []);
   t.after(() => { delete (vscode as any).window; });
-  catalog.projects = [{projectId:'shelf-reading', root:'/courses/algorithms/shelf-reading', title:'Shelf', status:'In progress'}];
+  catalog.projects = [{projectId:'shelf', root:'/courses/algorithms/shelf-capstone', title:'Shelf', status:'In progress'}];
   for (const choice of [0, 1]) {
     (vscode as any).window = {showQuickPick: async (items: {label:string}[]) => {
       assert.match(items[1].label, /another course/);
       return items[choice];
     }};
-    await catalog.handle({type:'project', id:'shelf-reading'});
+    await catalog.handle({type:'project', id:'shelf'});
     assert.deepEqual(executed.at(-1), choice === 0
-      ? ['dhimantai.openSavedProject', catalog.projects[0].root] : ['dhimantai.startCapstone', 'shelf-reading']);
+      ? ['dhimantai.openSavedProject', catalog.projects[0].root] : ['dhimantai.startCapstone', 'shelf']);
   }
 });
 
@@ -150,6 +162,24 @@ test('unavailable progress is never shown as zero completion or a locked next ch
   assert.equal(resume.querySelector('progress'), null);
   assert.equal(document.querySelector('[data-course="unknown"] progress'), null);
   document.defaultView!.close();
+});
+
+test('a catalog sample requires an available public first chapter and keeps the course entry action', () => {
+  const id = 'algorithms-python';
+  for (const [account, extra, action] of [
+    [undefined, {}, 'signUp'],
+    ['learner', {}, 'join'],
+    ['learner', {enrolled:true}, 'practice'],
+    ['learner', {expired:true, enrolled:true}, null],
+    [undefined, {can_join:false}, null],
+    [undefined, {chapters:[{id:'paid', name:'Paid chapter', free:false}]}, null],
+    [undefined, {is_free:true, chapters:[]}, null],
+  ] as const) {
+    const {document} = render(account, [course(id, false, [''], extra)]);
+    assert.equal(document.querySelector('dialog footer button')?.getAttribute('data-action') ?? null, action);
+    assert.equal(!!document.querySelector('#filter-status option[value=preview]'), !!action);
+    document.defaultView!.close();
+  }
 });
 
 test('course outlines distinguish free, unlocked, preview-only and expired access', () => {

@@ -1,5 +1,9 @@
 import * as assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ProjectResults } from '../../src/projectResults';
+import { loadProjectCurriculum } from '../../src/projectCore';
 import * as vscode from 'vscode';
 import { JSDOM } from 'jsdom';
 import { CourseCatalog } from '../../src/courseCatalog';
@@ -12,8 +16,8 @@ export async function run() {
     try { await action(); results.push({step, ok:true}); }
     catch (error) { results.push({step, ok:false, error:String(error instanceof Error ? error.stack : error)}); }
   };
-  const extension = vscode.extensions.getExtension<{catalog: CourseCatalog; welcome: () => Promise<void>}>('optficial.dhimantai-learning')!;
-  const {catalog, welcome} = await extension.activate();
+  const extension = vscode.extensions.getExtension<{catalog: CourseCatalog; projectResults: ProjectResults; welcome: () => Promise<void>}>('optficial.dhimantai-learning')!;
+  const {catalog, projectResults, welcome} = await extension.activate();
   const panel = () => (catalog as any).panel as vscode.WebviewPanel | undefined;
   const create = vscode.window.createWebviewPanel;
   let learning: vscode.WebviewPanel | undefined, receive: ((message: any) => Promise<void>) | undefined;
@@ -75,7 +79,7 @@ export async function run() {
         const section = dom.window.document.querySelector('#results > section[aria-labelledby="projects-title"]')!;
         assert.ok(section, 'projects are independent of Engineering Essentials');
         const cards = [...section.querySelectorAll<HTMLElement>('[data-project]')];
-        assert.deepEqual(cards.map(c => c.dataset.project), ['shelf-reading', 'rich-reading', 'course-agent', 'shelf']);
+        assert.deepEqual(cards.map(c => c.dataset.project), ['course-agent', 'shelf']);
         for (const card of cards) {
           assert.ok(card.querySelector('h3')!.textContent!.length > 10);
           assert.ok(card.querySelector('p')!.textContent!.length > 40, 'each project has a description');
@@ -95,18 +99,22 @@ export async function run() {
       const execute = vscode.commands.executeCommand, pick = vscode.window.showQuickPick;
       let setups = 0;
       (vscode.commands as any).executeCommand = async (command: string, ...args: unknown[]) => {
-        if (command === 'dhimantai.setupCourse') { setups++; return; } // Cancel before any runtime or file mutation.
+        if (command === 'dhimantai.projectFolder') { setups++; return; } // Cancel before any runtime or file mutation.
         return execute(command, ...args);
       };
       (vscode.window as any).showQuickPick = async () => { throw new Error('A selected project must not open another picker'); };
       try {
         await settings(true);
         await catalog.refresh();
-        for (const id of ['shelf-reading', 'rich-reading', 'course-agent', 'shelf']) await click('project', id);
-        assert.equal(setups, 4, 'every card reaches the existing course runtime setup');
+        for (const id of ['course-agent', 'shelf']) await click('project', id);
+        assert.equal(setups, 2, 'every card reaches the course folder selection');
         await (catalog as any).handle({type:'project', id:'unknown'});
         await vscode.commands.executeCommand('dhimantai.startCapstone', '../unknown');
-        assert.equal(setups, 4, 'unknown IDs cannot start setup');
+        for (const id of ['shelf-reading', 'rich-reading']) {
+          await (catalog as any).handle({type:'project', id});
+          await vscode.commands.executeCommand('dhimantai.startCapstone', id);
+        }
+        assert.equal(setups, 2, 'unknown and paused IDs cannot start setup');
       } finally {
         (vscode.commands as any).executeCommand = execute;
         (vscode.window as any).showQuickPick = pick;
@@ -114,18 +122,44 @@ export async function run() {
         await catalog.refresh();
       }
     });
-    await check('the command palette and code-reading course retain their project pickers', async () => {
+    await check('the command palette offers active projects and the old reading shortcut opens no picker', async () => {
       const pick = vscode.window.showQuickPick;
       const choices: string[][] = [];
       (vscode.window as any).showQuickPick = async (items: {id: string}[]) => { choices.push(items.map(i => i.id)); };
       try {
         await vscode.commands.executeCommand('dhimantai.startCapstone');
         await vscode.commands.executeCommand('dhimantai.startCapstone', 'engineering-code-reading');
-        assert.deepEqual(choices, [
-          ['shelf-reading', 'rich-reading', 'course-agent', 'shelf'],
-          ['shelf-reading', 'rich-reading'],
-        ]);
+        assert.deepEqual(choices, [['course-agent', 'shelf']]);
       } finally { (vscode.window as any).showQuickPick = pick; }
+    });
+    await check('old reading workspaces and saved shortcuts cannot launch Coach or erase notes', async () => {
+      const media = join(extension.extensionPath, 'media');
+      const environment = vscode.workspace.getConfiguration('dhimantai').get<string>('environment', 'production');
+      const show = vscode.window.showInformationMessage;
+      const notices: string[] = [];
+      (vscode.window as any).showInformationMessage = (text: string) => { notices.push(text); };
+      try {
+        for (const id of ['shelf-reading', 'rich-reading']) {
+          const plan = await loadProjectCurriculum(media, id);
+          const root = mkdtempSync(join(tmpdir(), id));
+          try {
+            writeFileSync(join(root, '.dhimantai-project.json'), JSON.stringify({id, version:1}));
+            const notebook = join(root, 'READING_NOTES.md');
+            writeFileSync(notebook, 'My saved reading notes');
+            const saved = await projectResults.save(environment, 'local', root, plan);
+            await vscode.commands.executeCommand('dhimantai.openSavedProject', root);
+            await vscode.commands.executeCommand('dhimantai.openProjectCoach', root);
+            assert.deepEqual(projectResults.get(environment, 'local', root), saved);
+            assert.equal(readFileSync(notebook, 'utf8'), 'My saved reading notes');
+            assert.ok(!(await projectResults.summaries(media, environment, 'local')).some(p => p.root === root));
+          } finally {
+            await projectResults.remove(environment, 'local', root);
+            rmSync(root, {recursive:true, force:true});
+          }
+        }
+        assert.equal(notices.length, 4);
+        assert.ok(notices.every(text => text.includes('paused on desktop')));
+      } finally { (vscode.window as any).showInformationMessage = show; }
     });
     await check('lifecycle messages cannot restart a pending catalog load', async () => {
       let reads = 0, release!: () => void;

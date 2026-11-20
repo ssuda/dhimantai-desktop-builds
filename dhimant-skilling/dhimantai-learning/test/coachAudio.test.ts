@@ -27,12 +27,14 @@ function mount(blocked = false) {
     onstatechange: (() => void) | null = null;
     sinks: string[] = [];
     destination = {};
+    sinkId = '';
+    createMediaStreamDestination() { return {stream: {getTracks: () => []}}; }
     audioWorklet = {addModule: async (path: string) => assert.equal(path, 'buffer.js')};
     constructor() { contexts.push(this); }
     createMediaStreamSource() { return {connect() {}, disconnect() {}}; }
     async resume() { if (blocked) throw new Error('Needs a gesture'); this.state = 'running'; this.onstatechange?.(); }
     async close() { this.state = 'closed'; }
-    async setSinkId(id: string) { this.sinks.push(id); }
+    async setSinkId(id: string) { this.sinkId = id; this.sinks.push(id); }
   }
   class Node {
     messages: any[] = [];
@@ -51,7 +53,7 @@ function mount(blocked = false) {
   Object.defineProperty(win.navigator, 'mediaDevices', {value: media});
   win.eval(readFileSync(resolve(__dirname, '../../media/learning-room/audioControls.js'), 'utf8'));
   win.eval(readFileSync(resolve(__dirname, '../../media/coachAudio.js'), 'utf8'));
-  win.installCoachAudio({postMessage: (m: any) => sent.push(m)});
+  const playback = win.installCoachAudio({postMessage: (m: any) => sent.push(m)});
   const post = (data: object) => win.dispatchEvent(new win.MessageEvent('message', {data}));
   const btn = (id: string) => win.document.getElementById(id)!;
   const subscribe = async (identity = 'dhimantai-coach') => {
@@ -61,8 +63,30 @@ function mount(blocked = false) {
   const rendered = (state: string) => nodes.at(-1)!.port.onmessage({data: {type: 'playback', state}});
   const done = () => rooms.at(-1)!.handlers.get('DataReceived')!(new TextEncoder().encode('done'), {identity: 'dhimantai-coach'}, 0, 'dhimantai.coach.playback');
   const off = () => win.document.querySelector<HTMLButtonElement>('.audio-actions button:last-child')!.click();
-  return {dom, win, sent, rooms, nodes, contexts, elements, post, btn, subscribe, rendered, done, off, allow: () => { blocked = false; }};
+  return {dom, win, sent, rooms, nodes, contexts, elements, post, btn, subscribe, rendered, done, off, playback, allow: () => { blocked = false; }};
 }
+
+test('starting the microphone releases a playing reply and waits for a fresh answer', async () => {
+  const m = mount();
+  try {
+    m.playback.reply('first'); m.btn('audio-toggle').click();
+    const grant = {...m.sent.at(-1), type: 'audioGrant'};
+    m.post(grant); await m.subscribe(); m.rendered('playing');
+    m.playback.listenForReply();
+    assert.equal(m.rooms[0].disconnected, true);
+    assert.equal(m.contexts[0].state, 'running');
+    assert.equal(m.elements[0].srcObject, null);
+    const count = m.sent.length;
+    m.post(grant); m.playback.reply('first');
+    assert.equal(m.rooms.length, 1);
+    assert.equal(m.sent.length, count, 'a repaint cannot replay the interrupted answer');
+    m.playback.reply('second');
+    assert.equal(m.sent.at(-1).type, 'audioJoin');
+    assert.equal(m.sent.at(-1).id, 'second');
+    m.playback.turnOff(); m.playback.reply('third');
+    assert.equal(m.sent.at(-1).id, 'second');
+  } finally { m.dom.window.close(); }
+});
 
 test('one Instructor control opts in, rejects stale grants and follows rendered audio through pause, completion and replay', async () => {
   const m = mount();
@@ -80,7 +104,8 @@ test('one Instructor control opts in, rejects stale grants and follows rendered 
     await m.subscribe('other'); assert.equal(m.nodes.length, 0);
     await m.subscribe();
     assert.equal(m.sent.at(-1).type, 'audioStart');
-    assert.equal(m.elements.length, 1, 'a silent media element must drive the remote WebRTC stream');
+    assert.equal(m.elements.length, 2);
+    assert.equal(m.elements[0], m.elements[1], 'the remote track uses the media element activated by the learner');
     assert.equal(m.elements[0].muted, true);
     assert.equal(m.elements[0].volume, 0, 'the worklet must be the only audible output');
     assert.equal(m.btn('audio-status').textContent, 'Preparing explanation…');
@@ -96,7 +121,7 @@ test('one Instructor control opts in, rejects stale grants and follows rendered 
     assert.equal(m.nodes[0].messages.at(-1).value, false);
     m.rendered('playing'); m.nodes[0].port.onmessage({data: {type: 'drained'}}); await delay(70);
     assert.equal(m.btn('audio-status').textContent, 'Spoken explanation complete');
-    assert.equal(m.contexts[0].state, 'closed');
+    assert.equal(m.contexts[0].state, 'running');
     assert.equal(m.btn('audio-toggle').getAttribute('aria-label'), 'Explain again');
     m.btn('audio-toggle').click();
     assert.equal(m.sent.at(-1).type, 'audioJoin'); assert.equal(m.sent.at(-1).id, 'second');
@@ -143,11 +168,14 @@ test('output switching preserves pause, new replies retain output, and hiding st
     assert.equal(m.nodes[0].messages.at(-1).value, true);
     assert.equal(m.btn('audio-toggle').getAttribute('aria-label'), 'Resume spoken explanation');
     m.post({audioId: 'two'}); m.post({...m.sent.at(-1), type: 'audioGrant'}); await m.subscribe();
-    assert.deepEqual(m.contexts[1].sinks, ['usb']);
+    assert.equal(m.contexts.length, 1, 'the second prompt reuses the gesture-activated context');
+    assert.equal(m.elements.at(-1), m.elements[0], 'the second prompt reuses the gesture-activated player');
+    assert.deepEqual(m.contexts[0].sinks, ['usb']);
     assert.equal(m.btn('audio-toggle').getAttribute('aria-label'), 'Pause spoken explanation');
     m.win.document.dispatchEvent(new m.win.Event('visibilitychange'));
     assert.equal(m.btn('audio-status').textContent, 'Spoken explanations off');
-    assert.equal(m.contexts[1].state, 'closed');
+    assert.equal(m.contexts[0].state, 'closed');
+    assert.equal(m.elements[0].isConnected, false);
     m.post({type: 'audioOff'}); assert.equal(m.btn('audio-toggle').getAttribute('aria-pressed'), 'false');
   } finally { m.off(); m.dom.window.close(); }
 });

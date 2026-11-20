@@ -1,17 +1,26 @@
 (() => {
   const api = acquireVsCodeApi();
   window.installNotebookRuntime?.(api);
-  window.installCoachAudio?.(api);
+  const playback = window.installCoachAudio?.(api);
+  const dictation = window.installDictation?.(api, document.getElementById('message'), () => playback?.listenForReply());
   const field = id => document.getElementById(id);
   const text = value => typeof value === 'string' && !/^(null|undefined)$/i.test(value.trim()) ? value : '';
   let revision, conversationId, busy = true;
-  const resizeMessage = () => {
-    const box = field('message');
-    box.style.height = 'auto';
-    box.style.height = Math.min(box.scrollHeight, 100) + 'px';
-    field('ask').disabled = busy || !box.value.trim();
-  };
-  field('message').addEventListener('input', resizeMessage);
+  const composer = window.LearningComposer.bindComposer(field('composer'), async message => {
+    if (busy) return;
+    const activeRevision = revision, chat = conversationId;
+    busy = true; composer.setAvailable(false);
+    try {
+      const files = message.attachments.length ? await attachments.encoded(false, message.attachments) : [];
+      if (activeRevision !== revision || chat !== conversationId) return;
+      api.postMessage({type:'ask', revision, message:message.text, ...(files.length ? {attachments:files} : {})});
+    } catch (error) {
+      if (activeRevision !== revision || chat !== conversationId) return;
+      field('attachment-status').textContent = error.message;
+      busy = false; composer.setAvailable(true);
+    }
+  });
+  const {attachments} = composer;
   const rendered = new Map();
   const renderConversation = messages => {
     const log = field('conversation');
@@ -53,16 +62,22 @@
   };
   window.addEventListener('message', ({ data }) => {
     if (data.type === 'accepted') {
-      if (data.revision === revision && field('message').value === data.message) { field('message').value = ''; resizeMessage(); }
+      if (data.revision === revision) {
+        if (field('message').value === data.message) field('message').value = '';
+        attachments.clear();
+      }
       return;
     }
+    if (data.type === 'audioOff') composer.cancelCapture();
     if (data.type) return;
+    if (conversationId !== data.conversationId || revision !== data.revision) composer.cancelCapture();
     if (conversationId !== data.conversationId) {
-      field('message').value = ''; field('prediction').value = '';
+      attachments.clear(); field('message').value = ''; field('prediction').value = '';
     } else if (revision !== data.revision) field('prediction').value = '';
     conversationId = data.conversationId;
     revision = data.revision;
     busy = data.busy;
+    dictation?.setScope(data.canDictate && !busy ? conversationId : '');
     field('question').innerHTML = window.CoachMarkdown.render(text(data.question));
     field('turn-status').textContent = text(data.turnStatus);
     field('cell').textContent = text(data.cell) || 'Select a code cell.';
@@ -71,20 +86,11 @@
     field('kernel-help').hidden = !data.python;
     field('save-prediction').disabled = busy;
     renderConversation(Array.isArray(data.messages) ? data.messages : []);
-    resizeMessage();
+    composer.setAvailable(!busy);
   });
   field('wrap-settings').addEventListener('click', () => api.postMessage({type: 'wrapSettings'}));
   field('new-chat').addEventListener('click', () => api.postMessage({type: 'newChat', revision, conversationId}));
   field('save-prediction').addEventListener('click', () =>
     api.postMessage({type: 'predict', revision, text: field('prediction').value}));
-  const send = () => {
-    if (busy || !field('message').value.trim()) return;
-    busy = true; resizeMessage();
-    api.postMessage({type: 'ask', revision, message: field('message').value});
-  };
-  field('ask').addEventListener('click', send);
-  field('message').addEventListener('keydown', event => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); }
-  });
   api.postMessage({type: 'ready'});
 })();

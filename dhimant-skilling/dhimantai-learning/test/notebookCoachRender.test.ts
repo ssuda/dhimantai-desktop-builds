@@ -4,14 +4,17 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
 
+import { messageComposer } from '../src/learningComposer';
+
 function panel() {
   const ids = ['question', 'turn-status', 'cell', 'run-status', 'run-hint', 'kernel-help', 'conversation', 'empty-chat'];
-  const buttons = ['ask', 'save-prediction', 'wrap-settings', 'new-chat'];
+  const buttons = ['save-prediction', 'wrap-settings', 'new-chat'];
   const dom = new JSDOM('<!doctype html>' + ids.map(id => `<div id="${id}"></div>`).join('') +
-    buttons.map(id => `<button id="${id}"></button>`).join('') + '<textarea id="message"></textarea><textarea id="prediction"></textarea>', {runScripts: 'outside-only'});
+    buttons.map(id => `<button id="${id}"></button>`).join('') + messageComposer({assistant:'Instructor', maxlength:600, sendId:'ask', audio:''}) + '<textarea id="prediction"></textarea>', {runScripts: 'outside-only'});
   const sent: any[] = [];
   (dom.window as any).acquireVsCodeApi = () => ({postMessage(message: unknown) { sent.push(message); }});
   dom.window.eval(readFileSync(join(__dirname, '../../media/coachMarkdown.js'), 'utf8'));
+  dom.window.eval(readFileSync(join(__dirname, '../../media/learning-room/composer.js'), 'utf8') + ';window.LearningComposer=LearningComposer');
   dom.window.eval(readFileSync(join(__dirname, '../../media/notebookCoach.js'), 'utf8'));
   const post = (data: object) => dom.window.dispatchEvent(new dom.window.MessageEvent('message', {data}));
   const doc = dom.window.document;
@@ -48,7 +51,7 @@ test('Instructor appends prompts and rich replies, preserving earlier DOM across
   } finally { dom.window.close(); }
 });
 
-test('Instructor sends conversational prompts with Enter, retains drafts during edits, and prevents duplicate sends', () => {
+test('Instructor sends conversational prompts with the shared Send button, retains drafts during edits, and prevents duplicate sends', () => {
   const {dom, post, sent, doc} = panel();
   const box = doc.getElementById('message') as HTMLTextAreaElement;
   const key = (options = {}) => box.dispatchEvent(new dom.window.KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true, ...options}));
@@ -61,7 +64,9 @@ test('Instructor sends conversational prompts with Enter, retains drafts during 
     assert.equal(box.value, 'Explain the function');
     key({shiftKey: true}); key({isComposing: true});
     assert.equal(sent.length, 1, 'Shift+Enter and IME do not send');
-    key(); key();
+    key(); assert.equal(sent.length, 1);
+    const send = doc.getElementById('ask') as HTMLButtonElement;
+    send.click(); send.click();
     assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1))), {type: 'ask', revision: 2, message: 'Explain the function'});
     assert.equal(sent.length, 2);
     post({type: 'accepted', revision: 1, message: box.value});

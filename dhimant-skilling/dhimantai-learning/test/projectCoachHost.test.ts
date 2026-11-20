@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
+import { loadProjectCurriculum, ProjectCurriculum } from '../src/projectCore';
 import { ACCESS_ENDED, ApiError } from '../src/api';
 
 const extension = resolve(__dirname, '../..');
@@ -21,9 +22,9 @@ const step = (id: string) => ({id, title: id.toUpperCase(), goal: 'Goal ' + id, 
 function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Promise<unknown>; projectFiles?: () => Promise<string[]>;
     runCheck?: () => Promise<unknown>; inputBox?: () => Promise<string | undefined>; notebookCoach?: (path: string) => Promise<unknown>;
     workspace?: {course: string; account: string; environment: string};
-    saved?: unknown; root?: string} = {}) {
-  const curriculum = {id: 'course-agent', version: 1, title: 'Agent', files: [], steps: [step('a'), step('b')]};
-  const store = new Map<string, unknown>(), posted: any[] = [], calls = {projectFiles: 0, runCheck: 0, submitted: [] as unknown[][], warnings: [] as string[]};
+    saved?: unknown; root?: string; curriculum?: ProjectCurriculum} = {}) {
+  const curriculum = options.curriculum ?? {id: 'course-agent', version: 1, title: 'Agent', files: [], steps: [step('a'), step('b')]};
+  const store = new Map<string, unknown>(), posted: any[] = [], calls = {engines:0, projectFiles: 0, runCheck: 0, submitted: [] as unknown[][], warnings: [] as string[]};
   const disposable = {dispose() {}};
   const listener = () => disposable;
   const uri = (fsPath: string) => ({fsPath, scheme: 'file'});
@@ -46,8 +47,9 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
     omitted: [], omitted_count: 0, structure: {files: ['course_agent/tools.py'], total_files: 1, truncated: false}};
   const modules: Record<string, unknown> = {
     vscode,
+    './coachAudio': {},
     './coachSurface': {CoachSurface: class { select() {} async show() {} async hide() {} webviewFor() { return webview; } dispose() {} }},
-    './projectCore': {...core, projectIdentity: async () => 'course-agent', isProject: async () => true,
+    './projectCore': {...core, projectIdentity: async () => 'course-agent', isEnabledProject: async () => true,
       loadProjectCurriculum: async () => curriculum, trackedProjectFiles: () => [],
       projectFiles: async () => { calls.projectFiles++; return options.projectFiles ? options.projectFiles() : ['course_agent/tools.py']; },
       projectSnapshot: options.snapshot ?? (async () => snapshot),
@@ -60,14 +62,14 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
     './projectGitHub': {projectGitHub: async () => undefined},
     './api': {ApiError, Api: class { notebookCoach(path: string) { return options.notebookCoach!(path); } }},
   };
-  const sandbox = {exports: {}, Error, AbortController, Buffer, setTimeout, console,
+  const sandbox = {exports: {}, Error, AbortController, Buffer, URLSearchParams, setTimeout, console,
     require: (name: string) => name in modules ? modules[name] : name.startsWith('./') ? require('../src/' + name.slice(2)) : require(name)};
   runInNewContext(readFileSync(join(extension, 'out/src/projectCoach.js'), 'utf8'), sandbox);
-  const context = {extensionUri: uri(extension), workspaceState: {get: (key: string) => store.get(key) ?? options.saved,
+  const context = {extensionUri: uri(extension), globalState: {get: () => undefined}, workspaceState: {get: (key: string) => store.get(key) ?? options.saved,
     update: async (key: string, value: unknown) => { store.set(key, JSON.parse(JSON.stringify(value))); }}};
   const auth = {onDidChange: listener, session: options.session ?? (async () => ({user: {id: 'learner'}}))};
   const results = {get: () => undefined, save: async () => {}};
-  const courses = {forFile: async () => ({bin: 'podman', execArgs: () => []}), recordFor: () => options.workspace};
+  const courses = {forProject: async () => { calls.engines++; return {bin:'podman', execArgs:() => []}; }, recordFor: () => options.workspace};
   const coach: any = new (sandbox.exports as any).ProjectCoach(context, auth, () => 'production', () => ({}), courses, results);
   const state = () => posted.filter(m => m.type === 'state').at(-1);
   const message = (type: string, data = {}) => ({type, scope: coach.key(), step: coach.step, conversationId: coach.conversationId, ...data});
@@ -185,4 +187,72 @@ test('reopened Coach checks its workspace course and preserves unrelated service
   await other.open();
   await assert.rejects(other.coach.handle(other.message('ask', {text:'Why?'})), /learning account and service/);
   assert.equal(paths.length, 1);
+});
+
+test('only the current milestone reply becomes playable, including after cancelling a pending answer', async () => {
+  const pending = deferred<unknown>();
+  let turns = 0;
+  const {coach, open, state, message} = harness({workspace: {course: 'Build AI Agents with Python', account: 'learner', environment: 'production'},
+    notebookCoach: async () => ++turns === 1 ? {guidance: 'Look at the test.', prompt: 'What did it print?'} : pending.promise});
+  await open();
+  await coach.handle(message('ask', {text: 'What should I check?'})); await settle();
+  assert.equal(state().voiceAvailable, true);
+  assert.equal(state().audioId, coach.spoken.id);
+  assert.equal(coach.spoken.text, state().messages.at(-1).text);
+  assert.equal(new URLSearchParams(coach.spoken.query).get('course'), 'Build AI Agents with Python');
+  const original = state().conversationId;
+  const followup = coach.handle(message('ask', {text: 'Where is it?'})); await settle();
+  await coach.handle(message('step', {index: 1}));
+  pending.resolve({guidance: 'Old answer', prompt: ''});
+  await followup; await settle();
+  assert.notEqual(state().conversationId, original);
+  assert.equal(state().audioId, null);
+  assert.equal(state().messages.length, 0);
+});
+
+test('a milestone discussion survives navigation and reopen, and chat never starts a container', async () => {
+  const app = harness({workspace:{course:'C Programming', account:'learner', environment:'production'},
+    notebookCoach:async () => ({guidance:'Compare the baseline tests.', prompt:'What changed?'})});
+  await app.open();
+  await app.coach.handle(app.message('ask', {text:'How should I read this baseline?'}));
+  await app.coach.handle(app.message('step',{index:1}));
+  assert.equal(app.coach.messages.length,0);
+  await app.coach.handle(app.message('step',{index:0}));
+  assert.match(app.coach.messages[0].text,/baseline/);
+  await app.open();
+  assert.equal(app.coach.messages.length,2);
+  assert.equal(app.calls.engines,0);
+  await app.coach.handle(app.message('newChat'));
+  await app.open();
+  assert.equal(app.coach.messages.length,0);
+});
+
+test('opening a Shelf workspace upgrades only verifiable older checkpoints and exposes one voice prompt per transition', async () => {
+  const curriculum = await loadProjectCurriculum(join(extension, 'media'), 'shelf-reading');
+  const checkpoint = {step: 'map', at: '2026-11-19T09:00:00Z', digest: 'old', stepDigest: 'map-original', note: 'The search command finds books.',
+    completed: true, assistance: 1, externalHelp: 'unknown'};
+  const sections = {'Repository map and question': ['shelf/', 'tests/', 'books.json']};
+  const snapshot = {digest: 'edited', steps: {map: 'map-original', entry: 'entry-new'}, files: [], omitted: [], omitted_count: 0,
+    structure: {files: [], total_files: 0, truncated: false}, reading: {sections, savedSections: sections,
+      sources: Object.fromEntries(curriculum.steps.map(s => [s.id, s.id])), commandDigest: 'commands'}};
+  const {coach, open, state, message, store} = harness({curriculum, snapshot: async () => snapshot,
+    saved: {progress: {visited: [], checkpoints: {map: checkpoint, entry: {...checkpoint, step: 'entry', stepDigest: 'entry-old'}}}},
+    workspace: {course: 'Build AI Agents with Python', account: 'learner', environment: 'production'}});
+  await open(); await settle();
+  const saved: any = [...store.values()].at(-1);
+  assert.equal(saved.progress.checkpoints.map.noteLines['Repository map and question'], 3);
+  assert.equal(saved.progress.checkpoints.map.at, checkpoint.at);
+  assert.equal(saved.progress.checkpoints.entry.noteLines, undefined, 'already-changed legacy evidence keeps its original baseline');
+  assert.equal(state().milestones[0].status, 'complete');
+  assert.equal(state().milestones[1].status, 'review');
+  const completedVoice = state().audioId;
+  await coach.refresh();
+  assert.equal(state().audioId, completedVoice);
+  await coach.handle(message('step', {index: 1}));
+  assert.notEqual(state().audioId, completedVoice);
+  assert.equal(coach.spoken.text, state().guide);
+  assert.match(coach.spoken.text, /reviewing/);
+  assert.equal(new URLSearchParams(coach.spoken.query).get('course'), 'Build AI Agents with Python');
+  assert.equal(coach.assistance, 0);
+  assert.equal(state().messages.length, 0);
 });

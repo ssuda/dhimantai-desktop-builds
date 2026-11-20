@@ -401,12 +401,16 @@ export class Api {
     return this.request<{url: string; token: string}>('POST', '/vscode-learning/session', {mode});
   }
 
-  audioGrant(path: string, text: string) {
-    return this.request<{url: string; token: string}>('POST', path + '/audio', {text});
+  dictate(pcm: string, language: string, signal: AbortSignal) {
+    return this.request<{text: string}>('POST', '/notebook-coach/dictation', {pcm, language}, false, signal, 35000);
   }
 
-  startAudio(path: string, text: string, ticket: string, speed = 1) {
-    return this.request<{accepted: boolean}>('POST', path + '/audio', {text, ticket, speed});
+  audioGrant(path: string, text: string, query = '') {
+    return this.request<{url: string; token: string}>('POST', path + '/audio' + query, {text});
+  }
+
+  startAudio(path: string, text: string, ticket: string, speed = 1, query = '') {
+    return this.request<{accepted: boolean}>('POST', path + '/audio' + query, {text, ticket, speed});
   }
 
   /** Line-level help: the server needs the learner's explanation and a token proving a hint came first. */

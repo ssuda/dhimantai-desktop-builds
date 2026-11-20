@@ -50,7 +50,7 @@ export function registerNextLine(secrets: vscode.SecretStorage, service: (name: 
     clear();
     const editor = vscode.window.activeTextEditor;
     const link = editor && target(editor);
-    if (!editor || !link) throw new Error('Focus a code cell in a linked DhimantAI notebook with AI assistance enabled.');
+    if (!editor || !link) throw new Error('Focus a code cell in a linked dhimantAI notebook with AI assistance enabled.');
     const doc = editor.document, pos = editor.selection.active, version = doc.version, request = revision;
     const line = doc.lineAt(pos.line), insertAfter = !!line.text.trim();
     if (editor.selections.length !== 1 || !editor.selection.isEmpty || (insertAfter && !pos.isEqual(line.range.end))) {
@@ -70,7 +70,7 @@ export function registerNextLine(secrets: vscode.SecretStorage, service: (name: 
     const env = service(link.environment);
     const auth = new Auth(secrets, () => link.environment, () => env);
     const session = await auth.session();
-    if (!session) throw new Error('Sign in to this exercise’s DhimantAI service before requesting a line.');
+    if (!session) throw new Error('Sign in to this exercise’s dhimantAI service before requesting a line.');
     if (!valid()) return;
     sessionWatch = {environment: link.environment, account: session.user.id, auth};
     const api = new Api(auth, () => {

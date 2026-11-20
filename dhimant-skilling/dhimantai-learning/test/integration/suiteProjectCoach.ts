@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as vscode from 'vscode';
+import { CODE_READING_PROJECTS_ENABLED } from '../../src/desktopFeatures';
 import { Api } from '../../src/api';
 import { CourseEngine } from '../../src/courseEngine';
 import { CourseWorkspaces } from '../../src/courseWorkspace';
@@ -26,27 +27,30 @@ export async function run() {
   const ext = vscode.extensions.getExtension<{auth: Auth}>('optficial.dhimantai-learning')!;
   const {auth} = await ext.activate();
   const root = vscode.workspace.workspaceFolders![0].uri.fsPath;
-  const originalEngine = CourseWorkspaces.prototype.forFile, originalRecord = CourseWorkspaces.prototype.recordFor;
+  const originalEngine = CourseWorkspaces.prototype.forProject, originalRecord = CourseWorkspaces.prototype.recordFor;
   const courseEngine = new CourseEngine(process.env.DHIMANTAI_PROJECT_PODMAN!,process.env.DHIMANTAI_PROJECT_CONTAINER!,dirname(root));
-  CourseWorkspaces.prototype.forFile = async () => courseEngine;
+  CourseWorkspaces.prototype.forProject = async () => courseEngine;
   const session = await auth.signInWithPassword(EMAIL, PASSWORD);
   CourseWorkspaces.prototype.recordFor = () => ({root,course:'Build AI Agents with Python',key:'project-test',account:session.user.id,
     environment:vscode.workspace.getConfiguration('dhimantai').get('environment', 'production')});
   const cdp = await connect(), original = Api.prototype.notebookCoach;
+  const originalDictate = Api.prototype.dictate, originalGrant = Api.prototype.audioGrant;
   const originalAvailability = Api.prototype.projectHandoffAvailability, originalSend = Api.prototype.sendProjectHandoff,
     originalDetail = Api.prototype.projectHandoffDetail, originalInfo = vscode.window.showInformationMessage, originalSave = vscode.window.showSaveDialog;
   const ui = (expression: string) => cdp.webview(`d => { if (!d.getElementById('checkpoint') || d.defaultView.frameElement?.id !== 'active-frame') return null; return (${expression})(d); }`);
   const visible = () => ui(`d => ({title:d.getElementById('title').textContent, step:d.getElementById('step').value,
     goal:d.getElementById('goal').textContent, check:d.getElementById('checkState').textContent, status:d.getElementById('status').textContent,
     messages:d.getElementById('conversation').textContent, saved:d.getElementById('saved').textContent,
-    note:d.getElementById('note').value, askDisabled:d.getElementById('ask').disabled, checkDisabled:d.getElementById('check').disabled,
-    progress:d.getElementById('progressText').textContent, milestoneStatus:d.getElementById('milestoneStatus').textContent,
+    voiceStatus:d.getElementById('dictation-status')?.textContent, draft:d.getElementById('message').value,
+    note:d.getElementById('note').value, composerDisabled:d.getElementById('attach-images').disabled, checkDisabled:d.getElementById('check').disabled,
+    progress:d.getElementById('progressText').textContent, guide:d.getElementById('guide').textContent,
+    review:d.getElementById('reviewList').hidden ? '' : d.getElementById('reviewTitle').textContent, milestoneStatus:d.getElementById('milestoneStatus').textContent,
     completed:d.getElementById('saveDraft').textContent === 'Mark in progress', hint:d.getElementById('hint').textContent,
     handoff:d.getElementById('handoffStatus').textContent, finishDisabled:d.getElementById('finish').disabled,
     refreshDisabled:d.getElementById('refreshHandoff').disabled, handoffHidden:d.getElementById('handoff').hidden})`);
   const click = (id: string) => until(async () => ui(`d => {const button=d.getElementById('${id}');
     if (button.disabled) return false; button.scrollIntoView({block:'center'}); button.click(); return true;}`), Boolean, id + ' enabled');
-  const ask = (text: string) => ui(`d => {d.getElementById('message').value=${JSON.stringify(text)}; d.getElementById('composer').requestSubmit(); return true;}`);
+  const ask = (text: string) => ui(`d => {const field=d.getElementById('message'); field.value=${JSON.stringify(text)}; field.dispatchEvent(new Event('input', {bubbles:true})); d.getElementById('composer').requestSubmit(); return true;}`);
   const shot = async (name: string) => { await vscode.commands.executeCommand('notifications.clearAll');
     await new Promise(resolve => setTimeout(resolve, 200));
     const image = await cdp.send('Page.captureScreenshot', {format:'png'}); writeFileSync(join(out,name+'.png'), Buffer.from(image.data,'base64')); };
@@ -97,15 +101,63 @@ export async function run() {
     await click('check');
     await until(visible, value => value?.check === 'Current files · failed', 'unfinished starter fails honestly');
     await ask('Help me understand how these files connect.');
-    await until(visible, value => value?.messages.includes('tool observation') && !value.askDisabled, 'first Coach reply');
+    await until(visible, value => value?.messages.includes('tool observation') && !value.composerDisabled, 'first Coach reply');
     assert.ok(requests[0].project_context.files.length > 1);
     assert.ok(requests[0].project_context.files.some((file: any) => file.path === 'README.md'));
     assert.ok(requests[0].project_context.structure.files.includes('data/documents.json'));
     assert.equal(requests[0].project_context.check.status, 'failed');
-    await ask('What should I inspect next?');
+    // Exercise the real Chromium recorder and PCM conversion without opening a hardware microphone.
+    const question = 'What should I inspect next?';
+    Api.prototype.dictate = async pcm => {
+      const bytes = Buffer.from(pcm, 'base64');
+      assert.ok(bytes.length > 0 && bytes.length <= 960000 && bytes.some(byte => byte !== 0));
+      return {text: question};
+    };
+    const speech: string[] = [];
+    Api.prototype.audioGrant = async (path, text, query) => {
+      assert.equal(path, '/notebook-coach/project');
+      assert.equal(new URLSearchParams(query).get('course'), 'Build AI Agents with Python');
+      speech.push(text);
+      throw new Error('Test playback service unavailable');
+    };
+    await ui(`d => {
+      const w = d.defaultView;
+      w.navigator.mediaDevices.getUserMedia = async () => {
+        const track = new w.MediaStreamTrackGenerator({kind:'audio'}), writer = track.writable.getWriter();
+        w.testMicTrack = track;
+        const samples = Float32Array.from({length:1600}, (_, i) => 0.2 * Math.sin(2 * Math.PI * i / 32));
+        let timestamp = 0;
+        w.feedTestMic = async () => {
+          const frame = new w.AudioData({data:samples, format:'f32', sampleRate:16000, numberOfFrames:samples.length, numberOfChannels:1, timestamp});
+          timestamp += 100000;
+          try { await writer.write(frame); } finally { frame.close(); }
+          return true;
+        };
+        return new w.MediaStream([track]);
+      };
+      return true;
+    }`);
+    await click('audio-microphone');
+    await until(() => ui(`d => d.getElementById('audio-microphone').getAttribute('aria-pressed')`), v => v === 'true', 'microphone recording');
+    // Background Electron windows throttle DOM timers. Drive the synthetic input from the extension host clock.
+    for (let i = 0; i < 12; i++) {
+      await ui(`d => d.defaultView.feedTestMic()`);
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    await click('audio-microphone');
+    await until(() => ui(`d => d.getElementById('message').value`), v => v === question, 'editable voice transcript');
+    assert.equal(await ui(`d => d.defaultView.testMicTrack.readyState`), 'ended');
+    assert.equal(requests.length, 1, 'dictation waits for Send');
+    await click('ask');
     await until(async () => requests.length, value => value === 2, 'follow-up');
     assert.equal(requests[1].history.length, 2);
-    await until(visible, value => !value?.askDisabled, 'follow-up finished');
+    assert.equal(requests[1].message, question);
+    assert.equal(requests[1].project_context.milestone, requests[0].project_context.milestone);
+    await until(async () => speech.length, v => v === 1, 'automatic spoken reply');
+    assert.ok(speech[0].includes('tool observation') && (await visible()).messages.includes('tool observation'),
+      'the spoken answer stays in the conversation after a playback failure');
+    results.push({step:'dictated-follow-up-with-project-history-and-speech', pass:true});
+    await until(visible, value => !value?.composerDisabled, 'follow-up finished');
     const scroll = await ui(`d => {const c=d.getElementById('projectContent'); c.scrollTop=150;
       d.defaultView.savedCoachRow=d.querySelector('#conversation article');
       return {height:c.clientHeight, content:c.scrollHeight, position:c.scrollTop, bottom:d.getElementById('composer').getBoundingClientRect().bottom, viewport:d.defaultView.innerHeight};}`);
@@ -131,7 +183,7 @@ export async function run() {
     await vscode.commands.executeCommand('dhimantai.hideCoach');
     await vscode.commands.executeCommand('dhimantai.openProjectCoach');
     await until(visible, value => value?.step === '1' && value.note === 'Next: trace tied search scores.', 'resume checkpoint');
-    assert.equal((await visible()).messages, '', 'chat does not persist across reopening');
+    assert.ok((await visible()).messages.includes(question), 'the milestone conversation survives reopening');
     assert.match((await visible()).progress, /1\/10 marked complete/);
     assert.equal((await visible()).completed, true);
     await auth.signOut();
@@ -145,10 +197,10 @@ export async function run() {
     await until(visible, value => value?.step === '1' && value.note === 'Next: trace tied search scores.', 'next restores milestone evidence');
     const laterEdit = new vscode.WorkspaceEdit(); laterEdit.insert(doc.uri, new vscode.Position(0,0), '# Evidence changed after completion\n');
     assert.ok(await vscode.workspace.applyEdit(laterEdit)); await doc.save();
-    await until(visible, value => value?.progress.includes('1 to review') && !value.completed, 'changed evidence needs review');
-    assert.match((await visible()).progress, /0\/10 marked complete/);
+    await until(visible, value => value?.review.includes('Review changes') && value.completed, 'changed evidence needs review');
+    assert.match((await visible()).progress, /1\/10 marked complete/);
     await vscode.workspace.getConfiguration('dhimantai').update('aiAssistance', false, vscode.ConfigurationTarget.Global);
-    await until(visible, value => value?.askDisabled, 'AI off');
+    await until(visible, value => value?.composerDisabled, 'AI off');
     await click('check');
     await until(visible, value => value?.check === 'Current files · failed', 'checks work with AI off');
     const requestsBeforeHelp = requests.length;
@@ -165,11 +217,11 @@ export async function run() {
     Api.prototype.notebookCoach = async (_path, body) => {
       requests.push(body); return new Promise(resolve => { delayed = resolve; });
     };
-    await until(visible, value => !value?.askDisabled, 'AI on');
+    await until(visible, value => !value?.composerDisabled, 'AI on');
     await ask('This response should be cancelled by New chat.');
     await until(async () => !!delayed, Boolean, 'pending Coach request');
     await click('newChat');
-    await until(visible, value => value?.messages === '' && !value.askDisabled, 'New chat clears while a request is pending');
+    await until(visible, value => value?.messages === '' && !value.composerDisabled, 'New chat clears while a request is pending');
     delayed!({guidance: 'Obsolete reply must not return', prompt: '', line: null});
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal((await visible()).messages, '');
@@ -177,7 +229,7 @@ export async function run() {
       requests.push(body); return {guidance: 'Fresh conversation', prompt: '', line: null};
     };
     await ask('Start from this question.');
-    await until(visible, value => value?.messages.includes('Fresh conversation') && !value.askDisabled, 'fresh Coach reply');
+    await until(visible, value => value?.messages.includes('Fresh conversation') && !value.composerDisabled, 'fresh Coach reply');
     assert.deepEqual(requests.at(-1).history, [], 'New chat sends no previous conversation');
     results.push({step:'scroll-and-new-chat-race',pass:true});
     const submissions: {request: string; snapshot: any}[] = [];
@@ -229,87 +281,121 @@ export async function run() {
       return {guidance: body.project_context.project_id === 'shelf-reading'
         ? 'Compare the query with the title in books.json.' : 'Follow Console.print and the supplied method.', prompt: '', line: null};
     };
-    const richRoot = join(dirname(root),'rich-reading');
-    await vscode.commands.executeCommand('dhimantai.openProjectCoach',richRoot);
-    await until(visible,value=>value?.title==='Read a codebase · Rich','Rich reading panel');
-    assert.match((await visible()).progress, /0\/10 marked complete/, 'progress is isolated by project');
-    const runtimeValues = await ui(`d => [...d.getElementById('runtime').options].map(o=>o.value)`);
-    assert.deepEqual(runtimeValues,['course','setup','terminal']);
-    await click('check');
-    await until(visible,value=>value?.check==='Current files · passed','Rich dependency setup in container');
-    await ui(`d => {const step=d.getElementById('step'); step.value='2'; step.dispatchEvent(new Event('change')); return true;}`);
-    await until(visible,value=>value?.step==='2' && value.goal.includes('long file'),'Rich navigation step');
-    await ui(`d => { [...d.querySelectorAll('#files button')].find(b=>b.textContent==='rich/console.py').click(); return true;}`);
-    await until(async()=>vscode.window.activeTextEditor?.selection.active.line,value=>value>1500,'Console.print anchor');
-    await ask('How do I follow this method into its next function?');
-    await until(async()=>requests.at(-1)?.project_context.project_id,value=>value==='rich-reading','Rich Coach context');
-    const richContext = requests.at(-1).project_context;
-    assert.equal(richContext.selected_file,'rich/console.py');
-    assert.ok(richContext.files[0].start_line>1500 && richContext.files[0].text.includes('    def print('));
-    await until(visible,value=>!value?.askDisabled,'Rich reply complete');
-    await click('check');
-    await until(visible,value=>value?.check==='Current files · passed','Rich plain text run');
-    await shot('04-rich-navigation'); results.push({step:'rich-container-navigation-and-line-context',pass:true});
-    await ask('Explain rich/_loop.py and its tests.');
-    await until(async()=>requests.at(-1)?.project_context.selected_file,value=>value==='rich/_loop.py','question selects a non-curated source file');
-    await until(visible,value=>!value?.askDisabled,'retrieved source reply complete');
-    const retrieved = requests.at(-1).project_context;
-    assert.ok(retrieved.files.some((file: any) => file.path === 'README.md'));
-    assert.ok(retrieved.structure.files.includes('rich/_loop.py'));
-    assert.ok(retrieved.structure.truncated && retrieved.omitted_count > retrieved.omitted.length);
-    writeFileSync(join(out, 'context-request.json'), JSON.stringify(requests.at(-1)));
-    results.push({step:'question-retrieval-and-public-project-map',pass:true});
-    await vscode.commands.executeCommand('dhimantai.openProjectCoach',join(dirname(root),'shelf-reading'));
-    await until(visible,value=>value?.title==='Read a codebase · shelf','shelf reading panel');
-    assert.match((await visible()).progress, /0\/7 marked complete/);
-    assert.ok(vscode.window.activeTextEditor?.document.fileName.endsWith('READING_NOTES.md'), 'the map opens beside its editable notes');
-    await shot('05-shelf-map');
-    const mapTask = await ui(`d => [...d.querySelectorAll('#task li')].map(item => item.textContent).join(' ')`);
-    assert.match(mapTask, /READING_NOTES\.md.*Repository map and question/);
-    assert.match(mapTask, /python -m shelf --help/);
-    assert.doesNotMatch(mapTask, /python -m shelf list|book lines/i);
-    await ui(`d => { [...d.querySelectorAll('#task button')].find(b => b.textContent === 'READING_NOTES.md').click(); return true; }`);
-    await until(async () => {
-      const editor = vscode.window.activeTextEditor;
-      return editor?.document.fileName.endsWith('READING_NOTES.md') && editor.document.lineAt(editor.selection.active.line).text;
-    }, text => typeof text === 'string' && text.includes('Repository map and question'), 'map notes open at the linked heading');
-    const notes = vscode.window.activeTextEditor!;
-    assert.match(notes.document.lineAt(notes.selection.active.line).text, /Repository map and question/);
-    const mapEdit = new vscode.WorkspaceEdit();
-    mapEdit.insert(notes.document.uri, notes.document.lineAt(notes.selection.active.line).range.end,
-      '\n- shelf/ — Python package\n- tests/ — checks for expected behaviour\n- books.json — sample input\n');
-    assert.ok(await vscode.workspace.applyEdit(mapEdit)); await notes.document.save();
-    await click('check');
-    await until(visible, value => value?.check === 'Current files · passed', 'shelf help ran');
-    assert.match(await ui(`d => d.getElementById('output').textContent`), /usage: shelf/);
-    assert.ok(await ui(`d => d.getElementById('checkDetails').open`));
-    await click('checkpoint');
-    assert.equal(await ui(`d => d.activeElement.id === 'note' && d.activeElement.getAttribute('aria-invalid') === 'true'`), true);
-    assert.match((await visible()).progress, /0\/7 marked complete/);
-    await shot('05-shelf-evidence');
-    await ui(`d => { const note = d.getElementById('note'); note.value = 'The search command finds books by query.';
-      note.dispatchEvent(new Event('input')); return true; }`);
-    await click('checkpoint');
-    await until(visible, value => value?.progress.includes('1/7 marked complete') && value.saved.includes('Milestone marked complete'), 'shelf map checkpoint saved');
-    await click('next');
-    await until(visible, value => value?.step === '1' && !value.completed && value.note === '', 'next shelf milestone');
-    assert.match(await ui(`d => d.getElementById('task').textContent`), /python -m shelf list/);
-    await click('previous');
-    await until(visible, value => value?.step === '0' && value.completed && value.note.includes('search command'), 'map checkpoint restored');
-    results.push({step:'shelf-map-notes-help-validation-and-completion',pass:true});
-    await ui(`d => {const step=d.getElementById('step'); step.value='3'; step.dispatchEvent(new Event('change')); return true;}`);
-    await until(visible,value=>value?.step==='3' && value.goal.includes('prediction'),'shelf search step');
-    assert.equal(await ui(`d => d.getElementById('projectContent').scrollTop`),0,'new steps start at their goal');
-    await click('check');
-    await until(visible,value=>value?.check==='Current files · passed','shelf reading run');
-    assert.match(await ui(`d => d.getElementById('output').textContent`),/No books found/);
-    assert.match((await visible()).status,/not an assessment/);
-    assert.equal((await visible()).messages,'','reading projects do not share chat');
-    await ask('Why does search dune return No books found?');
-    await until(async () => requests.at(-1)?.project_context.project_id, value => value === 'shelf-reading', 'shelf search question reaches Coach');
-    assert.match(requests.at(-1).project_context.check.output, /No books found/);
-    await until(visible, value => value?.messages.includes('Compare the query') && !value.askDisabled, 'shelf Coach reply');
-    await shot('05-shelf-reading'); results.push({step:'shelf-reading-output-and-isolation',pass:true});
+    if (CODE_READING_PROJECTS_ENABLED) {
+      const richRoot = join(dirname(root),'rich-reading');
+      await vscode.commands.executeCommand('dhimantai.openProjectCoach',richRoot);
+      await until(visible,value=>value?.title==='Read a codebase · Rich','Rich reading panel');
+      assert.match((await visible()).progress, /0\/10 marked complete/, 'progress is isolated by project');
+      const runtimeValues = await ui(`d => [...d.getElementById('runtime').options].map(o=>o.value)`);
+      assert.deepEqual(runtimeValues,['course','setup','terminal']);
+      await click('check');
+      await until(visible,value=>value?.check==='Current files · passed','Rich dependency setup in container');
+      await ui(`d => {const step=d.getElementById('step'); step.value='2'; step.dispatchEvent(new Event('change')); return true;}`);
+      await until(visible,value=>value?.step==='2' && value.goal.includes('long file'),'Rich navigation step');
+      await ui(`d => { [...d.querySelectorAll('#files button')].find(b=>b.textContent==='rich/console.py').click(); return true;}`);
+      await until(async()=>vscode.window.activeTextEditor?.selection.active.line,value=>value>1500,'Console.print anchor');
+      await ask('How do I follow this method into its next function?');
+      await until(async()=>requests.at(-1)?.project_context.project_id,value=>value==='rich-reading','Rich Coach context');
+      const richContext = requests.at(-1).project_context;
+      assert.equal(richContext.selected_file,'rich/console.py');
+      assert.ok(richContext.files[0].start_line>1500 && richContext.files[0].text.includes('    def print('));
+      await until(visible,value=>!value?.composerDisabled,'Rich reply complete');
+      await click('check');
+      await until(visible,value=>value?.check==='Current files · passed','Rich plain text run');
+      await shot('04-rich-navigation'); results.push({step:'rich-container-navigation-and-line-context',pass:true});
+      await ask('Explain rich/_loop.py and its tests.');
+      await until(async()=>requests.at(-1)?.project_context.selected_file,value=>value==='rich/_loop.py','question selects a non-curated source file');
+      await until(visible,value=>!value?.composerDisabled,'retrieved source reply complete');
+      const retrieved = requests.at(-1).project_context;
+      assert.ok(retrieved.files.some((file: any) => file.path === 'README.md'));
+      assert.ok(retrieved.structure.files.includes('rich/_loop.py'));
+      assert.ok(retrieved.structure.truncated && retrieved.omitted_count > retrieved.omitted.length);
+      writeFileSync(join(out, 'context-request.json'), JSON.stringify(requests.at(-1)));
+      results.push({step:'question-retrieval-and-public-project-map',pass:true});
+      await vscode.commands.executeCommand('dhimantai.openProjectCoach',join(dirname(root),'shelf-reading'));
+      await until(visible,value=>value?.title==='Read a codebase · shelf','shelf reading panel');
+      assert.match((await visible()).progress, /0\/7 marked complete/);
+      assert.ok(vscode.window.activeTextEditor?.document.fileName.endsWith('READING_NOTES.md'), 'the map opens beside its editable notes');
+      const speechBefore = speech.length;
+      await click('audio-toggle');
+      await until(async () => speech.at(-1), text => text?.includes('Repository map and question'), 'speaker requests the current milestone guidance');
+      assert.equal(speech.length, speechBefore + 1);
+      await shot('05-shelf-map');
+      const mapTask = await ui(`d => [...d.querySelectorAll('#task li')].map(item => item.textContent).join(' ')`);
+      assert.match(mapTask, /READING_NOTES\.md.*Repository map and question/);
+      assert.match(mapTask, /python -m shelf --help/);
+      assert.doesNotMatch(mapTask, /python -m shelf list|book lines/i);
+      await ui(`d => { [...d.querySelectorAll('#task button')].find(b => b.textContent === 'READING_NOTES.md').click(); return true; }`);
+      await until(async () => {
+        const editor = vscode.window.activeTextEditor;
+        return editor?.document.fileName.endsWith('READING_NOTES.md') && editor.document.lineAt(editor.selection.active.line).text;
+      }, text => typeof text === 'string' && text.includes('Repository map and question'), 'map notes open at the linked heading');
+      const notes = vscode.window.activeTextEditor!;
+      assert.match(notes.document.lineAt(notes.selection.active.line).text, /Repository map and question/);
+      const mapEdit = new vscode.WorkspaceEdit();
+      mapEdit.insert(notes.document.uri, notes.document.lineAt(notes.selection.active.line).range.end,
+        '\n- shelf/ — Python package\n- tests/ — checks for expected behaviour\n- books.json — sample input\n');
+      assert.ok(await vscode.workspace.applyEdit(mapEdit)); await notes.document.save();
+      await until(visible, value => value?.guide.includes('python -m shelf --help'), 'saved map leads to command');
+      await click('check');
+      await until(visible, value => value?.check === 'Current files · passed' && value.guide.includes('Checkpoint'), 'shelf help ran');
+      assert.match(await ui(`d => d.getElementById('output').textContent`), /usage: shelf/);
+      assert.ok(await ui(`d => d.getElementById('checkDetails').open`));
+      await click('checkpoint');
+      assert.equal(await ui(`d => d.activeElement.id === 'note' && d.activeElement.getAttribute('aria-invalid') === 'true'`), true);
+      assert.match((await visible()).progress, /0\/7 marked complete/);
+      await shot('05-shelf-evidence');
+      await ui(`d => { const note = d.getElementById('note'); note.value = 'The search command finds books by query.';
+        note.dispatchEvent(new Event('input')); return true; }`);
+      await click('checkpoint');
+      await until(visible, value => value?.progress.includes('1/7 marked complete') && value.saved.includes('Milestone marked complete'), 'shelf map checkpoint saved');
+      await click('next');
+      await until(visible, value => value?.step === '1' && !value.completed && value.note === '', 'next shelf milestone');
+      assert.match(await ui(`d => d.getElementById('task').textContent`), /python -m shelf list/);
+      assert.match((await visible()).guide, /Open shelf\/__main__\.py/);
+      const traceHeading = notes.document.getText().split(/\r?\n/).findIndex(line => line.startsWith('## Call and data trace'));
+      const traceEdit = new vscode.WorkspaceEdit();
+      traceEdit.insert(notes.document.uri, notes.document.lineAt(traceHeading).range.end,
+        '\n- shelf/__main__.py calls main in shelf/cli.py. The list branch prints books from load in shelf/storage.py.\n');
+      assert.ok(await vscode.workspace.applyEdit(traceEdit)); await notes.document.save();
+      await until(visible, value => value?.guide.includes('python -m shelf list') && value.progress === '1/7 marked complete' && !value.review,
+        'saved entry trace preserves map completion and prompts list command');
+      await click('check');
+      await until(visible, value => value?.guide.includes('Which function loaded the books?'), 'successful list run prompts for observed evidence');
+      assert.match(await ui(`d => d.getElementById('output').textContent`), /Dune \(1965\) by Frank Herbert/);
+      await ui(`d => { d.getElementById('note').value = 'load from shelf/storage.py. Dune (1965) by Frank Herbert.'; return true; }`);
+      await click('checkpoint');
+      await until(visible, value => value?.progress === '2/7 marked complete' && !value.review && value.guide.includes('3. Follow the data'),
+        'entry completion immediately increments progress and names the next milestone');
+      await click('checkpoint');
+      await until(visible, value => value?.progress === '2/7 marked complete' && value.completed, 'resave leaves both milestones complete');
+      await ui(`d => {d.getElementById('projectContent').scrollTop = 0; return true;}`);
+      await shot('05-shelf-two-complete');
+      const revised = new vscode.WorkspaceEdit();
+      const mapLine = notes.document.getText().split(/\r?\n/).findIndex(line => line.includes('shelf/ — Python package'));
+      revised.insert(notes.document.uri, notes.document.lineAt(mapLine).range.end, ' with the CLI');
+      assert.ok(await vscode.workspace.applyEdit(revised)); await notes.document.save();
+      await until(visible, value => value?.progress === '2/7 marked complete' && value.review.includes('1. Map the repository'),
+        'a genuine map edit names the affected milestone and keeps both completions');
+      await ui(`d => { d.getElementById('reviewList').open = true; d.querySelector('#reviewSteps button').click(); return true; }`);
+      await until(visible, value => value?.step === '0' && value.completed && value.note.includes('search command'), 'review opens the saved map checkpoint');
+      await click('checkpoint');
+      await until(visible, value => value?.progress === '2/7 marked complete' && !value.review, 'confirming evidence clears its review');
+      results.push({step:'shelf-map-and-entry-progress-guidance-speech-and-review',pass:true});
+      await ui(`d => {const step=d.getElementById('step'); step.value='3'; step.dispatchEvent(new Event('change')); return true;}`);
+      await until(visible,value=>value?.step==='3' && value.goal.includes('prediction'),'shelf search step');
+      assert.equal(await ui(`d => d.getElementById('projectContent').scrollTop`),0,'new steps start at their goal');
+      await click('check');
+      await until(visible,value=>value?.check==='Current files · passed','shelf reading run');
+      assert.match(await ui(`d => d.getElementById('output').textContent`),/No books found/);
+      assert.match((await visible()).status,/not an assessment/);
+      assert.equal((await visible()).messages,'','reading projects do not share chat');
+      await ask('Why does search dune return No books found?');
+      await until(async () => requests.at(-1)?.project_context.project_id, value => value === 'shelf-reading', 'shelf search question reaches Coach');
+      assert.match(requests.at(-1).project_context.check.output, /No books found/);
+      await until(visible, value => value?.messages.includes('Compare the query') && !value.composerDisabled, 'shelf Coach reply');
+      await shot('05-shelf-reading'); results.push({step:'shelf-reading-output-and-isolation',pass:true});
+    }
     const shelfRoot = join(dirname(root), 'shelf-capstone');
     await vscode.commands.executeCommand('dhimantai.openProjectCoach', shelfRoot);
     await until(visible, value => value?.title === 'Shelf Capstone · fix a repository bug', 'Shelf capstone panel');
@@ -334,13 +420,13 @@ export async function run() {
     assert.match(shelfContext.git.head, /^[a-f0-9]{40}$/);
     assert.ok(shelfContext.files.some((file: any) => file.path === 'shelf/search.py'));
     assert.deepEqual(requests.at(-1).history, []);
-    await until(visible, value => !value?.askDisabled, 'capstone reply complete');
+    await until(visible, value => !value?.composerDisabled, 'capstone reply complete');
     execFileSync('git', ['switch', '-c', 'fix-search-case'], {cwd: shelfRoot});
     await ask('Which branch am I on now?');
     await until(async () => requests.at(-1)?.project_context.git?.branch, value => value === 'fix-search-case', 'fresh Git context');
     // A branch switch changes no files: this milestone's test result stays current. Only the capstone checker tracks Git state.
     assert.equal(requests.at(-1).project_context.check.state, 'current');
-    await until(visible, value => !value?.askDisabled, 'Git reply complete');
+    await until(visible, value => !value?.composerDisabled, 'Git reply complete');
     await ui(`d => {const step=d.getElementById('step'); step.value='6'; step.dispatchEvent(new Event('change')); return true;}`);
     await until(visible, value => value?.step === '6' && value.goal.includes('Explain the cause'), 'capstone review milestone');
     await click('check');
@@ -352,10 +438,11 @@ export async function run() {
     results.push({step:'failure', error:String(error), visible:await visible(), output:await ui(`d => d.getElementById('output').textContent`)}); await shot('failure'); throw error;
   } finally {
     Api.prototype.notebookCoach = original;
+    Api.prototype.dictate = originalDictate; Api.prototype.audioGrant = originalGrant;
     Api.prototype.projectHandoffAvailability = originalAvailability; Api.prototype.sendProjectHandoff = originalSend;
     Api.prototype.projectHandoffDetail = originalDetail;
     (vscode.window as any).showInformationMessage = originalInfo; (vscode.window as any).showSaveDialog = originalSave;
-    CourseWorkspaces.prototype.forFile = originalEngine;
+    CourseWorkspaces.prototype.forProject = originalEngine;
     CourseWorkspaces.prototype.recordFor = originalRecord;
     writeFileSync(process.env.DHIMANTAI_TEST_RESULTS!, JSON.stringify({results, artifactDirectory:out},null,2));
     cdp.close();

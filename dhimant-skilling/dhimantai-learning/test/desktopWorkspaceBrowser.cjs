@@ -1,74 +1,199 @@
 // Actual host templates and compiled webviews, with local deterministic learning data.
-const {chromium}=require('playwright-core');
-const {readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync}=require('node:fs');
-const {createServer}=require('node:http');
-const {join,resolve,extname}=require('node:path');
-const {tmpdir}=require('node:os');
+const {join}=require('node:path');
+const {writeFileSync}=require('node:fs');
 const assert=require('node:assert/strict');
-const root=resolve(__dirname,'..'),output=process.env.B2C_LAYOUT_ARTIFACTS||'/tmp/dhimantai-b2c-layout';
-const commands=new Map(),panels=[],disposable={dispose(){}};
-const stub=new Proxy(function(){return stub},{get:(_,key)=>key==='then'?undefined:key==='dispose'?()=>{}:stub,apply:()=>disposable,construct:()=>stub});
-const fallback=value=>new Proxy(value,{get:(o,k)=>k in o?o[k]:stub});
-let origin;
-const vscode=fallback({Uri:{joinPath:(uri,...parts)=>({fsPath:join(uri.fsPath,...parts)}),file:fsPath=>({fsPath})},ViewColumn:{One:1},
- Disposable:Object.assign(class {dispose(){}},{from:()=>disposable}),TabInputWebview:class{},EventEmitter:class{event=()=>disposable;fire(){}dispose(){}},
- env:fallback({appName:'Visual Studio Code'}),workspace:fallback({getConfiguration:()=>({get:(_,value)=>value}),workspaceFolders:[],isTrusted:true}),
- window:fallback({tabGroups:{all:[]},createWebviewPanel:()=>{const panel={webview:{cspSource:origin,html:'',asWebviewUri:uri=>origin+'/media/'+uri.fsPath.split('/media/')[1],onDidReceiveMessage:()=>disposable,postMessage:async()=>true},reveal(){},onDidDispose:()=>disposable,onDidChangeViewState:()=>disposable,dispose(){}};panels.push(panel);return panel;}}),
- commands:fallback({registerCommand:(name,fn)=>{commands.set(name,fn);return disposable;},executeCommand:async()=>{}})});
-const Module=require('node:module'),load=Module._load;
-Module._load=function(id,...rest){return id==='vscode'?vscode:load.call(this,id,...rest);};
-const {registerLearningRoom}=require('../out/src/learningRoom');
-const {CourseCatalog}=require('../out/src/courseCatalog');
-const {courseGradeHtml}=require('../out/src/courseGradeHtml');
-Module._load=load;
-const names=['Course overview','Set up your environment','Gradients and parameter updates','Tensors and shapes','Train on real speech','Evaluate recognition'];
-const chapters=names.map((name,i)=>({id:'chapter-'+i,name,lesson:name,free:true,progress:{status:i<2?'covered':i===2?'in_progress':'not_started',covered:i<2?2:0,total:2,topics:[{id:'topic',title:'Understand '+name.toLowerCase(),status:i<2?'covered':'in_progress'}]}}));
-const courses=[{id:'speech',title:'Developing Speech-to-Text Models',summary:'Build and evaluate a speech recognition pipeline. Understand data preparation, model training and the quality of the final transcription.',level:'Intermediate',category:'AI & Machine Learning',prerequisites:'Basic Python',enrolled:true,unlocked:true,can_join:true,access_days:60,chapters},
- {id:'llm',title:'Build an LLM from Scratch',summary:'Implement the core components of a language model and understand how attention turns tokens into predictions.',level:'Advanced',category:'AI & Machine Learning',prerequisites:'Python and linear algebra',enrolled:false,can_join:true,access_days:60,chapters:chapters.map(c=>({...c,progress:undefined}))},
- {id:'python',title:'Python for Problem Solving',summary:'Write readable programs, work with collections and test your own solutions.',level:'Beginner',category:'Software Engineering',prerequisites:'No programming experience required',enrolled:true,is_free:true,can_join:true,chapters:chapters.map(c=>({...c,progress:{...c.progress,status:'not_started'}}))}];
-const grade={course_id:'speech',course_title:courses[0].title,score:70,grade:'B',eligible:false,passed_count:4,required_count:6,exercise_score:80,project_score:60,policy:{description:'Complete the required independent course activities.',scope:'Coursework'},blockers:['Complete the speech evaluation project.','Review the independent transcription exercise.'],topics:[],requirements:[]};
-const pages={};
-const theme=`<style>:root{--vscode-font-family:Arial,sans-serif;--vscode-font-size:15px;--vscode-foreground:#242338;--vscode-editor-foreground:#242338;--vscode-editor-background:#fbfbfe;--vscode-editorWidget-background:#fff;--vscode-descriptionForeground:#626176;--vscode-panel-border:#dcdbea;--vscode-widget-border:#dcdbea;--vscode-button-background:#6042cb;--vscode-button-foreground:#fff;--vscode-button-hoverBackground:#5033b9;--vscode-button-secondaryBackground:#eeebf7;--vscode-button-secondaryForeground:#302b49;--vscode-input-background:#fff;--vscode-input-foreground:#242338;--vscode-input-border:#ccc9df;--vscode-dropdown-background:#fff;--vscode-dropdown-foreground:#242338;--vscode-focusBorder:#7653df;--vscode-progressBar-background:#3a9468;--vscode-testing-iconPassed:#268051;--vscode-badge-background:#eeebf7;--vscode-badge-foreground:#5033b9;--vscode-textLink-foreground:#6042cb;--vscode-editor-font-family:monospace;--vscode-editor-font-size:14px;--vscode-editor-selectionBackground:#dcd4fa;--vscode-editor-inactiveSelectionBackground:#ece6fa;--vscode-editorWarning-foreground:#a26513;--vscode-textBlockQuote-background:#f1eef8}body{margin:0}*{box-sizing:border-box}</style>`;
-const server=createServer((req,res)=>{const path=decodeURIComponent(req.url.split('?')[0]);if(pages[path]){res.setHeader('Content-Type','text/html');res.end(pages[path]);return;}if(path.startsWith('/media/')&&!path.includes('..')){try{const file=join(root,path);res.setHeader('Content-Type',({'.js':'text/javascript','.css':'text/css','.woff2':'font/woff2','.svg':'image/svg+xml'})[extname(file)]||'application/octet-stream');res.end(readFileSync(file));return;}catch{}}res.statusCode=404;res.end();});
+const {startFixtures}=require('./webviewFixtures.cjs');
+let origin,output;
+async function checkCoursePreviews(page) {
+ await page.goto(origin+'/previews');
+ await page.locator('#filter-status').selectOption('preview');
+ assert.equal(await page.locator('#results .course:visible').count(),2);
+ for(const [id, wrong, right, width] of [
+   ['algorithms-python','4','15',1200],
+   ['python-backend-fastapi','201 Created','422 Unprocessable Entity',390],
+ ]) {
+   await page.setViewportSize({width,height:800});
+   const entry=page.locator(`[data-course="${id}"] .preview-entry`);
+   await entry.focus();
+   await page.keyboard.press('Enter');
+   const dialog=page.getByRole('dialog');
+   await dialog.getByRole('button',{name:wrong,exact:true}).click();
+   assert.equal(await dialog.locator('[role=status]').getAttribute('data-correct'),'false');
+   assert.ok((await dialog.locator('[role=status]').innerText()).length);
+   await dialog.getByRole('button',{name:right,exact:true}).click();
+   assert.match(await dialog.locator('[role=status]').innerText(),/^Correct\./);
+   assert.equal(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+   assert.deepEqual(await page.evaluate(()=>window.posts),[]);
+   await dialog.screenshot({path:join(output,id+'-preview.png')});
+   await page.keyboard.press('Escape');
+   assert.equal(await entry.evaluate(el=>document.activeElement===el),true);
+   await entry.click();
+   assert.equal(await dialog.locator('[role=status]').innerText(),'');
+   if(id==='algorithms-python') await dialog.getByRole('button',{name:'Close preview'}).click();
+   else {
+     await dialog.getByRole('button',{name:'Start free'}).click();
+     assert.deepEqual(await page.evaluate(()=>window.posts),[{type:'signUp',id}]);
+   }
+ }
+}
+
+async function checkSolutionLayout(page) {
+ await page.goto(origin+'/room');
+ await page.locator('#lesson-course option').first().waitFor({state:'attached'});
+ const fastapi = require('../../../website/upskill/catalog.json').courses.find(c=>c.id==='python-backend-fastapi');
+ const course = {name:fastapi.title,chapters:fastapi.chapters.map((name,i)=>({id:'fastapi-'+i,name,
+   progress:{status:i?'not_started':'in_progress',covered:i?0:1,total:4,topics:[]}}))};
+ await page.evaluate(course=>window.fixturePost({type:'tutorLessons',attempt:window.posts.find(m=>m.type==='tutorLessons').attempt,courses:[course]}),course);
+ await page.getByRole('button',{name:course.chapters[0].name,exact:true}).click();
+ await page.waitForFunction(()=>window.rooms.length && document.getElementById('status').textContent.includes('connected'));
+ await page.evaluate(()=>{
+   const question='Return sorted, unique field names that are required in the new version of an API and were optional or absent in the old version.';
+   window.publishPacket({method:'display_on_screen', content:'## Find breaking required-field changes\n\n'+question+'\n\n**Example**\n\n```python\nnew_requirements(["id"], ["id", "name"])\n# ["name"]\n```',
+     is_question_prompt:true,tutor_checkpoint_id:'contracts-check',tutor_practice_editor:{question_id:'required-fields',checkpoint_id:'contracts-check',
+       language:'python',starter:'def new_requirements(old, new):\n    pass',question,source:'Textbook exercise'}});
+ });
+ const brief=page.locator('.exercise-instructions'),solution=page.locator('.exercise-solution');
+ await solution.locator('.cm-content').fill('def new_requirements(old, new):\n    return sorted(set(new) - set(old))');
+ for(const width of [1280,390]) {
+   await page.setViewportSize({width,height:width>1000?1050:800});
+   const a=await brief.boundingBox(),b=await solution.boundingBox();
+   assert.ok(width>1000 ? b.x>=a.x+a.width && Math.abs(a.y-b.y)<2 : b.y>=a.y+a.height,'instructions and editor at '+width);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+   await page.evaluate(()=>window.notebookScroller().scrollTop=0);
+   await page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done))));
+   if (width===1280) await page.screenshot({path:join(output,'fastapi-instructor-room.png')});
+   await page.locator('.exercise-workspace').screenshot({path:join(output,'exercise-workspace-'+width+'.png')});
+   await brief.locator('summary').click();
+   assert.equal(await brief.locator('pre').isVisible(),false);
+   assert.match(await solution.locator('.cm-content').innerText(),/return sorted/);
+   await brief.locator('summary').click();
+ }
+ await solution.locator('[data-action="run"]').click();
+ await solution.locator('.practice-output').waitFor({state:'visible'});
+ assert.equal(await page.evaluate(()=>window.posts.filter(m=>m.type==='codeAction' && m.action==='run').at(-1).source),
+   'def new_requirements(old, new):\n    return sorted(set(new) - set(old))');
+}
+async function checkRoomNavigation(page) {
+ const python = require('../../../website/upskill/catalog.json').courses.find(c=>c.id==='algorithms-python');
+ const chapters = python.chapters.map((name,i)=>({id:'algorithm-'+i,name,locked:i===1}));
+ await page.goto(origin+'/room');
+ await page.locator('#lesson-course option').first().waitFor({state:'attached'});
+ await page.evaluate(course=>window.fixturePost({type:'tutorLessons',attempt:window.posts.find(m=>m.type==='tutorLessons').attempt,courses:[course]}),{name:python.title,chapters});
+ await page.locator('#lesson-search').fill('Merge Sort');
+ await page.evaluate(()=>window.fixturePost({type:'browseCoursePractice'}));
+ await page.getByRole('heading',{name:'Chapter exercises'}).waitFor();
+ await page.getByRole('button',{name:'Back to chapters'}).click();
+ assert.equal(await page.locator('#lesson-search').inputValue(),'Merge Sort');
+ assert.equal(await page.locator('#selection-title').evaluate(el=>el===document.activeElement),true);
+ await page.getByRole('button',{name:chapters[2].name,exact:true}).click();
+ const connected = id=>page.waitForFunction(id=>window.posts.filter(m=>m.type==='join').at(-1)?.chapterId===id && document.getElementById('status').textContent.includes('connected'),id);
+ await connected(chapters[2].id);
+ await page.locator('#previous-chapter').click();
+ await connected(chapters[0].id);
+ assert.equal(await page.locator('#previous-chapter').isDisabled(),true);
+ assert.match(await page.locator('#skip-chapter').getAttribute('title'),/Merge Sort/);
+ await page.evaluate(()=>window.publishPacket({method:'display_on_screen',content:'## Trace the call stack\n\nWhen a recursive call reaches its base case, which call resumes first?',
+   is_question_prompt:true,tutor_answer_kind:'written',tutor_checkpoint_id:'recursion-check'}));
+ await page.getByRole('button',{name:'Answer this question'}).click();
+ assert.equal(await page.locator('#message').evaluate(el=>el===document.activeElement),true);
+ await page.locator('#message').fill('The call immediately before the base case resumes first.');
+ await page.getByRole('button',{name:'Practice',exact:true}).click();
+ const exerciseList={type:'workspacePractice',course:python.title,chapterId:chapters[0].id,chapters,questions:
+   ['Flatten a nested list','Flood fill without the call stack','Count the calls a cache saves'].map((title,i)=>({id:'exercise-'+i,title,language:'Python'}))};
+ const request=await page.evaluate(()=>window.posts.filter(m=>m.type==='workspacePractice').at(-1).request);
+ await page.evaluate(result=>window.fixturePost(result),{...exerciseList,request});
+ assert.equal(await page.locator('#practice-list-status').innerText(),'3 exercises');
+ assert.equal(await page.locator('#practice-questions button').count(),3);
+ await page.setViewportSize({width:1200,height:720});
+ await page.screenshot({path:join(output,'algorithms-practice-room.png')});
+ await page.getByRole('button',{name:'Back to notebook'}).click();
+ await page.evaluate(result=>window.fixturePost(result),{...exerciseList,request});
+ assert.equal(await page.locator('#workspace-practice').isVisible(),false);
+ assert.equal(await page.locator('#message').inputValue(),'The call immediately before the base case resumes first.');
+ assert.equal(await page.locator('#send').getAttribute('aria-label'),'Answer Instructor');
+}
+async function checkWrittenRoom(page) {
+ await page.goto(origin+'/written');
+ const brief=page.locator('.written-brief'), answer=page.locator('.written-answer');
+ await page.getByLabel('Your work and evidence').fill('Each call resumes after its recursive child returns.');
+ for (const width of [1200,390]) {
+   await page.setViewportSize({width,height:800});
+   const a=await brief.boundingBox(), b=await answer.boundingBox();
+   assert.ok(width===1200 ? b.x>=a.x+a.width : b.y>=a.y+a.height,'written practice at '+width);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ }
+ await brief.locator('summary').click();
+ assert.equal(await page.locator('#task').isVisible(),false);
+ await page.getByRole('button',{name:'Back to course'}).click();
+ assert.equal(await page.evaluate(()=>window.posts.filter(m=>m.type==='backToCourse').at(-1).answer),'Each call resumes after its recursive child returns.');
+}
+async function checkLessonStartsHigh(page) {
+ await page.goto(origin+'/room');await page.getByRole('button',{name:'Gradients and parameter updates',exact:true}).click();
+ await page.waitForFunction(()=>window.rooms.length>0&&document.getElementById('tutor').hidden);
+ await page.evaluate(()=>window.publishPacket({method:'display_on_screen',content:'## First exercise\n\nWhat will `sum([2, 5, 3])` return?',is_question_prompt:true,tutor_answer_kind:'written',tutor_checkpoint_id:'first'}));
+ for(const [width,height] of [[1440,820],[1280,720],[1024,700]]){
+   await page.setViewportSize({width,height});await page.evaluate(()=>window.notebookScroller().scrollTop=0);
+   const heading=await page.locator('#feed article h2').first().boundingBox(),composer=await page.locator('#message-bar').boundingBox();
+   assert.ok(heading.y<300,'first lesson content starts near the top at '+width+'x'+height+': '+heading.y);
+   assert.ok(composer.y+composer.height<=height,'composer stays in view for a short first question at '+width+'x'+height);
+   const status=await page.locator('.workspace-status').boundingBox(),title=await page.locator('.workspace-title h1').boundingBox();
+   assert.ok(status.y<title.y+title.height,'status sits beside the chapter title at '+width);
+   await page.screenshot({path:join(output,'lesson-start-'+width+'.png')});
+ }
+}
+async function checkChapterCards(page) {
+ const kafka = require('../../../website/upskill/catalog.json').courses.find(course => course.id === 'apache-kafka');
+ const topics = ['What you will build', 'Brokers and KRaft', 'Worked example', 'Live lab', 'Evidence'];
+ const chapters = kafka.chapters.map((name, index) => ({
+   id: 'kafka-' + index, name, locked: index > 0,
+   compute: {status:'specified', totalGpus:0},
+   progress: {status:index ? 'not_started' : 'in_progress', covered:0, total:5, needs_review:index ? 0 : 1,
+     topics:index ? [] : topics.map((title, i) => ({id:String(i), title, status:i < 2 ? 'in_progress' : 'not_started'}))}
+ }));
+ await page.locator('#lesson-list button').first().waitFor();
+ await page.evaluate(course => window.fixturePost({type:'tutorLessons', browse:true,
+   attempt:window.posts.filter(post => post.type === 'tutorLessons').at(-1).attempt, courses:[course]}),
+   {name:kafka.title, chapters});
+ const cards = page.locator('#lesson-list .lesson-outline');
+ assert.equal(await cards.count(), chapters.length);
+ for (const [width, columns] of [[1600, 3], [768, 2], [420, 1]]) {
+   await page.setViewportSize({width, height:1000});
+   const boxes = await cards.evaluateAll(elements => elements.map(card => card.getBoundingClientRect().toJSON()));
+   const first = boxes[0];
+   const summary = await page.locator('p.course-coverage').boundingBox();
+   assert.ok(summary.y + summary.height <= first.top, 'progress summary above Chapter 1 at ' + width);
+   assert.ok(Math.abs(first.left - summary.x) < 1, 'Chapter 1 starts in the first column at ' + width);
+   const gap = boxes[columns].top - first.bottom;
+   assert.ok(gap > 0, 'space between rows at ' + width);
+   for (const [i, box] of boxes.entries()) {
+     const column = i % columns, row = Math.floor(i / columns);
+     assert.ok(Math.abs(box.width - first.width) < 1 && Math.abs(box.height - first.height) < 1, 'equal card dimensions at ' + width);
+     assert.ok(Math.abs(box.left - first.left - column * (first.width + gap)) < 1, 'even columns at ' + width);
+     assert.ok(Math.abs(box.top - first.top - row * (first.height + gap)) < 1, 'even rows at ' + width);
+   }
+   assert.ok(await cards.evaluateAll(elements => elements.every(card => {
+     const bounds = card.getBoundingClientRect();
+     return [...card.querySelectorAll('button, small, li')].filter(child=>child.checkVisibility()).every(child => {
+       const box = child.getBoundingClientRect();
+       return box.top >= bounds.top && box.bottom <= bounds.bottom && box.left >= bounds.left && box.right <= bounds.right;
+     });
+   })), 'chapter titles, progress and topics stay inside their cards at ' + width);
+   const note = await page.locator('small.course-coverage').boundingBox();
+   assert.ok(note.y >= boxes.at(-1).bottom, 'coverage note follows the last row at ' + width);
+   await page.screenshot({path:join(output, 'chapter-cards-' + width + '.png')});
+ }
+}
 (async()=>{
- await new Promise(r=>server.listen(0,'127.0.0.1',r));origin='http://127.0.0.1:'+server.address().port;
- const storage=mkdtempSync(join(tmpdir(),'b2c-layout-'));
- const context={extensionUri:{fsPath:root},extensionPath:root,globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:()=>undefined,update:async()=>{}}};
- const session={user:{id:'fixture'},access_token:'fixture'};
- registerLearningRoom(context,()=> 'staging',()=>({apiUrl:'https://fixture.invalid'}),{session:async()=>session,signIn:async()=>session,accessToken:async()=> 'fixture'});
- await commands.get('dhimantai.openLearningRoom')('Developing Speech-to-Text Models');
- const prepare=html=>html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/,'').replace('</head>',theme+'</head>').replace(/<body(?: class="([^"]*)")?/,(_body,classes)=>'<body class="'+(classes?classes+' ':'')+'vscode-light"');
- pages['/room']=prepare(panels.at(-1).webview.html).replace(/<script[^>]*src="[^"]*livekit-client\.umd\.js"[^>]*><\/script>/,'');
- vscode.env.appName='dhimantAI';
- await commands.get('dhimantai.openDoubtSolver')();
- pages['/doubt']=prepare(panels.at(-1).webview.html).replace(/<script[^>]*src="[^"]*livekit-client\.umd\.js"[^>]*><\/script>/,'');
- const catalog=Object.create(CourseCatalog.prototype);Object.assign(catalog,{panel:{webview:{html:''}},sequence:0,awaitingPayment:false,projects:[],studyCourses:new Set(),companions:[],environment:()=> 'production',selection:{account:'fixture',environment:'production',catalog:{individual:true,courses,offers:[]}}});catalog.render(catalog.selection.catalog,'');pages['/catalog']=prepare(catalog.panel.webview.html);
- pages['/certificates']=prepare(courseGradeHtml('nonce',undefined,[],'',0,false,true,undefined,'fixture',courses.filter(c=>c.enrolled).map(c=>({id:c.id,title:c.title,grade:{...grade,course_id:c.id,course_title:c.title}}))));
- const browser=await chromium.launch({channel:'chrome',headless:true});
+ const fixture=await startFixtures();({origin,output}=fixture);const {page,errors}=fixture;
  try{
- const page=await browser.newPage({viewport:{width:1600,height:1000}}),errors=[];
- page.on('pageerror',error=>errors.push(error.message));
- await page.addInitScript(({chapters})=>{
-   window.posts=[];window.saved={};window.rooms=[];window.chat=[];
-   window.notebookScroller=()=>{const panel=document.getElementById('learning-document');return panel&&getComputedStyle(panel).overflowY==='auto'?panel:document.scrollingElement;};
-   const send=data=>window.dispatchEvent(new MessageEvent('message',{data,origin:location.origin}));window.fixturePost=send;
-   window.acquireVsCodeApi=()=>({getState:()=>window.saved,setState:s=>window.saved=s,postMessage:m=>{window.posts.push(m);setTimeout(()=>{
-     if(m.type==='ready')send({type:'openTutor',mode:document.body.dataset.notebookMode});
-     if(m.type==='tutorLessons')send({type:'tutorLessons',attempt:m.attempt,browse:m.browse,courses:[{name:'Developing Speech-to-Text Models',chapters},
-       ...(document.body.dataset.notebookMode==='doubt_solver'?[{name:'Python',chapters:[{id:'python-lists',name:'Lists'},{id:'locked',name:'Locked chapter',locked:true},{id:'expired',name:'Expired chapter',expired:true}]}]:[])]});
-     if(m.type==='join'){
-       send({type:'restoreNotebook',attempt:m.attempt,documentKey:'fixture',notebook:{version:1,title:'Learning notebook',cells:[],drafts:[],textDraft:''}});
-       send({type:'grant',attempt:m.attempt,url:'unused',token:'unused',chapterId:m.chapterId});
-     }
-     if(m.type==='codeAction')send({...m,type:'codeResult',execution:{status:'exited',exit_code:0,stdout:m.source.includes('learning_rate')?'1.95':'tensor([4., 5., 6.])',stderr:'',truncated:false}});
-   },0);}});
-   const agent={identity:'worker',isAgent:true,trackPublications:new Map()};
-   class Room{listeners=new Map();remoteParticipants=new Map([['worker',agent]]);localParticipant={registerRpcMethod(){},performRpc:async()=> 'ok',sendText:async text=>window.chat.push(text)};constructor(){window.rooms.push(this);}on(name,fn){this.listeners.set(name,fn);}async connect(){}async disconnect(){}registerTextStreamHandler(){}}
-   window.LivekitClient={Room,RoomEvent:Object.fromEntries(['TrackPublished','TrackSubscribed','TrackUnsubscribed','DataReceived','ParticipantDisconnected','Disconnected','Reconnecting','Reconnected'].map(x=>[x,x]))};
-   window.publishPacket=packet=>window.rooms.at(-1).listeners.get('DataReceived')(new TextEncoder().encode(JSON.stringify(packet)),agent);
-   window.publish=content=>window.publishPacket({method:'display_on_screen',content});
- },{chapters});
- mkdirSync(output,{recursive:true});
+ await checkCoursePreviews(page);
+ await checkSolutionLayout(page);
+ await checkRoomNavigation(page);
+ await checkWrittenRoom(page);
+ await checkLessonStartsHigh(page);
+ await page.goto(origin+'/room');
+ await checkChapterCards(page);
+ await page.setViewportSize({width:1600,height:1000});
  await page.goto(origin+'/room');await page.getByRole('button',{name:'Gradients and parameter updates',exact:true}).click();
  await page.waitForFunction(()=>window.rooms.length>0&&document.getElementById('tutor').hidden);
  await page.evaluate(()=>window.publish('## Gradients and parameter updates\n\nA gradient tells us how the loss changes when a parameter changes. We use it to make a small update in the direction that reduces the loss.\n\n1. **Forward pass:** compute the prediction and loss.\n2. **Backward pass:** calculate the gradient.\n3. **Optimizer step:** update the weights.\n\n```python\nimport torch\nx = torch.tensor([1., 2., 3.])\nprint(x + 3)\n```'));
@@ -147,6 +272,7 @@ const server=createServer((req,res)=>{const path=decodeURIComponent(req.url.spli
  await page.locator('#send').click();
  await page.waitForFunction(()=>window.chat.some(text=>text.includes('subtract the gradient')));
  await page.locator('#message').fill('Keep my follow-up draft');
+ await page.locator('#doubt-tried-box summary').click();
  await page.locator('#doubt-tried').fill('I tried adding the gradient.');
  const leaves=await page.evaluate(()=>window.posts.filter(m=>m.type==='leave').length);
  await page.locator('#choose-course').click();
@@ -254,7 +380,7 @@ const server=createServer((req,res)=>{const path=decodeURIComponent(req.url.spli
  });
  assert.equal(await page.locator('#feed img.board-image').count(),2,'one intentional repeat');
  assert.deepEqual(errors,[]);
- writeFileSync(join(output,'result.json'),JSON.stringify({fixtures:true,layouts:[1600,1365,1200,1024,768,420],pages:['room','doubt-selection','doubt-room','catalog','certificates'],checks:['no horizontal overflow','keyboard resize and collapse','draft preserved','run output visible','same-context message sent','dark theme','wheel and keyboard history scrolling','incoming replies preserve reading position','latest reply visible at narrow widths','Doubt Solver uses full width','separate searchable course selection','draft preserved while selecting','attachments and speaker controls','locked and expired chapter access','cross-course selection','selection reload after failure','separate titled chat history','missing ScriptedModel blocks Run','reading-only snippets have no Run','mixed image deliveries render once','requested image revisit renders once'],errors},null,2));
+ writeFileSync(join(output,'result.json'),JSON.stringify({fixtures:true,layouts:[1600,1365,1200,1024,768,420],pages:['room','doubt-selection','doubt-room','catalog','certificates'],checks:['lesson starts near the top with the composer in view','no horizontal overflow','keyboard resize and collapse','draft preserved','run output visible','same-context message sent','dark theme','wheel and keyboard history scrolling','incoming replies preserve reading position','latest reply visible at narrow widths','Doubt Solver uses full width','separate searchable course selection','draft preserved while selecting','attachments and speaker controls','locked and expired chapter access','cross-course selection','selection reload after failure','separate titled chat history','missing ScriptedModel blocks Run','reading-only snippets have no Run','mixed image deliveries render once','requested image revisit renders once'],errors},null,2));
  console.log('Desktop workspace, Doubt Solver selection/room, catalog and certificate layouts passed. Artifacts: '+output);
- }finally{await browser.close();rmSync(storage,{recursive:true,force:true});server.close();}
-})().catch(error=>{console.error(error);server.close();process.exitCode=1;});
+ }finally{await fixture.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -27,10 +27,10 @@ test('Study restores across host restarts and isolates accounts and services', a
     let open:(target?:unknown)=>void=()=>{},message:(value:any)=>void=()=>{},disposePanel=()=>{};
     const sent:any[]=[];let views=0;
     const uri=(fsPath:string)=>({fsPath});
-    const vscode={Uri:{joinPath:(base:any,...parts:string[])=>uri(join(base.fsPath,...parts))},ViewColumn:{One:1},
+    const vscode={env:{appName:'dhimantAI'},Uri:{joinPath:(base:any,...parts:string[])=>uri(join(base.fsPath,...parts))},ViewColumn:{One:1},
       commands:{registerCommand:(_name:string,callback:any)=>{open=callback;return {dispose(){}};}},
       workspace:{getConfiguration:()=>({get:()=>true}),onDidChangeConfiguration:()=>({dispose(){}})},
-      window:{createWebviewPanel:()=>{views++;return {webview:{postMessage:async(m:any)=>{sent.push(m);return true;},onDidReceiveMessage:(fn:any)=>{message=fn;},asWebviewUri:(u:any)=>u.fsPath},
+      window:{createWebviewPanel:()=>{views++;return {webview:{postMessage:async(m:any)=>{sent.push(m);return true;},onDidReceiveMessage:(fn:any)=>{const earlier=message;message=m=>{earlier(m);fn(m);};return {dispose(){}};},asWebviewUri:(u:any)=>u.fsPath},
         onDidDispose:(fn:any)=>{disposePanel=fn;},onDidChangeViewState(){},reveal(){},dispose(){disposePanel();}};}}};
     const sandbox={exports:{},AbortController,require:(name:string)=>name==='vscode'?vscode:name==='./coachAudio'?{trustedRoomUrl:()=>true}:
       name==='./desktopFeatures'?{STUDY_ENABLED:true}:

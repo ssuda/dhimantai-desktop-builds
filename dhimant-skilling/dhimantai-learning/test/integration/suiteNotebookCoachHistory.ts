@@ -73,6 +73,23 @@ export async function connect() {
   return {send, evaluate, webview, close: () => socket.close()};
 }
 
+export async function submitNotebookMessage(cdp: Awaited<ReturnType<typeof connect>>, text: string, withPhoto = false) {
+  await until(() => cdp.webview(`d => {
+    const field = d.querySelector('#notebook-prompt textarea');
+    if (!field) return null;
+    const w = d.defaultView;
+    if (${withPhoto}) {
+      const data = new w.DataTransfer();
+      const png = Uint8Array.from(w.atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='), c => c.charCodeAt(0));
+      data.items.add(new w.File([png], 'error.png', {type:'image/png'}));
+      field.dispatchEvent(new w.ClipboardEvent('paste', {clipboardData:data, bubbles:true}));
+      if (!d.querySelector('#attachments img')) throw new Error('Photo was not staged');
+    }
+    field.value = ${JSON.stringify(text)}; field.dispatchEvent(new w.Event('input'));
+    d.querySelector('.composer-submit').click(); return true;
+  }`), Boolean, 'notebook message composer');
+}
+
 export async function run() {
   await vscode.workspace.getConfiguration('dhimantai').update('practiceEditor','notebook',vscode.ConfigurationTarget.Global);
   const out = process.env.DHIMANTAI_UX_OUT || mkdtempSync(join(tmpdir(), 'coach-history-ui-'));
@@ -116,11 +133,7 @@ export async function run() {
     };
     const askInNotebook = async (question: string, command = 'dhimantai.practice.ask') => {
       const request = vscode.commands.executeCommand(command);
-      await until(async () => cdp.evaluate(`(() => { const input = document.querySelector('.quick-input-widget input');
-        if (!input || !input.getBoundingClientRect().height) return false;
-        input.focus(); input.value = ${JSON.stringify(question)}; input.dispatchEvent(new Event('input', {bubbles: true})); return true; })()`), Boolean, 'Practice question input');
-      await cdp.send('Input.dispatchKeyEvent', {type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13});
-      await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13});
+      await submitNotebookMessage(cdp, question);
       await request;
     };
     const nativeRecord = async (step: string, texts: string[]) => {

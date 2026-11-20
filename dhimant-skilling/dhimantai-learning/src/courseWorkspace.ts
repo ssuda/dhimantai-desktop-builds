@@ -4,6 +4,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { access, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { desktopProjectEnabled } from './desktopFeatures';
+import { loadProjectCurriculum, projectIdentity, ProjectCurriculum } from './projectCore';
+import { prepareProjectDependencies, projectRuntime, ProjectRuntime } from './projectRuntime';
 import { Auth } from './auth';
 import { EnvironmentName } from './environments';
 import { ensurePodman, run, stopCourseRuntime, stream } from './podman';
@@ -26,6 +29,7 @@ export interface CourseScope {
   environment: EnvironmentName;
   target?: {lesson?:string; lab?:string};
   runtime?: 'programming';
+  project?: ProjectRuntime;
 }
 interface CourseRecord extends CourseScope {
   root: string;
@@ -97,6 +101,8 @@ export function notebookFile(data: vscode.NotebookData) {
 }
 
 export class CourseWorkspaces {
+  private readonly projectCourses = new Map<string, string>();
+  private readonly activeProjects = new Map<string, CourseRecord>();
   private queue: Promise<unknown> = Promise.resolve();
   private readonly recordPrefix = 'dhimantai.courseRuntime.';
   private readonly configurations = new Map<string, CourseRuntimeResponse>();
@@ -113,7 +119,8 @@ export class CourseWorkspaces {
     private readonly output: vscode.OutputChannel,
     private readonly available: boolean,
     private readonly downloadLabs?: (scope: CourseScope) => Promise<CourseLab[]>,
-    private readonly downloadRuntime?: (scope: CourseScope) => Promise<CourseRuntimeResponse>
+    private readonly downloadRuntime?: (scope: CourseScope) => Promise<CourseRuntimeResponse>,
+    private readonly projectCourseTitle?: (id:string, account:string) => Promise<string | undefined>
   ) {
     this.media = join(context.extensionPath, 'media', 'course');
   }
@@ -132,9 +139,14 @@ export class CourseWorkspaces {
       within(r.root, uri.fsPath) && !within(join(r.root, 'colab'), uri.fsPath)
       && !within(join(r.root, 'gpu'), uri.fsPath)) : undefined;
   }
+  private executionRecord(uri: vscode.Uri) {
+    const project = [...this.activeProjects.values()].find(record => record.environment === this.env() &&
+      uri.scheme === 'file' && within(record.project!.folder, uri.fsPath));
+    return project ?? this.recordFor(uri);
+  }
   private async checkAccount(s: CourseScope) {
     if (s.environment !== this.env() || (await this.auth.session())?.user.id !== s.account)
-      throw new Error('Sign in to the course’s DhimantAI account and service before opening it.');
+      throw new Error('Sign in to the course’s dhimantAI account and service before opening it.');
   }
   private async courseLabs(scope: CourseScope) {
     await this.checkAccount(scope);
@@ -145,7 +157,8 @@ export class CourseWorkspaces {
   }
   /** The course's single language, when known without waiting (used to preset new notebook cells). */
   languageFor(uri: vscode.Uri): string | undefined {
-    const scope = this.recordFor(uri);
+    const scope = this.executionRecord(uri);
+    if (scope?.project) return scope.project.language;
     return scope?.runtime==='programming' ? 'python' : scope && this.configurations.get(this.configurationKey(scope))?.configuration.recipe.language;
   }
   private async check(s: CourseScope) {
@@ -155,6 +168,7 @@ export class CourseWorkspaces {
   }
 
   private async recipe(s: CourseScope) {
+    if (s.project?.bundled) return courseRecipe({project:{language:s.project.language, languages:s.project.languages}}, 'project');
     if (s.runtime === 'programming') return programmingRecipe();
     const config = await this.configuration(s);
     return courseRecipe({[s.course.toLowerCase()]:config.recipe}, s.course);
@@ -183,7 +197,10 @@ export class CourseWorkspaces {
     if ((await realpath(generated)) !== generated)
       throw new Error('The course runtime folder must be inside the course.');
     const template = await readFile(join(this.media, 'Dockerfile'), 'utf8');
-    await createOnce(join(root, 'Dockerfile'), courseDockerfile(template, recipe));
+    const recipeTemplate = record.project?.bundled
+      ? template.split('\n').filter(line => !line.includes('for item in javascript postgres redis;')).join('\n')
+      : template;
+    await createOnce(join(root, 'Dockerfile'), courseDockerfile(recipeTemplate, recipe));
     const dockerfilePath = join(root, 'Dockerfile');
     const currentDockerfile = await readFile(dockerfilePath, 'utf8');
     const dockerfile = courseDockerfileServices(currentDockerfile, recipe.services);
@@ -222,7 +239,7 @@ export class CourseWorkspaces {
       if ((await readFile(target, 'utf8').catch(() => null)) !== text) await atomic(target, text);
     }
     const scenarioFile = join(generated, 'lab_scenarios.json');
-    const scenarios = JSON.stringify(record.runtime==='programming' ? {version:1, scenarios:[]} : (await this.configuration(record)).scenarios);
+    const scenarios = JSON.stringify(record.runtime==='programming' || record.project?.bundled ? {version:1, scenarios:[]} : (await this.configuration(record)).scenarios);
     if ((await readFile(scenarioFile, 'utf8').catch(() => null)) !== scenarios) await atomic(scenarioFile, scenarios);
     const hash = createHash('sha256');hash.update('preview-ports-v1');
     async function include(file: string) {
@@ -282,8 +299,9 @@ export class CourseWorkspaces {
     if (!this.enabled) throw new Error('The course container is unavailable. Set up the course runtime before running.');
     await this.check(s);
     const record = await this.courseDirectory(s, previous);
+    for (const mount of this.projectBinds(record)) await mkdir(mount.source, {recursive: true});
     if (s.target) record.target = s.target;
-    if (this.downloadRuntime && s.runtime !== 'programming') {
+    if (this.downloadRuntime && s.runtime !== 'programming' && !s.project?.bundled) {
       await this.configuration(s, true);
       await this.check(s);
       const published=this.configurations.get(this.configurationKey(s))!.runtime;
@@ -292,16 +310,17 @@ export class CourseWorkspaces {
     const { key } = record;
     this.engines.delete(key);
     return vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: s.course },
+      { location: vscode.ProgressLocation.Notification, title: s.project?.title ?? s.course },
       async (progress) => {
         const report = (message: string) => {
           progress.report({ message });
           this.output.appendLine(message);
         };
         const log = (text: string) => this.output.append(text);
-        report(repair ? 'Repairing the course runtime and preserving your course files' : 'Preparing the course Dockerfile and dependencies');
+        const kind = record.project ? 'project' : 'course';
+        report(repair ? `Repairing the ${kind} runtime and preserving your files` : `Preparing the ${kind} Dockerfile and dependencies`);
         const fingerprint = await this.writeRecipe(record);
-        report('Checking the course runtime');
+        report(`Checking the ${kind} runtime`);
         const bin = await ensurePodman(report, log, installInTerminal).catch(error => {
           if (process.platform !== 'win32') throw error;
           const guide = 'Windows setup guide';
@@ -321,7 +340,7 @@ export class CourseWorkspaces {
             () => false
           ))
         ) {
-          report('Building the course runtime. Allow several minutes for first setup; downloads and computer speed affect the wait. Build details: Output → dhimantAI.');
+          report(`Building the ${kind} image. Build details are in the dhimantAI output channel.`);
           await stream(bin, ['build', '--tag', tag, '--file', join(record.root, 'Dockerfile'), record.root], log);
         }
         const name = 'dhimantai-course-' + key;
@@ -362,6 +381,7 @@ export class CourseWorkspaces {
                 source +
                 '",target=/course' +
                 (process.platform === 'linux' ? ',relabel=private' : ''),
+              ...this.projectMount(record),
               ...(process.platform === 'linux' ? ['--userns=keep-id'] : []),
               // A runaway learner program cannot take over the machine; model courses get more room.
               '--pids-limit', '1024', '--memory', (await this.recipe(s)).torch ? '3g' : '1536m',
@@ -399,7 +419,7 @@ export class CourseWorkspaces {
           String(process.getuid?.() ?? 1000), String(process.getgid?.() ?? 1000)], log));
         await repairable(this.preparePythonEnvironment(engine));
         const recipe = await this.recipe(s);
-        report('Checking the course packages');
+        report(`Checking the ${kind} packages`);
         await repairable(run(
           bin,
           engine.execArgs(record.root, 'python', [
@@ -409,7 +429,7 @@ export class CourseWorkspaces {
           ]), 60000
         ));
         await repairable(run(bin, engine.execArgs(record.root, 'python', ['-m', 'pip', 'check']), 60000));
-        report('Running a course readiness check');
+        report(`Checking ${kind} execution`);
         for (const language of recipe.languages ?? [recipe.language]) await this.ensureLanguage(engine, language);
         if (recipe.language === 'python') {
           const warning = await repairable(verifyCourseNotebook(engine, recipe.imports));
@@ -419,7 +439,7 @@ export class CourseWorkspaces {
         const port = await courseDebugPort(engine).catch(() => undefined);
         await this.context.globalState.update(this.recordPrefix + key, { ...record, prepared: true, debugger: port ? {bin, port} : undefined });
         this.engines.set(key, engine);
-        report('Course workstation ready. Packages and code execution verified.');
+        report(record.project ? record.project.title + ' runtime ready.' : 'Course workstation ready. Packages and code execution verified.');
         // Cell execution is the default; the runtime menu opens a terminal only when requested.
         return engine;
       }
@@ -432,7 +452,7 @@ export class CourseWorkspaces {
     const machine = machines.includes(record.machine ?? '') ? record.machine! : selection.compose
       ? release.composes[selection.compose].default_service : 'course';
     this.releases.set(record.key, release);
-    return vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:record.course}, async progress => {
+    return vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:record.project?.title ?? record.course}, async progress => {
       const report = (message:string) => {progress.report({message});this.output.appendLine(message);};
       const log = (message:string) => this.output.append(message);
       const bin = await ensurePodman(report, log, installInTerminal);
@@ -452,8 +472,15 @@ export class CourseWorkspaces {
         const directory = join(record.root, '.dhimantai', 'runtime');
         await mkdir(directory, {recursive:true});
         const file = join(directory, selection.compose + '.compose.json');
-        await atomic(file, JSON.stringify(composeRuntime(release, selection, record.root, record.key,
-          process.getuid?.() ?? 1000, process.getgid?.() ?? 1000), null, 2));
+        const compose = composeRuntime(release, selection, record.root, record.key,
+          process.getuid?.() ?? 1000, process.getgid?.() ?? 1000);
+        for (const mount of this.projectBinds(record)) {
+          for (const service of Object.values(compose.services) as {volumes: object[]}[]) {
+            service.volumes.push({type:'bind', source:mount.source.replaceAll('$', () => '$$'), target:mount.target,
+              ...(process.platform === 'linux' ? {bind:{selinux:'z'}} : {})});
+          }
+        }
+        await atomic(file, JSON.stringify(compose, null, 2));
         const args = ['compose', '--project-name', 'dhimantai-' + record.key + '-' + selection.compose, '--file', file];
         report('Preparing the lab machines from published images');
         await stream(bin, [...args, 'up', '-d', ...(repair ? ['--force-recreate'] : [])], log);
@@ -479,18 +506,21 @@ export class CourseWorkspaces {
         }
       } else {
         name = 'dhimantai-course-' + record.key;
-        report('Downloading the published course image');
-        await stream(bin, ['pull', selection.image], log);
         let info = await run(bin, ['container', 'inspect', name]).then(text => JSON.parse(text)[0], () => undefined);
         if (info && info.Config.Labels?.['ai.dhimant.course'] !== record.key) throw new Error('Another container owns the course runtime name.');
         if (info && (repair || info.Config.Labels?.['ai.dhimant.recipe'] !== fingerprint)) {
           await stream(bin, ['rm', '--force', name], log); info = undefined;
         }
         if (!info) {
+          if (!selection.image.includes('@sha256:') || !await run(bin, ['image','exists',selection.image]).then(() => true, () => false)) {
+            report(record.project ? 'Downloading the published image for ' + record.course : 'Downloading the published course image');
+            await stream(bin, ['pull', selection.image], log);
+          }
           const source = record.root.replace(/"/g, '""');
           await stream(bin, ['run', '--detach', '--name', name, '--label', 'ai.dhimant.course=' + record.key,
             '--label', 'ai.dhimant.recipe=' + fingerprint, '--mount', 'type=bind,"source=' + source + '",target=/course' + (process.platform === 'linux' ? ',relabel=private' : ''),
-            ...(process.platform === 'linux' ? ['--userns=keep-id'] : []), '--user', `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
+            ...this.projectMount(record),
+              ...(process.platform === 'linux' ? ['--userns=keep-id'] : []), '--user', `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
             '--pids-limit','1024','--memory',release.recipe.torch ? '3g' : '1536m', '--cpus','2',
             '--env','HOME=/course/.home','--env','SHELL=/bin/zsh','--publish','127.0.0.1::5678/tcp', ...previewPublishArgs, ...mediaPorts,
             '--workdir','/course',selection.image,'sleep','infinity'], log);
@@ -520,7 +550,7 @@ export class CourseWorkspaces {
   }
 
   machineState(uri:vscode.Uri) {
-    const record = this.recordFor(uri), release = record && this.releases.get(record.key);
+    const record = this.executionRecord(uri), release = record && this.releases.get(record.key);
     if (!record || !release) return undefined;
     const selection = runtimeSelection(release,record.target);
     return {machines:runtimeMachines(release,selection),selected:this.engines.get(record.key)?.target ?? record.machine};
@@ -528,7 +558,7 @@ export class CourseWorkspaces {
 
   async selectMachine(uri:vscode.Uri, machine:string) {
     await this.forFile(uri);
-    const record = this.recordFor(uri)!, release = this.releases.get(record.key);
+    const record = this.executionRecord(uri)!, release = this.releases.get(record.key);
     if (!release || !runtimeMachines(release,runtimeSelection(release,record.target)).includes(machine)) throw new Error('Choose a machine declared by this lab.');
     record.machine = machine;
     await this.serial(() => this.preparePublished(record,release,false));
@@ -540,17 +570,98 @@ export class CourseWorkspaces {
     this.engines.clear();
     this.started.clear();
     this.activeMachines.clear();
+    this.activeProjects.clear();
     if (engines.length) await stopCourseRuntime(engines[0].bin, [...new Set(engines.map(engine => engine.name))]);
   }
 
   /** Whether running here needs only a container start, not the one-time Podman install and image build. */
   isSetUp(uri: vscode.Uri): boolean {
-    const record = this.enabled ? this.recordFor(uri) : undefined;
+    const record = this.enabled ? this.executionRecord(uri) : undefined;
     return !!record && (this.engines.has(record.key) || record.prepared === true);
+  }
+
+  private projectBinds(record: CourseRecord) {
+    const project = record.project;
+    if (!project) return [];
+    const target = '/course/' + project.mount;
+    const mounts = [{source:project.folder, target}];
+    if (project.languages.includes('javascript') || project.languages.includes('typescript')) {
+      // npm ci replaces node_modules. Keep the container's native packages in its private runtime folder.
+      mounts.push({source:join(record.root, '.dhimantai', 'node_modules'), target:target + '/node_modules'});
+    }
+    return mounts;
+  }
+
+  private projectMount(record: CourseRecord): string[] {
+    return this.projectBinds(record).flatMap(({source, target}) => [
+      '--mount', 'type=bind,"source=' + source.replaceAll('"','""') + '",target=' + target
+        + (process.platform === 'linux' ? ',relabel=shared' : '')
+    ]);
+  }
+
+  async projectAt(uri: vscode.Uri) {
+    if (uri.scheme !== 'file') return;
+    const course = this.recordFor(uri);
+    const workspace = vscode.workspace.getWorkspaceFolder?.(uri)?.uri.fsPath;
+    const first = course && relative(course.root, uri.fsPath).split(sep)[0];
+    const candidates = new Set([workspace, first && course && join(course.root, first)]);
+    for (const root of candidates) {
+      if (!root) continue;
+      const exists = (name:string) => access(join(root, name)).then(() => true, () => false);
+      if (!await exists('.dhimantai-project.json') && !await exists('.git')) continue;
+      const id = await projectIdentity(root);
+      if (id && desktopProjectEnabled(id)) return {root, curriculum:await loadProjectCurriculum(dirname(this.media), id, root)};
+    }
+  }
+
+  async forProject(root:string, curriculum:ProjectCurriculum, language?:string) {
+    if (!this.enabled) throw new Error('Enable the desktop container runtime to run this project.');
+    const parent = this.recordFor(vscode.Uri.file(root));
+    const account = (await this.auth.session())?.user.id;
+    if (!account) throw new Error('Sign in before starting the project container.');
+    const environment = this.env();
+    if (parent) await this.check(parent);
+    const project = await projectRuntime(root, curriculum);
+    let course = curriculum.title;
+    if (!project.bundled) {
+      const courseKey = JSON.stringify([environment, account, curriculum.courseId]);
+      const title = this.projectCourses.get(courseKey) ?? await this.projectCourseTitle?.(curriculum.courseId!, account);
+      if (!title) throw new Error('The course configuration for this project is unavailable. Reopen its course and retry.');
+      this.projectCourses.set(courseKey, title);
+      course = title;
+    }
+    const key = digest(JSON.stringify([environment, account, course, project]));
+    const record: CourseRecord = {key, account, environment, course, project,
+      root:join(this.context.globalStorageUri.fsPath, 'project-runtimes', key)};
+    return this.serial(async () => {
+      await this.check(record);
+      let engine = this.engines.get(key);
+      const identity = (instance: CourseEngine) => run(instance.bin,
+        ['container','inspect','--format','{{.Id}} {{.State.Running}}',instance.name]);
+      let container = engine ? await identity(engine).catch(() => '') : '';
+      if (!engine || !container.endsWith(' true')) {
+        engine = await this.prepare(record, record);
+        container = await identity(engine);
+      }
+      engine.project = project;
+      this.activeProjects.set(project.folder, this.context.globalState.get<CourseRecord>(this.recordPrefix + key) ?? record);
+      const languages = new Set(project.languages);
+      if (language) languages.add(language);
+      for (const lang of languages) await this.ensureLanguage(engine, lang);
+      const dependencyKey = 'dhimantai.projectDependencies.' + key;
+      const installed = this.context.globalState.get<{container:string; fingerprint:string}>(dependencyKey);
+      const previous = installed?.container === container ? installed.fingerprint : undefined;
+      const fingerprint = await prepareProjectDependencies(engine, project, previous);
+      await this.check(record);
+      if (previous !== fingerprint) await this.context.globalState.update(dependencyKey, {container, fingerprint});
+      return engine;
+    });
   }
 
   async forFile(uri: vscode.Uri, language?: string, target?:{lesson?:string;lab?:string}): Promise<CourseEngine | undefined> {
     if (!this.enabled) return;
+    const project = await this.projectAt(uri);
+    if (project) return this.forProject(project.root,project.curriculum,language);
     const record = this.recordFor(uri);
     if (!record) return;
     const exercise = /[/\\]exercises[/\\]([a-f0-9-]{36})(?:[/\\]|$)/i.exec(uri.fsPath)?.[1];
@@ -587,7 +698,15 @@ export class CourseWorkspaces {
     if (!COURSE_LANGUAGES.includes(language)) throw new Error('Unsupported course language.');
     const verified = this.verifiedLanguages.get(engine) ?? new Set<string>();
     if (verified.has(language)) return;
-    if (language !== 'python' && !engine.published)
+    if (engine.project && language !== 'python') {
+      try {
+        await verifyCourseLanguage(engine, engine.serviceDatabase && ['sql','pglab'].includes(language) ? 'bash' : language);
+        verified.add(language);
+        this.verifiedLanguages.set(engine, verified);
+        return;
+      } catch { /* Install the declared toolchain in this container, then verify it. */ }
+    }
+    if (language !== 'python' && (!engine.published || engine.project))
       await stream(
         engine.bin,
         ['exec', '--user', '0', engine.name, '/usr/local/sbin/dhimantai-language', language],
@@ -736,11 +855,13 @@ export class CourseWorkspaces {
     const uri = vscode.window.activeTextEditor?.document.uri;
     const active = vscode.window.activeNotebookEditor?.notebook.uri;
     const target = [uri, active].find((file) => file && this.recordFor(file));
-    if (!target) throw new Error('Open a file or notebook in a DhimantAI course first.');
+    if (!target) throw new Error('Open a file or notebook in a dhimantAI course first.');
     return target;
   }
   async openDockerfile() {
-    const record = this.recordFor(this.activeFile())!;
+    const target = vscode.window.activeTextEditor?.document.uri ?? vscode.window.activeNotebookEditor?.notebook.uri;
+    if (target && await this.projectAt(target)) await this.forFile(target);
+    const record = target && this.executionRecord(target) || this.recordFor(this.activeFile())!;
     await this.check(record);
     const release = this.releases.get(record.key);
     if (release) {
@@ -757,13 +878,14 @@ export class CourseWorkspaces {
     const engine = await this.forFile(target);
     if (!engine) throw new Error('Choose a course workstation first.');
     const cwd = (await vscode.workspace.fs.stat(target)).type & vscode.FileType.Directory ? target.fsPath : dirname(target.fsPath);
-    openCourseTerminal(engine, this.recordFor(target)?.course + (engine.target === 'course' ? '' : ' · ' + engine.target), cwd);
+    const label = engine.project?.title ?? this.recordFor(target)?.course;
+    openCourseTerminal(engine, label && label + (engine.target === 'course' ? '' : ' · ' + engine.target), cwd);
   }
   async terminalOptions(target: vscode.Uri): Promise<vscode.TerminalOptions> {
     const engine = await this.forFile(target);
     if (!engine) throw new Error('Choose a course workstation before opening its terminal.');
     const cwd = (await vscode.workspace.fs.stat(target)).type & vscode.FileType.Directory ? target.fsPath : dirname(target.fsPath);
-    return courseTerminalOptions(engine, this.recordFor(target)!.course, cwd);
+    return courseTerminalOptions(engine, engine.project?.title ?? this.recordFor(target)!.course, cwd);
   }
   private async importPrevious(parent: string, root: string, scope: CourseScope, id: string) {
     if (!uuid.test(id)) throw new Error('Invalid exercise identifier.');

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { cloneCapstone } from '../src/capstoneRepo';
-import { checkArguments, checkCommand, checkDigest, checkState, checkStatus, tailText, createProject, createReadingProject, isProject, loadProjectCurriculum, prepareProjectHandoff, projectIdentity, ProjectCurriculum, projectSnapshot, runProjectCheck } from '../src/projectCore';
+import { checkArguments, checkCommand, checkDigest, checkState, checkStatus, tailText, createProject, createReadingProject, isEnabledProject, loadProjectCurriculum, prepareProjectHandoff, projectIdentity, ProjectCurriculum, projectSnapshot, runProjectCheck } from '../src/projectCore';
 
 const extension = resolve(__dirname, '../..'), starter = join(extension, 'media/projects/course-agent');
 const engine = (exit = 0) => ({bin: process.execPath, execArgs: (_cwd: string, command: string, args: string[]) => {
@@ -118,7 +118,7 @@ test('starter creation preserves existing projects and creates a clean independe
   const root = await mkdtemp(join(tmpdir(), 'project-core-')), project = join(root, 'agent');
   try {
     await createProject(starter, project);
-    assert.equal(await isProject(project), true);
+    assert.equal(await isEnabledProject(project), true);
     assert.equal(execFileSync('git', ['status', '--porcelain'], {cwd: project, encoding: 'utf8'}), '');
     await assert.rejects(createProject(starter, project));
     const plan = await curriculum();
@@ -133,7 +133,7 @@ test('starter creation preserves existing projects and creates a clean independe
     assert.equal(checkState(run, snapshot.digest, 'search').state, 'not_run');
     const fail = await runProjectCheck(project, plan.steps[1], snapshot.digest, new AbortController().signal, engine(1));
     assert.equal(fail.status, 'failed');
-    await assert.rejects(runProjectCheck(project, plan.steps[0], snapshot.digest, new AbortController().signal, undefined as any), /course container/);
+    await assert.rejects(runProjectCheck(project, plan.steps[0], snapshot.digest, new AbortController().signal, undefined as any), /project container/);
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 
@@ -185,6 +185,7 @@ test('both reading projects clone cleanly; large source excerpts retain line off
       const folder = join(root,id);
       await createReadingProject(media,id,folder);
       assert.equal(await projectIdentity(folder), id);
+      assert.equal(await isEnabledProject(folder), false, 'older reading folders do not activate Coach');
       assert.equal(execFileSync('git',['status','--porcelain'],{cwd:folder,encoding:'utf8'}),'');
       await assert.rejects(createReadingProject(media,id,folder));
       const plan = await loadProjectCurriculum(media,id);
@@ -250,7 +251,7 @@ test('container start failures are runtime errors with setup recovery; timeouts 
     const run = await runProjectCheck(starter, step, 'snapshot', new AbortController().signal,
       {bin: process.execPath, execArgs: () => ['-e', `process.stderr.write('Error: no container with name or ID found\\n', () => process.exit(${code}))`]});
     assert.equal(run.status, 'runtime_error');
-    assert.match(run.output, /Set up course/);
+    assert.match(run.output, /Set up and verify environment/);
     assert.equal(run.diagnostic, undefined);
   }
 });

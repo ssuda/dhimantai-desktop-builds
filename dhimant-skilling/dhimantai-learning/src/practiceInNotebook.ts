@@ -15,7 +15,8 @@ import { cellRun } from './notebookCoach';
 import { gradeLocally } from './notebookSubmission';
 import { exerciseResult, CourseworkResult, CourseworkHelp } from './courseworkProgress';
 import { helpSinceAssessment } from './helpRecord';
-import { EXTENSIONS, MAX_FILES, PracticeAttachment, attachmentNote, loadAttachments } from './practiceAttachments';
+import { PracticeAttachment, attachmentNote } from './practiceAttachments';
+import { notebookPrompt } from './notebookPrompt';
 import { contextFor, jupyterMetadata, learnerCell } from './notebookCommands';
 import type { PracticeNotebook } from './practiceNotebook';
 import { NotebookCoachConversation } from './notebookCoachConversation';
@@ -24,6 +25,7 @@ import { inputMarkdown, parseRunInput, learnerSource, parsePrediction, practiceF
   practiceMetadata, taskChanged, taskMarkdown } from './practiceIpynb';
 
 export interface PracticeHost {
+  media: vscode.Uri;
   secrets: vscode.SecretStorage;
   service(name: EnvironmentName): Environment;
   records(account: string): ProblemRecord[];
@@ -160,7 +162,7 @@ export function registerPracticeInNotebook(host: PracticeHost): vscode.Disposabl
     // Results sit together under the work: samples, then the graded result, then the reflection it asks for.
     const order = ['samples', 'grading', 'reflection'], rank = order.indexOf(role);
     let results = anchor;
-    while (anchor > 0 && order.includes(roleOf(cells[results]) ?? '') && (rank < 0 || order.indexOf(roleOf(cells[results])!) < rank)) results++;
+    while (results < cells.length && anchor > 0 && order.includes(roleOf(cells[results]) ?? '') && (rank < 0 || order.indexOf(roleOf(cells[results])!) < rank)) results++;
     const lastTurn = role === 'learner' ? cells.filter(c => ['learner', 'tutor', 'notice'].includes(roleOf(c) ?? '')).at(-1) : undefined;
     const index = existing ? existing.index : after ? after.index + 1 : lastTurn ? lastTurn.index + 1
       : anchor > 0 ? results : doc.cellCount;
@@ -407,47 +409,23 @@ export function registerPracticeInNotebook(host: PracticeHost): vscode.Disposabl
     changed.fire();
   };
 
-  const pickAttachments = async () => {
-    const chosen = await vscode.window.showOpenDialog({canSelectMany: true, openLabel: 'Attach',
-      title: `Attach up to ${MAX_FILES} photos or PDFs (2 MB each)`, filters: {'Photos and PDFs': EXTENSIONS}});
-    return chosen?.length ? loadAttachments(chosen.map(uri => uri.fsPath)) : [];
-  };
+  let prompt: ReturnType<typeof notebookPrompt> | undefined;
   const askQuestion = async (anyNotebook = false) => {
-    const target = require(anyNotebook);
-    const assistant = assistantFor(target.coach.path);
+    if (prompt?.panel.active) return;
+    const target = require(anyNotebook), assistant = assistantFor(target.coach.path);
     if (state(target.doc).busy) return stillAnswering(assistant);
-    // One box: type a question, and optionally attach photos or PDFs (an error on screen, handwritten working).
-    const box = vscode.window.createInputBox();
-    const attach = {iconPath: new vscode.ThemeIcon('attach'), tooltip: 'Attach a photo or PDF'};
-    const prompt = `${assistant} guides you; it does not write the solution.`;
-    let files: PracticeAttachment[] = [], picking = false;
-    Object.assign(box, {title: `Ask ${assistant} about this notebook`, prompt, buttons: [attach], ignoreFocusOut: true,
-      placeholder: 'For example: why does my loop stop early? Use the paperclip to attach a photo or PDF.'});
-    const answer = await new Promise<string | undefined>(resolve => {
-      box.onDidChangeValue(v => { box.validationMessage = v.length > 600 ? 'Keep it under 600 characters.' : undefined; });
-      box.onDidTriggerButton(async () => {
-        picking = true;
-        try {
-          const picked = await pickAttachments();
-          if (picked.length) files = picked;
-          box.prompt = [attachmentNote(files), prompt].filter(Boolean).join(' · ');
-          box.validationMessage = undefined;
-        } catch (error) { box.validationMessage = error instanceof Error ? error.message : String(error); }
-        picking = false;
-        box.show();
-      });
-      box.onDidAccept(() => {
-        if (box.value.length > 600 || (!box.value.trim() && !files.length)) return;
-        resolve(box.value.trim()); box.hide();
-      });
-      box.onDidHide(() => { if (!picking) resolve(undefined); });
-      box.show();
-    });
-    box.dispose();
-    if (answer === undefined) return;
-    const message = answer || 'Look at what I attached and help me with my next step.';
-    const heading = 'Your question';
-    await ask('guide', message, files.length ? heading + ' · ' + attachmentNote(files) : heading, undefined, files, target);
+    if (prompt?.cell === target.cell) { prompt.panel.reveal(target.editor.viewColumn); return; }
+    prompt?.panel.dispose();
+    const service = () => host.service(target.link.environment);
+    const auth = new Auth(host.secrets, () => target.link.environment, service);
+    const current = prompt = notebookPrompt(host.media, target.cell, assistant, target.editor.viewColumn,
+      new Api(auth, service, target.link.account || undefined));
+    const message = await current.result;
+    if (prompt === current) prompt = undefined;
+    if (!message || target.doc.isClosed || target.cell.document.isClosed) return;
+    const files = message.attachments;
+    const heading = ['Your question', attachmentNote(files)].filter(Boolean).join(' · ');
+    await ask('guide', message.text || 'Help me understand the attached material.', heading, undefined, files, target);
   };
   const review = async () => ask('review', 'Review my code against the task and help me decide what to improve.', 'Code review');
   const more = async () => {
@@ -515,7 +493,7 @@ export function registerPracticeInNotebook(host: PracticeHost): vscode.Disposabl
   };
 
   const subscriptions = [
-    changed,
+    {dispose:() => prompt?.panel.dispose()}, changed,
     vscode.notebooks.registerNotebookCellStatusBarItemProvider('jupyter-notebook', statusBar),
     vscode.commands.registerCommand('dhimantai.practice.stuck', guard(stuck)),
     vscode.commands.registerCommand('dhimantai.practice.check', guard(check)),

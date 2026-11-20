@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { ProjectCurriculum, ProjectCheckpoint, ProjectRun, loadProjectCurriculum, projectSnapshot, runProjectCheck } from './projectCore';
+import { desktopProjectEnabled } from './desktopFeatures';
 
 export interface SubmissionGit {
   available: boolean; head: string; branch: string; dirty: boolean; subject: string;
@@ -90,7 +91,8 @@ export class ProjectResults {
     return record;
   }
   async summaries(media: string, environment: string, account: string): Promise<ProjectSummary[]> {
-    return Promise.all(this.list(environment, account).map(async record => {
+    const visible = this.list(environment, account).filter(record => desktopProjectEnabled(record.projectId));
+    return Promise.all(visible.map(async record => {
       try {
         if (!(await stat(record.root)).isDirectory()) throw new Error('Project folder unavailable');
         const curriculum = await loadProjectCurriculum(media, record.projectId, record.root);

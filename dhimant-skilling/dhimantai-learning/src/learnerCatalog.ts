@@ -23,7 +23,8 @@ export function accessPeriod(course: CatalogCourse): string {
 
 /** Only these purpose-built RPCs are available to the extension, with the learner's own token. */
 export async function learnerRpc<T>(env: Environment,
-    name: 'public_learning_catalog' | 'complete_skilling_signin' | 'complete_individual_signup' | 'join_learning_course',
+    name: 'public_learning_catalog' | 'complete_skilling_signin' | 'complete_individual_signup' | 'join_learning_course'
+      | 'exam_open' | 'exam_attempt_state' | 'exam_save_answers' | 'exam_submit' | 'crt_assessment_scores',
     body: object = {}, token?: string): Promise<T> {
   const response = await fetch(`${env.supabaseUrl}/rest/v1/rpc/${name}`, {
     method: 'POST', headers: { apikey: env.supabaseAnonKey,
@@ -33,7 +34,8 @@ export async function learnerRpc<T>(env: Environment,
   const data: any = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 404 || data.code === 'PGRST202') {
-      throw new Error('Individual signup and the course catalog are not available on this service yet. Update the service or choose another DhimantAI environment.');
+      if (name.startsWith('exam_') || name==='crt_assessment_scores') throw new Error('Assessments are unavailable on this service.');
+      throw new Error('Individual signup and the course catalog are not available on this service yet. Update the service or choose another dhimantAI environment.');
     }
     throw new Error(typeof data.message === 'string' ? data.message : `Could not complete this request (${response.status}). Please retry.`);
   }

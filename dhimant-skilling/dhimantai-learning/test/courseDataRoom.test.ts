@@ -1,3 +1,4 @@
+import { notebookMessageBar } from '../src/learningComposer';
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -17,7 +18,7 @@ const school: CourseDataset = {id: 'sample:school', title: 'School', source: 'sa
   tables: [{name: 'attendance', row_count: 9, columns: [{name: 'days_present', type: 'integer'}], sample_rows: []}]};
 
 async function notebookRoom() {
-  const dom = new JSDOM('<button id="wide"></button><button id="latest"></button><button id="tutor"></button><button id="doubt_solver"></button><button id="end" disabled></button><button id="sound"></button><span id="status"></span><small id="notebook-save-status"></small><input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox"><small id="code-observer-status"></small><main id="feed"></main><form id="composer"><small id="composer-context" hidden></small><div id="attachments"></div><textarea id="message"></textarea><button id="send"></button><button type="button" id="teach-back" disabled></button><button id="video"></button><button type="button" id="import-data" hidden></button></form>',
+  const dom = new JSDOM('<button id="wide"></button><button id="latest"></button><button id="tutor"></button><button id="doubt_solver"></button><button id="end" disabled></button><span id="status"></span><small id="notebook-save-status"></small><input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox"><small id="code-observer-status"></small><main id="feed"></main>' + notebookMessageBar('Instructor', false, '<button type="button" id="sound"></button>'),
     {runScripts: 'outside-only', url: 'https://webview.example', pretendToBeVisual: true});
   const w = dom.window, sent: any[] = [], chats: any[] = [];
   w.document.body.insertAdjacentHTML('afterbegin', lessonPicker);

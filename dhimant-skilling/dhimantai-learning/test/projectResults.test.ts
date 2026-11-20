@@ -67,7 +67,11 @@ test('results survive reopening, isolate learner/service, retain history and mar
   assert.equal(projectResultStatus(results.list('staging', 'alice')[0]), 'In progress');
   const submitted = await submitProject(root, curriculum, help, '', new AbortController().signal, engine, pass);
   await results.save('staging', 'alice', root, curriculum, submitted);
+  const reading = await loadProjectCurriculum(media, 'shelf-reading');
+  await results.save('staging', 'alice', root + '-reading', reading, {...submitted, evidence: 'reading_checks_and_self_report'});
   const restored = new ProjectResults(state);
+  assert.deepEqual((await restored.summaries(media, 'staging', 'alice')).map(r => r.root), [root]);
+  assert.equal(restored.get('staging', 'alice', root + '-reading')?.submissions[0].id, submitted.id);
   assert.equal(restored.list('production', 'alice').length, 0);
   assert.equal(restored.list('staging', 'bob').length, 0);
   assert.equal(restored.list('staging', 'alice')[0].submissions[0].id, submitted.id);

@@ -1,3 +1,5 @@
+import { desktopProjectEnabled } from './desktopFeatures';
+import { COURSE_LANGUAGES } from './courseRecipe';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { appendFile, cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
@@ -17,21 +19,23 @@ export interface ProjectStep {
   id: string; title: string; goal: string; opening: string; task: string;
   files: string[]; check: string; expected: string; hint: string; reflection: string;
   deliverable?: string; evidencePrompt?: string;
+  guide?: {sections: string[]; cues: string[]; prepare: string; beforeRun: string; afterRun?: string};
   anchors?: Record<string, string>;
   nextAction?: {file: string; task: string};
 }
-export interface ProjectCurriculum { id: string; version: number; title: string; mode?: 'reading' | 'guided'; courseId?:string; language?:string; files: string[]; evidenceFiles?: string[]; steps: ProjectStep[] }
+export interface ProjectCurriculum { id: string; version: number; title: string; mode?: 'reading' | 'guided'; courseId?:string; courseTitle?:string; language?:string; files: string[]; evidenceFiles?: string[]; steps: ProjectStep[] }
 export interface ProjectSource { path: string; text: string; truncated: boolean; start_line: number }
 export interface ProjectGit {
   state: 'available' | 'unavailable'; branch: string; head: string;
   changed_files: {path: string; status: string}[]; recent_commits: string[]; truncated: boolean;
 }
 /**
- * digest covers project files only. steps holds one file-only digest per milestone (over step.files), so editing one
- * milestone's files never invalidates another. gitFingerprint is separate and only matters to Git-based checks.
+ * digest identifies the project files. steps holds the original per-milestone hashes for existing checkpoints.
+ * Shelf also keeps the local notebook sections so appending later work can preserve a saved checkpoint.
  */
 export interface ProjectSnapshot {
   digest: string; steps: Record<string, string>; gitFingerprint?: string;
+  reading?: {sections: Record<string, string[]>; savedSections: Record<string, string[]>; sources: Record<string, string>; commandDigest: string};
   files: ProjectSource[]; omitted: string[]; omitted_count: number; structure: ProjectStructure; git?: ProjectGit;
 }
 export interface ProjectRun {
@@ -43,8 +47,10 @@ export interface ProjectCheckpoint {
   step: string; note: string; digest: string; at: string; assistance: number;
   externalHelp: 'reported' | 'none_reported' | 'unknown';
   completed?: boolean;
-  /** File-only digest of this milestone's own files when it was saved. Older checkpoints only have digest. */
+  /** Hash of the source and notebook evidence captured for this checkpoint. */
   stepDigest?: string;
+  /** Each shared notebook section contributes only the lines present at completion. */
+  noteLines?: Record<string, number>;
 }
 
 const invoke = (file: string, args: string[], cwd: string) => new Promise<void>((done, reject) =>
@@ -122,7 +128,9 @@ export async function loadProjectCurriculum(media: string, id: string, root?:str
     if((await stat(file)).size>12000||await realpath(file)!==join(await realpath(root),'.dhimantai-skilling.json'))throw new Error('Invalid guided project metadata.');
     const metadata=JSON.parse(await readFile(file,'utf8'));
     if(typeof metadata.course_id!=='string'||!/^[a-z0-9-]{1,100}$/.test(metadata.course_id)||typeof metadata.requirements!=='string'||metadata.requirements.length>6000||typeof metadata.title!=='string'||metadata.title.length>200)throw new Error('Invalid guided project metadata.');
-    curriculum.title=metadata.title;curriculum.courseId=metadata.course_id;curriculum.language=['python','java','c','cpp','sql','javascript','rust','go'].includes(metadata.language)?metadata.language:'python';
+    curriculum.title=metadata.title;curriculum.courseId=metadata.course_id;curriculum.language=metadata.language ?? 'python';
+    if (typeof metadata.course_title === 'string' && metadata.course_title.length <= 200) curriculum.courseTitle = metadata.course_title;
+    if (!COURSE_LANGUAGES.includes(curriculum.language)) throw new Error('Unsupported guided project language: ' + curriculum.language);
     curriculum.steps[0].goal=metadata.requirements.slice(0,500);
   }
   if (id === 'rich-reading') curriculum.evidenceFiles = JSON.parse(await readFile(join(media, 'projects/rich-source.json'), 'utf8')).evidenceFiles;
@@ -212,7 +220,10 @@ export async function projectIdentity(root: string): Promise<string | undefined>
     if (start === shelfStart && await realpath(top) === await realpath(root)) return 'shelf';
   } catch { /* Not an original Shelf capstone repository. */ }
 }
-export async function isProject(root: string) { return !!(await projectIdentity(root)); }
+export async function isEnabledProject(root: string) {
+  const id = await projectIdentity(root);
+  return !!id && desktopProjectEnabled(id);
+}
 
 export async function publicProjectFile(root: string, path: string) {
   if (isAbsolute(path) || path.includes('\\') || path.includes(':') || path.split('/').some(p => p.startsWith('.')))
@@ -232,7 +243,9 @@ export async function projectSnapshot(root: string, curriculum: ProjectCurriculu
     dirty = new Map<string, string>(), locations: Record<string, number | string> = {}, question = ''): Promise<ProjectSnapshot> {
   await requireProjectFolder(root);
   const hash = createHash('sha256'), all = new Map<string, string>();
+  const commandHash = curriculum.id === 'shelf-reading' ? createHash('sha256') : undefined;
   let total = 0;
+  let savedNotes: string | undefined;
   const paths = await projectFiles(root, curriculum);
   for (const path of paths) {
     try {
@@ -240,29 +253,56 @@ export async function projectSnapshot(root: string, curriculum: ProjectCurriculu
       const text = dirty.get(path) ?? await readFile(file, 'utf8');
       total += Buffer.byteLength(text, 'utf8');
       if (text.length > 512000 || total > 8000000) throw new Error('Project context is too large.');
-      hash.update(JSON.stringify([path, text])); all.set(path, text);
+      if (commandHash && path === 'READING_NOTES.md' && dirty.has(path)) savedNotes = await readFile(file, 'utf8');
+      const entry = JSON.stringify([path, text]);
+      hash.update(entry); all.set(path, text);
+      if (path !== 'READING_NOTES.md') commandHash?.update(entry);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      hash.update(JSON.stringify([path, null]));
+      const missing = JSON.stringify([path, null]);
+      hash.update(missing);
+      if (path !== 'READING_NOTES.md') commandHash?.update(missing);
     }
   }
+  let reading: ProjectSnapshot['reading'];
+  if (commandHash) {
+    const sections = readingSections(all.get('READING_NOTES.md') ?? '');
+    reading = {sections, savedSections: savedNotes === undefined ? sections : readingSections(savedNotes),
+      sources: stepDigests(curriculum, all, 'READING_NOTES.md'), commandDigest: commandHash.digest('hex')};
+  }
   const repository = curriculum.id === 'shelf' ? await projectGit(root, paths) : undefined;
-  return {digest: hash.digest('hex'), steps: stepDigests(curriculum, all),
+  return {digest: hash.digest('hex'), steps: stepDigests(curriculum, all), reading,
     ...selectProjectContext(all, focus, question, locations),
     ...(repository ? {git: repository.context, gitFingerprint: repository.fingerprint} : {})};
 }
 
+/** A learner can keep adding to the notebook after saving a milestone checkpoint. */
+export function readingSections(text: string): Record<string, string[]> {
+  const sections: Record<string, string[]> = Object.create(null);
+  let lines: string[] | undefined;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (/^#{1,2}\s/.test(line)) {
+      lines = line.startsWith('## ') ? (sections[line.slice(3).trim()] ??= []) : undefined;
+    } else if (lines && line) lines.push(line);
+  }
+  return sections;
+}
+
 /** Each milestone's evidence is its own files: editing a later milestone's file leaves earlier ones complete. */
-export function stepDigests(curriculum: ProjectCurriculum, files: ReadonlyMap<string, string>): Record<string, string> {
+export function stepDigests(curriculum: ProjectCurriculum, files: ReadonlyMap<string, string>, omit?: string): Record<string, string> {
   return Object.fromEntries(curriculum.steps.map(step => {
     const hash = createHash('sha256').update(JSON.stringify(['step', step.id]));
-    for (const path of [...new Set(step.files)].sort()) hash.update(JSON.stringify([path, files.get(path) ?? null]));
+    for (const path of [...new Set(step.files)].sort()) {
+      if (path !== omit) hash.update(JSON.stringify([path, files.get(path) ?? null]));
+    }
     return [step.id, hash.digest('hex')];
   }));
 }
 
 /** Checks that judge Git history (the Shelf capstone checker) are also invalidated by branch, commit or status changes. */
-export function checkDigest(snapshot: Pick<ProjectSnapshot, 'digest' | 'gitFingerprint'>, step: Pick<ProjectStep, 'check'>) {
+export function checkDigest(snapshot: Pick<ProjectSnapshot, 'digest' | 'gitFingerprint' | 'reading'>, step: Pick<ProjectStep, 'check'>) {
+  if (snapshot.reading) return snapshot.reading.commandDigest;
   return step.check === 'shelf:capstone' && snapshot.gitFingerprint
     ? createHash('sha256').update(JSON.stringify([snapshot.digest, snapshot.gitFingerprint])).digest('hex') : snapshot.digest;
 }
@@ -317,7 +357,7 @@ export function checkArguments(step: Pick<ProjectStep, 'check'>): string[] {
   if (step.check === 'shelf:capstone') return ['check.py'];
   if (/^rich:(setup|text|markup|table|protocol|test-console|test-markup|test-table)$/.test(step.check))
     return ['-m', 'reading.run', step.check.slice(5)];
-  if(step.check==='guided:inspect')return ['-c','from pathlib import Path; print("Inspect actual run and test evidence in the course terminal."); [print(str(p)) for d in ("src","tests") for p in sorted(Path(d).rglob("*")) if p.is_file() and not any(x.startswith(".") or x in ("node_modules","vendor","__pycache__") for x in p.parts)]'];
+  if(step.check==='guided:inspect')return ['-c','from pathlib import Path; print("Inspect actual run and test evidence in the project terminal."); [print(str(p)) for d in ("src","tests") for p in sorted(Path(d).rglob("*")) if p.is_file() and not any(x.startswith(".") or x in ("node_modules","vendor","__pycache__") for x in p.parts)]'];
   if (step.check === 'all') return ['-m', 'unittest', 'discover', '-s', '.', '-p', 'test_*.py', '-v'];
   if (!/^(checks|tests)\.test_[a-z_]+$/.test(step.check)) throw new Error('Unknown project check.');
   return ['-m', 'unittest', step.check, '-v'];
@@ -341,7 +381,7 @@ export function checkStatus(code: number | null, timedOut = false): ProjectRun['
   if (code === 125 || code === 126 || code === 127) return 'runtime_error';
   return code === 0 ? 'passed' : 'failed';
 }
-const containerFailure = 'The course container could not start. Use Runtime → Set up course and retry.';
+const containerFailure = 'The project container could not start. Use Runtime → Set up and verify environment, then retry.';
 
 export function checkState(run: ProjectRun | undefined, digest: string, step: string) {
   if (!run || run.step !== step) return {state: 'not_run' as const};
@@ -349,7 +389,7 @@ export function checkState(run: ProjectRun | undefined, digest: string, step: st
     status: run.status, command: run.command, output: run.output, truncated: run.truncated};
 }
 
-/** Execute exclusively in the course container. Missing setup never falls back to host Python. */
+/** Execute exclusively in the project container. Missing setup never falls back to host Python. */
 // Runs inside the container on cancel: kill the process group of the check carrying this marker (timeout(1) leads it).
 // The marker is passed split so this killer's own command line never matches it.
 const stopCheck = [
@@ -364,10 +404,10 @@ const stopCheck = [
   '        pass',
 ].join('\n');
 
-/** Execute exclusively in the course container. Missing setup never falls back to host Python. */
+/** Execute exclusively in the project container. Missing setup never falls back to host Python. */
 export function runProjectCheck(root: string, step: ProjectStep, digest: string,
     signal: AbortSignal, engine: {bin: string; execArgs(cwd: string, command: string, args: string[]): string[]; path?(local: string): string}): Promise<ProjectRun> {
-  if (!engine) return Promise.reject(new Error('Set up the course container before running project checks.'));
+  if (!engine) return Promise.reject(new Error('Set up the project container before running project checks.'));
   const args = checkArguments(step), command = checkCommand(step);
   return new Promise(resolveRun => {
     if (signal.aborted) return resolveRun({digest, step: step.id, status: 'runtime_error', command, output: 'Check cancelled.', truncated: false});

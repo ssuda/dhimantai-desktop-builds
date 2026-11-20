@@ -75,6 +75,22 @@ export function catalogClient(scope: string, initialQuery: string) {
     filter(false);
   };
   const startButtons = all<HTMLButtonElement>('button[data-action="join"],button[data-action="signUp"][data-id]:not([data-id=""]),button[data-action="signIn"][data-id]:not([data-id=""])');
+  for (const entry of all<HTMLButtonElement>('.preview-entry')) {
+    const dialog = document.getElementById(entry.getAttribute('aria-controls')!) as HTMLDialogElement;
+    const feedback = dialog.querySelector<HTMLElement>('.preview-feedback')!;
+    const answers = [...dialog.querySelectorAll<HTMLButtonElement>('[data-feedback]')];
+    entry.addEventListener('click', () => {
+      feedback.textContent = '';
+      delete feedback.dataset.correct;
+      answers.forEach(answer => answer.setAttribute('aria-pressed', 'false'));
+      dialog.showModal();
+    });
+    for (const answer of answers) answer.addEventListener('click', () => {
+      answers.forEach(choice => choice.setAttribute('aria-pressed', String(choice === answer)));
+      feedback.dataset.correct = answer.dataset.correct;
+      feedback.textContent = answer.dataset.feedback!;
+    });
+  }
   let checkoutBusy = false;
   let starting = document.querySelector('main')?.dataset.starting ?? '';
   const showCourseStart = (id: string) => {
@@ -90,6 +106,7 @@ export function catalogClient(scope: string, initialQuery: string) {
   document.addEventListener('click', event => {
     const button = (event.target as Element).closest<HTMLButtonElement>('button[data-action]');
     if (!button || button.disabled) return;
+    button.closest('dialog')?.close();
     if (startButtons.includes(button)) {
       showCourseStart(button.dataset.id!);
     } else if (['buy','refresh'].includes(button.dataset.action!)) {

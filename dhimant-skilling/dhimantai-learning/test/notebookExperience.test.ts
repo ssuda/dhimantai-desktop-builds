@@ -11,10 +11,10 @@ import { NotebookCells } from '../src/notebookCells';
 import { resourceLimitError } from '../src/podman';
 import { practiceDocument, PracticeNotebook } from '../src/practiceNotebook';
 import { engineeringSkills } from '../src/skillPractice';
-import { learningComposer } from '../src/learningComposer';
+import { notebookMessageBar } from '../src/learningComposer';
 import { chapterId, lessonPicker, selectLesson } from './lessonPicker';
 
-function surface(livekit: unknown = {RoomEvent:{}}, composer = learningComposer('Instructor', true, '<button type="button" id="sound"></button>'), practice = false) {
+function surface(livekit: unknown = {RoomEvent:{}}, composer = notebookMessageBar('Instructor', true, '<button type="button" id="sound"></button>'), practice = false) {
   const ids = ['tutor','doubt_solver','end','wide','latest','add-note','add-code','save-notebook','open-notebook','restart-runtime','clear-conversation'];
   const dom = new JSDOM('<!doctype html><header class="workspace-header"><div class="workspace-title"><h1>Implement `subtract_time` &lt; safely</h1></div><div class="workspace-actions"></div></header><main id="feed"></main>' + composer
     + ids.map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('')
@@ -922,7 +922,7 @@ test('a code review during a new-input attempt counts as help, so the prediction
 });
 
 test('Doubt Solver uses shared Get Help with a per-doubt help ladder and names Doubt Solver throughout', async () => {
-  const composer = learningComposer('Doubt Solver', false, '<button type="button" id="sound"></button>');
+  const composer = notebookMessageBar('Doubt Solver', false, '<button type="button" id="sound"></button>');
   assert.doesNotMatch(composer, /Instructor/);
   assert.match(composer, /id="practice-help"/);
   assert.match(composer, /notebook-help-actions/);
@@ -1458,7 +1458,7 @@ for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}
     on() {} async connect() {} async disconnect() {} registerTextStreamHandler() {}
   }
   const assistant = mode === 'doubt_solver' ? 'Doubt Solver' : 'Instructor';
-  const ui = surface({Room, RoomEvent:{}}, learningComposer(assistant, mode === 'practice', '<button type="button" id="sound"></button>'));
+  const ui = surface({Room, RoomEvent:{}}, notebookMessageBar(assistant, mode === 'practice', '<button type="button" id="sound"></button>'));
   const {w,sent,post,code,click} = ui;
   const tick = () => new Promise(resolve => setTimeout(resolve,0));
   const question = 'What is the longest word you can think of where each letter appears only once?';
@@ -1530,7 +1530,7 @@ test('desktop media controls explain connection, session and mode restrictions w
     on() {} async connect() {} async disconnect() {} registerTextStreamHandler() {}
   }
   const ui = surface({Room, RoomEvent:{}, createLocalAudioTrack:async () => {captured++;}},
-    learningComposer('Instructor', false, '<button type="button" id="audio-microphone"></button><button type="button" id="audio-camera"></button><button type="button" id="sound"></button>'));
+    notebookMessageBar('Instructor', false, '<button type="button" id="audio-microphone" data-live-mic></button><button type="button" id="sound"></button>', true));
   const {w,post,sent,click} = ui, tick = () => new Promise(r => setTimeout(r,0));
   const message = w.document.getElementById('media-control-status')!;
   const mic = w.document.getElementById('audio-microphone') as HTMLButtonElement;
@@ -1540,7 +1540,8 @@ test('desktop media controls explain connection, session and mode restrictions w
     let attempt = sent.at(-1).attempt;
     post({type:'restoreNotebook',attempt,documentKey:'no-media',notebook:emptyNotebook()});
     post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media:false}); await tick();
-    assert.equal(message.hidden,false); assert.match(message.textContent!, /typed messages and attachments/);
+    assert.equal(message.hidden,false); assert.match(message.textContent!, /Microphone unavailable/);
+    assert.equal((w.document.getElementById('audio-camera') as HTMLButtonElement).disabled,false, 'still photos use the attachment channel');
     assert.equal(mic.title,message.textContent); assert.equal(mic.getAttribute('aria-describedby'),message.id);
     click('audio-microphone'); assert.equal(captured,0);
     post({type:'openTutor',mode:'doubt_solver'}); if (sent.at(-1).type === 'tutorLessons') selectLesson(w, sent.at(-1).attempt); attempt=sent.at(-1).attempt;
@@ -1572,7 +1573,7 @@ test('Instructor activity survives microphone shutdown and clears on idle, recon
   const names = ['ParticipantAttributesChanged','DataReceived','Reconnecting','Reconnected','Disconnected'];
   const ui = surface({Room, RoomEvent:Object.fromEntries(names.map(name => [name,name])),
     createLocalAudioTrack:async () => ({stop() { stopped++; }, mediaStreamTrack:{addEventListener() {}}})},
-    learningComposer('Instructor', false, '<button type="button" id="audio-microphone"></button><button type="button" id="audio-camera"></button><button type="button" id="sound"></button>'));
+    notebookMessageBar('Instructor', false, '<button type="button" id="audio-microphone" data-live-mic></button><button type="button" id="sound"></button>', true));
   const {w,post,sent,click} = ui, tick = () => new Promise(r => setTimeout(r,0));
   const activity = w.document.getElementById('assistant-activity')!;
   try {
@@ -1637,7 +1638,7 @@ test('browser task questions use the Instructor composer and acknowledge progres
   }
   const track={stop(){},mediaStreamTrack:{addEventListener(){}}};
   const ui=surface({Room,RoomEvent:Object.fromEntries(['Reconnecting','Reconnected','Disconnected'].map(name=>[name,name])),createLocalAudioTrack:async()=>track},
-    learningComposer('Instructor',false,'<button type="button" id="audio-microphone" disabled></button><button type="button" id="audio-camera" disabled></button><button type="button" id="sound"></button>'));
+    notebookMessageBar('Instructor',false,'<button type="button" id="audio-microphone" data-live-mic disabled></button><button type="button" id="sound"></button>', true));
   const {w,post,sent,click}=ui,wait=()=>new Promise(r=>setTimeout(r,10));
   try {
     post({type:'openTutor',mode:'tutor'});
@@ -1963,7 +1964,7 @@ test('learning preferences restore before greeting and changing a persona keeps 
     localParticipant = {registerRpcMethod(){},performRpc:async (request:any)=>{calls.push(request);return 'ok';}};
     on(){} async connect(){} async disconnect(){} registerTextStreamHandler(){}
   }
-  const ui = surface({Room,RoomEvent:{}}, learningComposer('Instructor',true,'<button id="sound"></button>')+learningPreferencesHtml);
+  const ui = surface({Room,RoomEvent:{}}, notebookMessageBar('Instructor',true,'<button id="sound"></button>')+learningPreferencesHtml);
   const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   try {
     ui.post({type:'openTutor',mode:'doubt_solver'}); if (ui.sent.at(-1).type === 'tutorLessons') selectLesson(ui.w, ui.sent.at(-1).attempt);
@@ -1996,6 +1997,24 @@ test('session restore is explicit and scoped to the current notebook',async()=>{
     assert.equal(sent.some(m=>m.type==='restoreRuntime'),false);
     w.document.querySelector<HTMLButtonElement>('#runtime-restore button')!.click();
     assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1))),{type:'restoreRuntime',documentKey:'lesson-a'});
+    const bar = w.document.getElementById('runtime-restore')!;
+    const state = {type:'runtimeHistory',documentKey:'lesson-a',count:2,needsRestore:true};
+    post({...state,error:'Restoration stopped at code-2'});
+    assert.equal(bar.querySelector('[role="alert"]')?.textContent,'Restoration stopped at code-2');
+    assert.doesNotMatch(w.document.getElementById('status')!.textContent!,/Restoration stopped/);
+    bar.querySelector<HTMLButtonElement>('button.quiet')!.click();
+    assert.equal(bar.querySelector('[role="alert"]'),null,'Start fresh clears the error before confirmation');
+    assert.equal(bar.querySelector('[data-confirm-delete]')!.textContent,'Start fresh');
+    bar.querySelector<HTMLButtonElement>('.delete-confirmation button')!.click();
+    assert.equal(sent.some(m=>m.type==='freshRuntime'),false,'Cancel preserves the recorded runs');
+    post({...state,restoreBlockReason:'This history includes interactive input. Choose Start fresh.'});
+    assert.match(bar.querySelector('[role="alert"]')!.textContent!,/interactive input/);
+    const buttons = [...bar.querySelectorAll('button')];
+    assert.deepEqual(buttons.map(button=>button.textContent),['Start fresh']);
+    buttons[0].click();
+    assert.equal(bar.querySelector('[role="alert"]'),null);
+    bar.querySelector<HTMLButtonElement>('[data-confirm-delete]')!.click();
+    assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1))),{type:'freshRuntime',documentKey:'lesson-a'});
     post({type:'runtimeHistory',documentKey:'another-lesson',count:0,needsRestore:false});
     assert.equal(w.document.getElementById('runtime-restore')!.hidden,false);
     post({type:'runtimeHistory',documentKey:'lesson-a',count:2,needsRestore:false});
@@ -2069,3 +2088,66 @@ test('a stalled Doubt Solver delivery releases the composer, keeps the draft and
     assert.equal(field.value,'');
   } finally {await ui.close();}
 });
+
+for (const mode of ['tutor','doubt_solver']) {
+  test(mode + ' stages a camera photo locally and sends it only on Submit', async () => {
+    let videoPublications = 0, stops = 0;
+    const uploads:any[] = [], messages:any[] = [];
+    class Room {
+      remoteParticipants = new Map([['worker',{identity:'worker',isAgent:true,trackPublications:new Map()}]]);
+      localParticipant = {
+        registerRpcMethod() {}, performRpc:async ()=>'ok', publishTrack:async () => {videoPublications++;},
+        streamBytes:async (options:any) => { uploads.push(options); return {write:async()=>{},close:async()=>{}}; },
+        sendText:async (text:string, options:any) => { messages.push({text,options}); },
+      };
+      on() {} async connect() {} async disconnect() {} registerTextStreamHandler() {}
+    }
+    const ui = surface({Room,RoomEvent:{}},notebookMessageBar(mode==='tutor'?'Instructor':'Doubt Solver',false,
+      '<button type="button" id="audio-microphone" data-live-mic></button><button type="button" id="sound"></button>', true));
+    const {w,post,sent,click} = ui, tick = () => new Promise(resolve=>setTimeout(resolve,0));
+    const track = Object.assign(new w.EventTarget(),{readyState:'live',stop(){stops++;}});
+    const stream = {getVideoTracks:()=>[track],getTracks:()=>[track]};
+    let openCamera = async () => stream;
+    Object.defineProperty(w.navigator,'mediaDevices',{value:{getUserMedia:(constraints:any)=>{
+      assert.equal(constraints.audio,false); return openCamera();
+    }}});
+    w.HTMLDialogElement.prototype.showModal = function() { this.open=true; };
+    w.HTMLMediaElement.prototype.play = async function() { this.dispatchEvent(new w.Event('loadeddata')); };
+    Object.defineProperty(w.HTMLVideoElement.prototype,'videoWidth',{value:640});
+    Object.defineProperty(w.HTMLVideoElement.prototype,'videoHeight',{value:480});
+    w.HTMLCanvasElement.prototype.getContext = (()=>({drawImage(){}})) as any;
+    w.HTMLCanvasElement.prototype.toBlob = function(callback) { callback(new w.Blob(['still'],{type:'image/jpeg'})); };
+    w.File.prototype.arrayBuffer = async () => new Uint8Array([1,2,3,4,5]).buffer;
+    w.URL.createObjectURL = ()=>'blob:photo'; w.URL.revokeObjectURL = ()=>{};
+    try {
+      post({type:'openTutor',mode});
+      if (sent.at(-1).type==='tutorLessons') selectLesson(w,sent.at(-1).attempt);
+      const attempt=sent.at(-1).attempt;
+      post({type:'restoreNotebook',attempt,documentKey:'photo',notebook:emptyNotebook()});
+      post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media:true}); await tick();
+      assert.equal(w.document.getElementById('audio-camera')!.title,'Take photo');
+      click('audio-camera'); await tick(); w.document.querySelector<HTMLButtonElement>('[data-cancel]')!.click();
+      assert.equal(stops,1); assert.equal(w.document.querySelector('#attachments img'),null);
+      click('audio-camera'); await tick(); w.document.querySelector<HTMLButtonElement>('[data-capture]')!.click();
+      assert.equal(stops,2); assert.equal(w.document.querySelector('dialog'),null);
+      assert.ok(w.document.querySelector('#attachments img')); assert.equal(uploads.length,0); assert.equal(messages.length,0);
+      const field = w.document.getElementById('message') as HTMLTextAreaElement;
+      field.value='Explain my diagram.'; field.dispatchEvent(new w.Event('input'));
+      click('send'); await tick(); await tick();
+      assert.equal(uploads.length,1); assert.equal(uploads[0].topic,'images'); assert.equal(uploads[0].mimeType,'image/jpeg');
+      assert.equal(messages.length,1); assert.match(messages[0].text,/Explain my diagram/);
+      assert.equal(messages[0].options.topic,'lk.chat');
+      assert.equal(messages[0].options.attributes.image_submission_id,uploads[0].attributes.image_submission_id);
+      assert.equal(w.document.querySelector('#attachments img'),null);
+      openCamera = async () => { throw new w.DOMException('denied','NotAllowedError'); };
+      click('audio-camera'); await tick();
+      assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/permission was denied/);
+      assert.equal(w.document.querySelector('dialog'),null);
+      let allow!: (media:typeof stream)=>void;
+      openCamera = () => new Promise(resolve=>{allow=resolve;});
+      click('audio-camera'); w.dispatchEvent(new w.Event('pagehide')); allow(stream); await tick();
+      assert.equal(stops,3); assert.equal(w.document.querySelector('#attachments img'),null);
+      assert.equal(videoPublications,0); assert.equal(uploads.length,1);
+    } finally { await ui.close(); }
+  });
+}

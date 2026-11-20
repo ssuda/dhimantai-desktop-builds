@@ -24,7 +24,7 @@ import { SpeakerControl } from './audioControls';
 import { mediaIcon } from '../src/mediaIcons';
 import { LearningDevices } from './learningDevices';
 import { SpeechInterruption } from './speechInterruption';
-import { AttachmentRole, NotebookAttachments } from './notebookAttachments';
+import { AttachmentRole } from './notebookAttachments';
 import { icon } from './icons';
 import { notebookContext } from '../src/notebookContext';
 import { executionFollowup, lessonCompletion, recordExecutionIssue } from '../src/lessonExecution';
@@ -36,7 +36,7 @@ import { conversationCell, replyChoices, quickReplies, notebookHelpActions, prac
 import { HELP_LEVELS } from '../src/helpRecord';
 import './room.css';
 import './composer.css';
-import { bindComposer } from './composer';
+import { bindComposer, type LearnerMessage } from './composer';
 import { aboutMarkdown, isDataQuestion, namedDatasets } from '../src/dataLab';
 import type { CourseDataset, DataOutcome } from '../src/dataLab';
 import { ImportPreview, outcomeCells, previewCard, renderDataBody } from './dataCells';
@@ -47,7 +47,7 @@ declare function acquireVsCodeApi(): {postMessage(message: unknown): void};
 const host = acquireVsCodeApi(), { RoomEvent } = LivekitClient;
 const browserActions=new BrowserActionRelay(message=>host.postMessage(message));
 // Spoken replies play only replies this page accepted and showed (see send()).
-const spokenReplies = (window as unknown as {installCoachAudio?: (api: typeof host) => {reply(audioId: string | null): void} | undefined}).installCoachAudio?.(host);
+const spokenReplies = (window as unknown as {installCoachAudio?: (api: typeof host) => {reply(audioId: string | null): void; listenForReply(): void} | undefined}).installCoachAudio?.(host);
 type Mode = 'tutor' | 'doubt_solver';
 const names = {tutor: 'Instructor', doubt_solver: 'Doubt Solver'};
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -93,7 +93,8 @@ function refreshNavigation() {
     chapter && course ? course.name === ERP_COURSE
       ? `${chapter.lesson || chapter.name} · ${taskProgress ? browserTaskLabel(taskProgress.tasks.find(task=>task.chapter===chapter.id)?.status)+' · ' : ''}${browserProgressLabel(taskProgress)}`
       : `${chapter.lesson || chapter.name} · ${coverageLabel(chapter.progress)} · ${courseCoverage(course.chapters)}` : '',
-    course?.name === ERP_COURSE ? browserProgressNote : coverageNote);
+    course?.name === ERP_COURSE ? browserProgressNote : coverageNote,
+    course?.name !== ERP_COURSE && chapter?.progress && chapter.progress.status !== 'unavailable' && chapter.progress.total > 0 ? chapter.progress : undefined);
 }
 const messageBar = document.getElementById('message-bar');
 const selectionPage = document.getElementById('course-selection');
@@ -102,13 +103,13 @@ const heading = document.querySelector('.workspace-title h1');
 const initialTitle = heading?.textContent ?? '';
 if (heading) heading.innerHTML = renderHeading(initialTitle);
 let cancelRemoval: (() => void) | undefined;
-function confirmRemoval(trigger: HTMLButtonElement, message: string, remove: () => void) {
+function confirmRemoval(trigger: HTMLButtonElement, message: string, remove: () => void, confirmLabel = 'Delete') {
   cancelRemoval?.();
   const key = documentKey, prompt = document.createElement('div'), text = document.createElement('p');
   prompt.className = 'delete-confirmation'; prompt.setAttribute('role','group'); prompt.setAttribute('aria-label',message);
   text.textContent = message;
   const cancel = document.createElement('button'), confirm = document.createElement('button');
-  cancel.type = confirm.type = 'button'; cancel.textContent = 'Cancel'; confirm.textContent = 'Delete'; confirm.dataset.confirmDelete = '';
+  cancel.type = confirm.type = 'button'; cancel.textContent = 'Cancel'; confirm.textContent = confirmLabel; confirm.dataset.confirmDelete = '';
   const close = () => { prompt.remove(); cancelRemoval = undefined; trigger.focus(); };
   cancel.onclick = close; cancelRemoval = close;
   confirm.onclick = () => { close(); if (key === documentKey && !sending) { remove(); if (!trigger.isConnected) field.focus(); } };
@@ -266,50 +267,52 @@ function syncBrowserObservation():Promise<void> {
 }
 let mediaAllowed = false, mediaBusy = false;
 function updateMediaControls() {
-  if (!button('audio-camera')) return;
-  const reason = !visible || selectionOpen ? 'Return to the learning room to use the microphone or camera.'
-    : !ready ? `Connect to ${names[mode]} to use the microphone or camera.`
-    : !mediaAllowed ? `This ${names[mode]} session supports typed messages and attachments. Microphone and camera are unavailable.`
+  const mic = document.querySelector<HTMLButtonElement>('[data-live-mic]');
+  if (!mic) return;
+  const reason = !visible || selectionOpen ? 'Return to the learning room to use the microphone.'
+    : !ready ? `Connect to ${names[mode]} to use the microphone.`
+    : !mediaAllowed && !dictation ? 'Microphone unavailable in this session.'
     : mediaBusy ? 'Waiting for device access…' : '';
-  for (const [id, name] of [['audio-microphone', 'microphone'], ['audio-camera', 'camera']]) {
-    const control = button(id);
-    control.disabled = !!reason;
-    control.title = reason || (control.getAttribute('aria-pressed') === 'true' ? 'Stop ' : 'Start ') + name;
-    control.setAttribute('aria-label', control.title);
-    control.setAttribute('aria-describedby', 'media-control-status');
+  if (mediaAllowed || !dictation) {
+    mic.disabled = !!reason;
+    mic.title = reason || (mic.getAttribute('aria-pressed') === 'true' ? 'Stop microphone' : 'Start microphone');
+    mic.setAttribute('aria-label', mic.title);
+    mic.setAttribute('aria-describedby', 'media-control-status');
   }
   const message = byId('media-control-status');
   if (message) { message.textContent = reason; message.hidden = !reason; }
 }
 const devices = new LearningDevices({
   current: () => ready && visible && !selectionOpen && mediaAllowed && room && agent ? {room, agent} : undefined,
-  capture: device => device === 'microphone'
-    ? LivekitClient.createLocalAudioTrack({echoCancellation: true, noiseSuppression: true, autoGainControl: true})
-    : LivekitClient.createLocalVideoTrack({resolution: {width: 640, height: 480, frameRate: 10}}),
+  capture: () => LivekitClient.createLocalAudioTrack({echoCancellation: true, noiseSuppression: true, autoGainControl: true}),
   pause: () => pauseForQuestion(),
   report: message => { status.textContent = message; },
   changed: state => {
     mediaBusy = state.busy;
-    for (const [id, active, name] of [['audio-microphone', state.microphone, 'microphone'], ['audio-camera', state.camera, 'camera']] as const) {
-      const control = button(id);
-      if (!control || !button('audio-camera')) continue;
-      control.setAttribute('aria-pressed', String(active));
-      control.innerHTML = mediaIcon(name, active);
+    const mic = button('audio-microphone');
+    if (mic?.hasAttribute('data-live-mic')) {
+      mic.setAttribute('aria-pressed', String(state.microphone));
+      mic.innerHTML = mediaIcon('microphone', state.microphone);
     }
     updateMediaControls();
-    const preview = byId<HTMLVideoElement>('camera-preview');
-    if (preview) {
-      byId('camera-panel').hidden = !state.camera;
-      if (state.cameraTrack) { state.cameraTrack.attach(preview); preview.muted = true; void preview.play().catch(() => {}); }
-      else { preview.pause(); preview.srcObject = null; }
-    }
   },
 });
-if (button('audio-camera')) {
-  button('audio-microphone').onclick = () => { void resumeSpeaker(); void devices.toggle('microphone'); };
-  button('audio-camera').onclick = () => { void devices.toggle('camera'); };
+const dictation = window.installDictation?.(host, field, () => {
+  if (spokenReplies) spokenReplies.listenForReply();
+  else { interruption.userSpeaking(true); interruption.userSpeaking(false); }
+});
+function stopDevices() {
+  composer.cancelCapture();
+  devices.stop();
 }
-window.addEventListener('pagehide', () => devices.stop());
+if (button('audio-microphone')?.hasAttribute('data-live-mic')) {
+  const dictate = button('audio-microphone').onclick;
+  button('audio-microphone').onclick = event => {
+    if (!mediaAllowed && dictate) return dictate.call(button('audio-microphone'), event);
+    void resumeSpeaker(); void devices.toggle();
+  };
+}
+window.addEventListener('pagehide', stopDevices);
 const audio = new Set<HTMLMediaElement>();
 function roomAudioMuted(): boolean {
   return !visible || selectionOpen || !voice || !!activeVideo || interruption.muted || tutorOutputPaused;
@@ -357,7 +360,8 @@ const speaker = button('sound') ? new SpeakerControl(button('sound'), {
     if (room !== current) throw new Error('Session changed');
   },
 }) : undefined;
-const attachments = new NotebookAttachments(document.getElementById('attachments'), document.getElementById('attachment-status'), controls);
+const composer = bindComposer(byId<HTMLFormElement>('composer'), deliverNotebookMessage, {changed:controls, report:helpStatus});
+const {attachments} = composer;
 type PlaybackState = 'playing' | 'paused' | 'ended' | 'unavailable';
 const videos = new Map<string, {body: HTMLElement; title: string; topic: string; frame?: HTMLIFrameElement; url?: string;
   state?: PlaybackState; seconds?: number; ask?: HTMLButtonElement; resume?: HTMLButtonElement}>();
@@ -369,20 +373,32 @@ let observationSequence = 0, latestObservation: Promise<unknown> = Promise.resol
 let lessonScope = '';
 let notebook = emptyNotebook(), documentKey = '', restoring = false, cellSequence = 0;
 let saveSequence = 0;
-let practice: {id:string; language:string; title:string} | undefined;
+let practice: {id:string; language:string; title:string; course?:string} | undefined;
 // The open question the learner chose to ask about instead of answering, and its toggle (created on first use).
 let askInsteadOf = '', askInstead: HTMLButtonElement | undefined;
 // Visibility can arrive before openPractice. Preserve the host's exercise heading from the first render.
 let practiceMode = document.body.dataset.notebookMode === 'practice';
 const localRuntimeLabel = () => 'Course container';
-const workspaceMode = document.getElementById('workspace-mode') as HTMLSelectElement | null;
+const workspaceMode = document.getElementById('workspace-mode') as HTMLFieldSetElement | null;
 const practicePanel = document.getElementById('workspace-practice');
 let workspaceBusy = false;
+let practiceRequest = 0;
+function selectRoomTab() {
+  const current = practiceMode || practicePanel && !practicePanel.hidden ? 'practice' : mode;
+  for (const tab of workspaceMode?.querySelectorAll<HTMLButtonElement>('[data-room]') ?? [])
+    tab.setAttribute('aria-pressed', String(tab.dataset.room === current));
+}
+function closePracticeList() {
+  ++practiceRequest;
+  if (practicePanel) practicePanel.hidden = true;
+  document.body.classList.remove('browsing-practice');
+  selectRoomTab();
+}
 async function changeWorkspace(mode: string, questionId?: string, carryDraft = false) {
   if (workspaceBusy || sending) return;
   workspaceBusy = true;
   if (workspaceMode) workspaceMode.disabled = true;
-  devices.stop(); saveNotebook(true);
+  stopDevices(); saveNotebook(true);
   const draft=snapshotNotebook();
   const tried=byId<HTMLTextAreaElement>('doubt-tried')?.value.trim();
   if(carryDraft && tried) {
@@ -398,21 +414,33 @@ async function changeWorkspace(mode: string, questionId?: string, carryDraft = f
   } catch(error) { workspaceBusy=false;helpStatus(error instanceof Error?error.message:'Could not carry your draft.');controls(); }
 }
 function browseCoursePractice(chapterId = selectedLesson) {
-  devices.stop();
+  stopDevices();
   if (practicePanel) practicePanel.hidden = false;
   document.body.classList.add('browsing-practice');
-  if (byId('practice-questions')) byId('practice-questions').textContent = 'Loading practice sets…';
-  host.postMessage({type:'workspacePractice', chapterId});
-  practicePanel?.scrollIntoView?.({block:'start'});
+  selectRoomTab();
+  byId('practice-questions')?.replaceChildren();
+  const chapterSelect = byId<HTMLSelectElement>('practice-chapter');
+  if (chapterSelect) chapterSelect.disabled = true;
+  const courseLabel = byId('practice-course');
+  if (courseLabel) courseLabel.textContent = practice?.course || lessonCourses.find(course=>course.chapters.some(ch=>ch.id===selectedLesson))?.name || '';
+  const status = byId('practice-list-status');
+  if (status) status.textContent = 'Loading exercises…';
+  const back = button('practice-back');
+  if (back) back.textContent = selectionOpen ? 'Back to chapters' : 'Back to notebook';
+  host.postMessage({type:'workspacePractice', chapterId, request:++practiceRequest});
+  byId('practice-title')?.focus();
 }
-if (workspaceMode) workspaceMode.onchange = () => {
-  if (workspaceMode.value === 'practice') browseCoursePractice();
-  else if (!practiceMode && workspaceMode.value === mode) { if (practicePanel) practicePanel.hidden = true; document.body.classList.remove('browsing-practice'); }
-  else changeWorkspace(workspaceMode.value);
-};
+workspaceMode?.addEventListener('click', event => {
+  const target = (event.target as Element).closest<HTMLButtonElement>('button[data-room]')?.dataset.room;
+  if (!target || workspaceMode.disabled) return;
+  if (target === 'practice') browseCoursePractice();
+  else if (!practiceMode && target === mode) closePracticeList();
+  else void changeWorkspace(target);
+});
 if (button('practice-back')) button('practice-back').onclick = () => {
-  if (practicePanel) practicePanel.hidden = true; document.body.classList.remove('browsing-practice');
-  if (workspaceMode) workspaceMode.value = practiceMode ? 'practice' : mode;
+  closePracticeList();
+  if (selectionOpen) byId('selection-title')?.focus();
+  else workspaceMode?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
 };
 // Course data (see the course data section below).
 let courseData: CourseDataset[] = [], dataState: 'none' | 'loading' | 'ready' | 'error' = 'none', askNormally = false;
@@ -424,13 +452,16 @@ function updateSelectionPage() {
   if (!selectionPage) return;
   selectionPage.hidden = !selectionOpen;
   document.body.classList.toggle('selecting-course', selectionOpen);
+  const history = byId('doubt-history');
+  const historyHost = document.querySelector(selectionOpen ? '#course-selection header' : '.workspace-actions');
+  if (history && historyHost && history.parentElement !== historyHost) historyHost.append(history);
   button('selection-back').hidden = !selectedLesson;
   button('choose-course').disabled = sending || workspaceBusy;
 }
 function showCourseSelection(open: boolean) {
   if (!selectionPage) return;
   selectionOpen = open;
-  if (open) { devices.stop(); saveNotebook(true); }
+  if (open) { stopDevices(); saveNotebook(true); }
   for (const el of audio) el.muted = roomAudioMuted();
   updateSelectionPage();
   updateMediaControls();
@@ -455,7 +486,7 @@ function showLessonPlaceholder() {
   if (lessonPlaceholder.hidden) return;
   const chapters = lessonCourses.find(course => course.name === byId<HTMLSelectElement>('lesson-course')?.value)?.chapters ?? [];
   lessonPlaceholder.textContent = loadingLessons ? 'Loading your lessons…'
-    : selectedLesson ? status.textContent
+    : selectedLesson ? (ready && mode === 'doubt_solver' ? 'What would you like to work through? Type your question or attach it below.' : status.textContent)
     : lessonLoadError || (chapters.length ? 'Choose a course and chapter to open your lesson.'
       : 'No lessons available. Open Course Catalog to view your courses.');
   lessonPlaceholder.setAttribute('aria-busy', String(loadingLessons));
@@ -472,10 +503,12 @@ function suggestedChapter(course?: Course) {
   }
   return nextChapter(chapters, available);
 }
-function followingChapter() {
+function adjacentChapter(previous = false) {
   const chapters=lessonCourses.find(course=>course.chapters.some(ch=>ch.id===selectedLesson))?.chapters ?? [];
   const index=chapters.findIndex(ch=>ch.id===selectedLesson);
-  return index<0?undefined:chapters.slice(index+1).find(ch=>!ch.locked && !ch.expired);
+  if (index < 0) return;
+  const candidates = previous ? chapters.slice(0,index).reverse() : chapters.slice(index+1);
+  return candidates.find(ch=>!ch.locked && !ch.expired);
 }
 function selectChapter(chapterId:string) {
   if (selectionPage && (sending || workspaceBusy)) return;
@@ -490,6 +523,7 @@ function renderLessons() {
   refreshNavigation();
   const list = byId('lesson-list'), course = byId<HTMLSelectElement>('lesson-course');
   if (!list || !course) return;
+  const openTopics = new Set([...list.querySelectorAll<HTMLDetailsElement>('details[data-chapter][open]')].map(detail => detail.dataset.chapter));
   list.replaceChildren();
   list.setAttribute('aria-busy', String(loadingLessons));
   course.disabled = loadingLessons || !lessonCourses.length;
@@ -512,6 +546,9 @@ function renderLessons() {
     summary.textContent = practical ? browserProgressLabel(taskProgress) : courseCoverage(chapters);
     summary.title = practical ? browserProgressNote : coverageNote; list.append(summary);
   }
+  const grid = document.createElement('div');
+  grid.className = 'chapter-grid';
+  list.append(grid);
   // One chapter is the obvious next step: the one in progress, else the first not yet covered that is open.
   const upNext = suggestedChapter(lessonCourses.find(item => item.name === course.value));
   for (const chapter of chapters) {
@@ -540,7 +577,8 @@ function renderLessons() {
       choice.classList.add('lesson-covered'); choice.replaceChildren(mark, document.createTextNode(label + access));
     }
     row.append(choice);
-    if (mode === 'doubt_solver') { list.append(row); continue; }
+    grid.append(row);
+    if (mode === 'doubt_solver') continue;
     if(chapter.compute) {
       const compute=document.createElement('small');compute.className='chapter-coverage';
       compute.textContent=chapter.compute.status==='specified'
@@ -552,8 +590,14 @@ function renderLessons() {
     progress.textContent = practical ? (chapter===upNext?'Pick up here · ':'')+browserTaskLabel(taskStatus)
       : (chapter === upNext ? (chapter.progress?.status === 'not_started' ? 'Up next · ' : 'Pick up here · ') : '') + coverageLabel(chapter.progress);
     row.append(progress);
-    const topics = document.createElement('div'); topics.innerHTML = practical ? '' : topicCoverageHtml(chapter.progress);
-    row.append(topics); list.append(row);
+    if (!practical && chapter.progress?.topics.length) {
+      const topics = document.createElement('details'), summary = document.createElement('summary');
+      topics.className = 'chapter-topics'; topics.dataset.chapter = chapter.id;
+      topics.open = openTopics.has(chapter.id);
+      summary.textContent = 'Topics (' + chapter.progress.topics.length + ')';
+      topics.innerHTML = topicCoverageHtml(chapter.progress);
+      topics.prepend(summary); row.append(topics);
+    }
   }
   if (chapters.length && mode === 'tutor') {
     const note = document.createElement('small'); note.className = 'course-coverage'; note.textContent = practical ? browserProgressNote : coverageNote; list.append(note);
@@ -564,9 +608,10 @@ function renderLessons() {
     list.append(note);
   }
   if (!chapters.length) list.textContent = 'No lessons available. Open Course Catalog to view your courses.';
-  else if (!list.querySelector('.lesson-outline')) list.textContent = 'No chapters match your search.';
+  else if (!grid.childElementCount) list.textContent = 'No chapters match your search.';
 }
 function clearDocument(keepAttachments = false) {
+  composer.cancelCapture();
   clearTimeout(saveTimer); documentKey = ''; saveSequence = 0;
   if (!keepAttachments) attachments.clear();
   askInsteadOf = ''; editors.restartRuntime();
@@ -718,7 +763,12 @@ function restoreNotebook(value: TutorNotebook) {
   restoring = true;
   notebook = readNotebook(value);
   field.value = notebook.textDraft ?? '';
-  const tried=document.getElementById('doubt-tried') as HTMLTextAreaElement|null;if(tried)tried.value=notebook.attemptDraft??'';
+  const tried=document.getElementById('doubt-tried') as HTMLTextAreaElement|null;
+  if (tried) {
+    tried.value=notebook.attemptDraft??'';
+    const details=tried.closest('details');
+    if (details && tried.value) details.open=true;
+  }
   editors.restore(notebook.drafts); editors.update(ready, attempt);
   feed.replaceChildren();
   for (const cell of notebook.cells) renderCell(cell);
@@ -895,6 +945,7 @@ function renderCell(cell: NotebookCell) {
   }
   appendCard(cell.kind === 'note' ? 'Note · only you' : ['message','code'].includes(cell.kind) ? 'You' : cell.kind === 'diagram' ? names[mode] : 'Instructor', body => {
     body.parentElement?.setAttribute('data-cell-id', cell.id);
+    body.parentElement!.dataset.entryKind = cell.kind;
     if (cell.kind === 'note') {
       const note = document.createElement('textarea'); note.value = cell.text; note.rows = 4; note.maxLength = 12000;
       note.setAttribute('aria-label','My notes'); note.placeholder = 'A private note. It stays on this computer and is never sent to Instructor.';
@@ -947,7 +998,7 @@ function renderCell(cell: NotebookCell) {
         }
         body.append(choices, feedback); showAnswer();
         if (starter.source) {
-          const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'quiet'; edit.textContent = 'Try in a code cell';
+          const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = 'Try in a code cell';
           edit.onclick = () => {
             const existing = notebook.cells.find(item => item.kind === 'code' && item.packet?.starterExample === starter.courseId);
             const example = existing ?? addCell('code', starter.source!, {language:starter.language, starterExample:starter.courseId});
@@ -1077,27 +1128,44 @@ function controls() {
       : typeof target.packet.student_answer === 'string' ? 'Your last answer is awaiting feedback.' : 'Your last “Your turn” is still waiting for your answer.';
   }
   updateSelectionPage();
+  document.body.classList.toggle('room-ready', ready);
   refreshNavigation();
   showLessonPlaceholder();
   showAgentActivity();
   if (workspaceMode) workspaceMode.disabled = workspaceBusy || sending;
+  selectRoomTab();
   if (workspaceMode) button('doubt_solver').hidden = mode !== 'doubt_solver';
   button('tutor').disabled=sending;
   button('doubt_solver').textContent = mode === 'doubt_solver' ? 'Open in Instructor' : 'Open Doubt Solver';
-  if (byId('notebook-mode')) byId('notebook-mode').textContent = 'DHIMANTAI · ' + (practiceMode ? 'PRACTICE NOTEBOOK' : mode === 'doubt_solver' ? 'DOUBT SOLVER' : 'INSTRUCTOR NOTEBOOK');
+  const course = lessonCourses.find(course => course.chapters.some(chapter => chapter.id === selectedLesson));
+  const chapterIndex = course?.chapters.findIndex(chapter => chapter.id === selectedLesson) ?? -1;
+  if (byId('notebook-mode')) byId('notebook-mode').textContent = practiceMode
+    ? practice?.course || 'DHIMANTAI · PRACTICE NOTEBOOK'
+    : course ? `${course.name} · Chapter ${chapterIndex + 1} of ${course.chapters.length}` : names[mode];
   if (byId('tutor-lessons')) byId('tutor-lessons').hidden = practiceMode;
   const choosing = !practiceMode && !selectedLesson;
-  const skip=button('skip-chapter'),next=followingChapter();
+  const assessment=button('crt-assessment');
+  if (assessment) {
+    assessment.hidden=practiceMode || mode!=='tutor' || !assessment.dataset.lessons?.split(' ').includes(selectedLesson);
+    assessment.onclick=()=>host.postMessage({type:'crtAssessment',lesson:selectedLesson});
+  }
+  const previous = button('previous-chapter'), prior = adjacentChapter(true);
+  if (previous) {
+    previous.hidden = practiceMode || !selectedLesson;
+    previous.disabled = !prior || sending || workspaceBusy;
+    previous.title = prior ? 'Review ' + (prior.lesson || prior.name) : 'First available chapter';
+  }
+  const skip=button('skip-chapter'),next=adjacentChapter();
   if(skip) {
     skip.hidden=practiceMode || mode!=='tutor' || !selectedLesson;
-    skip.disabled=!next || sending;
+    skip.disabled=!next || sending || workspaceBusy;
     skip.title=next?'Skip to '+(next.lesson||next.name)+'. This does not mark the current chapter complete.':'You are at the last available chapter.';
   }
   if (messageBar) messageBar.hidden = choosing;
   const notebookTools = document.querySelector<HTMLElement>('.notebook-tools');
   if (notebookTools) notebookTools.hidden = choosing;
   if (heading) {
-    const lesson = lessonCourses.flatMap(course => course.chapters).find(chapter => chapter.id === selectedLesson);
+    const lesson = course?.chapters[chapterIndex];
     heading.innerHTML = renderHeading(practiceMode ? practice?.title || (notebook.exerciseId && notebook.title) || initialTitle
       : mode === 'doubt_solver' ? lesson?.lesson || lesson?.name || 'Ask a specific question' : lesson?.lesson || lesson?.name || 'Choose a lesson');
   }
@@ -1110,14 +1178,13 @@ function controls() {
   updateHelpReplies();
   for (const action of document.querySelectorAll<HTMLButtonElement>('[data-practice-strategy], #practice-help')) action.disabled = sending || !ready || !editors.aiEnabled;
   for (const action of feed.querySelectorAll<HTMLButtonElement>('[data-remove-conversation], [data-remove-cell], [data-confirm-delete]')) action.disabled = sending;
+  dictation?.setScope(!mediaAllowed && visible && ready && !selectionOpen && !sending && editors.aiEnabled ? documentKey : '');
   composerMode();
   updateLessonActions();
   dataControls();
   byId<HTMLInputElement>('follow-code').disabled = !ready || !editors.aiEnabled || !!practice;
   byId<HTMLInputElement>('stuck-hints').disabled = !ready || mode !== 'tutor' || !editors.aiEnabled || !editors.following || !!practice;
-  button('send').disabled = !ready || sending || (!field.value.trim() && !attachments.count) || (!!practice && !editors.aiEnabled);
-  attachments.lock(sending);
-  for (const id of ['attach-images','attach-pdfs']) if (button(id)) button(id).disabled = !ready || sending || (!!practice && !editors.aiEnabled);
+  composer.setAvailable(visible && !selectionOpen && ready && !sending && (!practice || editors.aiEnabled));
   button('video').disabled = !ready || sending || !!practice;
   button('teach-back').disabled = !ready || sending;
   for(const action of feed.querySelectorAll<HTMLButtonElement>('[data-browser-question]'))
@@ -1176,13 +1243,12 @@ function composerMode() {
     hint.hidden = hint.dataset.questionHint !== question?.packet?.tutor_checkpoint_id;
 }
 /** The message bar answers Instructor's open question, or asks one. Attachments go with a question. */
-async function submitField(): Promise<boolean> {
+async function deliverNotebookMessage(message: LearnerMessage): Promise<boolean> {
   if (!ready) { helpStatus(names[mode] + ' is not connected yet. Your draft is saved; send it when connected.'); return false; }
   if (sending) { helpStatus('Sending your message…'); return false; }
-  if (!field.value.trim() && !attachments.count) { field.focus(); return false; }
-  const browserPrompt=attachments.count?undefined:openBrowserQuestion();
+  const browserPrompt=message.attachments.length?undefined:openBrowserQuestion();
   if(browserPrompt) {
-    const text=field.value.trim(),id=attempt;
+    const text=message.text.trim(),id=attempt;
     if(!validBrowserAnswer(browserPrompt,text)) {
       helpStatus(browserPrompt.options.length?'Choose one of the prediction options in Instructor.'
         : `Write ${browserPrompt.minLength}–${browserPrompt.maxLength} characters in your own words.`);return false;
@@ -1200,11 +1266,11 @@ async function submitField(): Promise<boolean> {
     }
     controls();return ok;
   }
-  const question = attachments.count ? undefined : openQuestion();
-  if (!question && dataRoute(field.value)) return sendData(field.value);
-  if (!question && mode === 'doubt_solver' && !practiceMode) return sendDoubt();
-  if (!question) return send(field.value, true);
-  const text = field.value, packet = question.packet!;
+  const question = message.attachments.length ? undefined : openQuestion();
+  if (!question && !message.attachments.length && dataRoute(message.text)) return sendData(message.text);
+  if (!question && mode === 'doubt_solver' && !practiceMode) return sendDoubt(message);
+  if (!question) return send(message.text, message);
+  const text = message.text, packet = question.packet!;
   if (!text.trim() || sending) return false;
   const ok = await sendLive('TUTOR_NOTEBOOK_ANSWER\n' + JSON.stringify({checkpoint_id:packet.tutor_checkpoint_id, answer:text}), false, text, undefined, question);
   // Backend question identity remains authoritative; delivery alone does not assess it.
@@ -1266,7 +1332,7 @@ function close(message: string) {
   latestObservation=Promise.resolve();observationContent='';
   if(browserCourse)host.postMessage({type:'browserState',attempt,connected:false,detail:'Instructor disconnected. Reconnect to resume live help.'});
   browserObservationFailed=false;browserActions.close();browserSnapshot=null;browserCourse=false;browserQuestion=null;browserAnswered='';browserAskInstead='';
-  devices.stop(); mediaAllowed = false;
+  stopDevices(); mediaAllowed = false;
   clearTimeout(saveTimer);
   const saved = snapshotNotebook();
   if (documentKey) host.postMessage({type:'notebookChanged', documentKey, sequence:++saveSequence, notebook:saved});
@@ -1312,7 +1378,7 @@ function renderVideo(id: string, embedded: boolean) {
   entry.body.replaceChildren();
   if (embedded) {
     const frame = document.createElement('iframe');
-    frame.src = entry.url; frame.title = 'DhimantAI lesson video';
+    frame.src = entry.url; frame.title = 'dhimantAI lesson video';
     frame.allow = "autoplay; encrypted-media; fullscreen; microphone 'none'; camera 'none'";
     frame.referrerPolicy = 'strict-origin-when-cross-origin'; frame.allowFullscreen = true;
     entry.frame = frame; entry.body.append(frame);
@@ -1384,7 +1450,7 @@ function videoPacket(data: Record<string, unknown>) {
   if (existing) return;
   const title = typeof data.title === 'string' && data.title ? data.title : 'Lesson video';
   appendCard(title, body => {
-    body.textContent = 'Checking the DhimantAI video catalog…';
+    body.textContent = 'Checking the dhimantAI video catalog…';
     videos.set(id, {body, title, topic: typeof data.topic === 'string' ? data.topic : ''});
   });
   host.postMessage({type: 'checkVideo', videoId: id, attempt});
@@ -1576,8 +1642,9 @@ function summaryActions(body: HTMLElement, cell: NotebookCell) {
 }
 function renderTeaching(cell: NotebookCell, text = cell.text, replaceRow?: HTMLElement) {
   const packet = cell.packet ?? {}, section = packet.active_subtopic;
-  appendCard(names[mode], body => {
+  appendCard(packet.tutor_feedback ? names[mode] + ' feedback' : names[mode], body => {
     body.parentElement?.setAttribute('data-cell-id', cell.id);
+    body.parentElement!.dataset.entryKind = packet.tutor_feedback ? 'feedback' : packet.is_question_prompt ? 'question' : 'lesson';
     const {body:shown, turn} = splitYourTurn(text);
     body.innerHTML = shown.trim() ? renderBoard(shown) : '';
     if (typeof packet.browser_step === 'string') {
@@ -1620,9 +1687,10 @@ function renderTeaching(cell: NotebookCell, text = cell.text, replaceRow?: HTMLE
     }
     if (mode === 'tutor' && writtenCheckpoint(packet) && typeof packet.tutor_checkpoint_id === 'string') {
       editors.writtenQuestion(body, cell.id, packet.tutor_checkpoint_id);
-      // Answers go in the one text cell at the bottom; this only points there while the question is open.
-      const hint = document.createElement('small'); hint.className = 'answer-hint muted';
-      hint.dataset.questionHint = packet.tutor_checkpoint_id; hint.textContent = 'Write your answer in the message bar below.';
+      // The checkpoint and the notebook share a single answer draft.
+      const hint = document.createElement('button'); hint.className = 'answer-hint'; hint.type = 'button';
+      hint.dataset.questionHint = packet.tutor_checkpoint_id; hint.textContent = 'Answer this question';
+      hint.onclick = () => field.focus();
       hint.hidden = openQuestion()?.packet?.tutor_checkpoint_id !== packet.tutor_checkpoint_id;
       body.append(hint);
     } else if (!packet.notebook_help && (!practiceMode || !conversationCell(cell))) {
@@ -1630,7 +1698,7 @@ function renderTeaching(cell: NotebookCell, text = cell.text, replaceRow?: HTMLE
     }
     conversationControls(body, cell);
     // Instructor sends the course section first, then the concept taught this turn.
-    const heading = body.firstElementChild;
+    const heading = body.querySelector(':scope > .exercise-instructions > summary + *') ?? body.firstElementChild;
     const concept = heading?.nextElementSibling;
     if (mode !== 'tutor' || typeof section !== 'string' || heading?.tagName !== 'H2' || heading.textContent?.trim() !== section.trim()) return;
     const step = concept?.matches('h3') ? concept : concept?.matches('p') ? concept.querySelector(':scope > strong:first-child') : null;
@@ -1852,7 +1920,7 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
   live.on(RoomEvent.ParticipantDisconnected, peer => { if (current() && peer.identity === agent) close(names[mode] + ' disconnected. Retry to reconnect.'); });
   live.on(RoomEvent.Disconnected, () => { if (current()) close('Disconnected. Retry to reconnect.'); });
   live.on(RoomEvent.Reconnecting, () => { if (current()) {
-    devices.stop(); ready = false; agentActivity = ''; helpStatus('Reconnecting to ' + names[mode] + '… Your draft is saved.'); controls();
+    stopDevices(); ready = false; agentActivity = ''; helpStatus('Reconnecting to ' + names[mode] + '… Your draft is saved.'); controls();
     if(browserCourse)host.postMessage({type:'browserState',attempt:id,connected:false,detail:'Reconnecting to Instructor… Your draft is saved.'});
   } });
   let switched = false;
@@ -1941,16 +2009,16 @@ function helpStatus(message: string) {
   const inline = byId('notebook-help-status');
   if (inline) inline.textContent = message;
 }
-async function send(text: string, fromField: boolean, display = text, action?: string, targetCell?: string, followupStage?:SkillStage, helpLevel?: number, notebookHelp = false): Promise<boolean> {
-  const draft = fromField ? field.value : undefined;
+async function send(text: string, draftMessage: false | LearnerMessage, display = text, action?: string, targetCell?: string, followupStage?:SkillStage, helpLevel?: number, notebookHelp = false): Promise<boolean> {
+  const draft = draftMessage ? draftMessage.text : undefined;
   const id = attempt;
   if (practice || notebookHelp) {
-    const attached = fromField && attachments.count > 0;
+    const attached = draftMessage && draftMessage.attachments.length > 0;
     if (!ready || sending || !editors.aiEnabled || (!text.trim() && !attached)) return false;
     sending = coaching = true; controls();
     try {
       // Photos and PDFs go with this question; the server reads them into text for Instructor and keeps nothing.
-      const files = attached ? await attachments.encoded() : [];
+      const files = attached ? await attachments.encoded(false, draftMessage.attachments) : [];
       const submitted = text.startsWith('PRACTICE_NOTEBOOK_SUBMISSION\n');
       const help = text.startsWith('TUTOR_NOTEBOOK_HELP\n') ? JSON.parse(text.slice(text.indexOf('\n') + 1)) : undefined;
       const payload = submitted ? JSON.parse(text.slice(text.indexOf('\n') + 1)) : undefined;
@@ -1992,7 +2060,7 @@ async function send(text: string, fromField: boolean, display = text, action?: s
       spokenReplies?.reply(typeof reply.audioId === 'string' ? reply.audioId : null);
       if (files.length && !submitted) attachments.clear();
       helpStatus(held ? reply.ladderNote!.slice(0, 300) : names[mode] + ' replied. Choose a reply or ask your next question.');
-      if (fromField && field.value === draft) field.value = '';
+      if (draftMessage && field.value === draft) field.value = '';
       return true;
     } catch (error) {
       if (id === attempt) helpStatus(error instanceof Error ? error.message : names[mode] + ' could not reply. Try again.');
@@ -2003,11 +2071,11 @@ async function send(text: string, fromField: boolean, display = text, action?: s
     }
     finally { if (id === attempt) { sending = coaching = false; controls(); } }
   }
-  return sendLive(text, fromField, display, action);
+  return sendLive(text, draftMessage, display, action);
 }
-async function sendLive(text: string, fromField: boolean, display: string, action?: string, question?: NotebookCell): Promise<boolean> {
-  const live = room, dest = agent, id = attempt, draft = field.value;
-  const attached = fromField && attachments.count > 0;
+async function sendLive(text: string, draftMessage: false | LearnerMessage, display: string, action?: string, question?: NotebookCell): Promise<boolean> {
+  const live = room, dest = agent, id = attempt, draft = draftMessage && draftMessage.text;
+  const attached = draftMessage && draftMessage.attachments.length > 0;
   if (!ready || sending || !live || !dest || (!text.trim() && !attached)) return false;
   sending = true; controls();
   const request = mode === 'tutor' ? 'tutor-request-' + crypto.randomUUID() : '';
@@ -2031,7 +2099,7 @@ async function sendLive(text: string, fromField: boolean, display: string, actio
       try {
         await Promise.race([
           attachments.send(live.localParticipant, dest, text, () => id === attempt && room === live && Date.now() < deadline,
-            mode === 'doubt_solver' && !practiceMode ? attachmentRole : undefined, request),
+            mode === 'doubt_solver' && !practiceMode ? attachmentRole : undefined, request, draftMessage.attachments),
           new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Attachment delivery timed out.')), 120000); }),
         ]);
       } finally { clearTimeout(timer); }
@@ -2050,12 +2118,12 @@ async function sendLive(text: string, fromField: boolean, display: string, actio
       question.packet.student_answer = display;
       question.packet.student_answer_request_id = request;
     }
-    addCell('message', display + (attached ? '\n\nAttachments: ' + attachments.names.join(', ') : ''), {
+    addCell('message', display + (attached ? '\n\nAttachments: ' + draftMessage.attachments.map(file => file.name).join(', ') : ''), {
       ...(request ? {tutor_request_id:request} : {}),
       ...(action || notebookHelpActions.some(item => item.label === display) ? {action:true} : {}),
     });
     if (attached) attachments.clear();
-    if (fromField && field.value === draft) field.value = '';
+    if (draftMessage && field.value === draft) field.value = '';
     return true;
   } catch (error) {
     pendingTutorRequests.delete(request);
@@ -2131,25 +2199,38 @@ window.addEventListener('message', e => {
   if (e.origin !== window.location.origin) return;
   if (d?.type === 'browseCoursePractice') { browseCoursePractice(); return; }
   if (d?.type === 'workspaceError') {
-    workspaceBusy=false; if (workspaceMode) { workspaceMode.disabled=false; workspaceMode.value=practiceMode?'practice':mode; }
+    if (d.request !== undefined && (d.request !== practiceRequest || practicePanel?.hidden)) return;
+    workspaceBusy=false; if (workspaceMode) workspaceMode.disabled=false;
+    selectRoomTab();
     helpStatus(d.message);
-    if (practicePanel && !practicePanel.hidden) byId('practice-questions').textContent=d.message;
+    if (practicePanel && !practicePanel.hidden && byId('practice-list-status')) byId('practice-list-status').textContent=d.message;
+    const chapters = byId<HTMLSelectElement>('practice-chapter');
+    if (chapters && chapters.options.length) chapters.disabled = false;
     return;
   }
   if (d?.type === 'workspacePractice') {
-    if (!practicePanel) return;
-    practicePanel.hidden=false;
+    if (!practicePanel || practicePanel.hidden || d.request !== undefined && d.request !== practiceRequest) return;
     const chapters=byId<HTMLSelectElement>('practice-chapter'), list=byId('practice-questions');
+    if (d.course && byId('practice-course')) byId('practice-course').textContent = d.course;
     chapters.replaceChildren(...d.chapters.map((chapter:any)=>{
       const option=document.createElement('option'); option.value=chapter.id; option.textContent=chapter.lesson||chapter.name;
       option.disabled=chapter.locked || chapter.expired; return option;
     }));
+    chapters.disabled = !chapters.options.length;
     chapters.value=d.chapterId; chapters.onchange=()=>browseCoursePractice(chapters.value);
     list.replaceChildren(...d.questions.map((question:any)=>{
-      const choice=document.createElement('button'); choice.type='button'; choice.textContent=question.title;
+      const choice=document.createElement('button'); choice.type='button';
+      const title=document.createElement('strong'); title.textContent=question.title;
+      choice.append(title);
+      const format = question.kind === 'written' ? 'Written response' : question.language;
+      const detail = [format, question.difficulty].filter(Boolean).join(' · ');
+      if (detail) { const meta=document.createElement('small'); meta.textContent=detail; choice.append(meta); }
       choice.onclick=()=>changeWorkspace('practice',question.id); return choice;
     }));
-    if (!d.questions.length) list.textContent='No published practice sets for this chapter yet. You can write and run code in the notebook.';
+    const count = d.questions.length;
+    if (byId('practice-list-status')) byId('practice-list-status').textContent = count
+      ? count + (count === 1 ? ' exercise' : ' exercises')
+      : 'No published exercises for this chapter yet. You can still write and run code in the notebook.';
     return;
   }
   if (d?.type === 'learningPreferencesError') {
@@ -2175,7 +2256,14 @@ window.addEventListener('message', e => {
     }
     return;
   }
-  if (d?.type === 'openTutor') { button('end').hidden = true; preferredLesson = typeof d.lesson === 'string' ? d.lesson : ''; const next = d.mode === 'doubt_solver' ? 'doubt_solver' : 'tutor'; begin(next, next === mode ? selectedLesson : ''); return; }
+  if (d?.type === 'openTutor') {
+    workspaceBusy = false; closePracticeList();
+    button('end').hidden = true;
+    preferredLesson = typeof d.lesson === 'string' ? d.lesson : '';
+    const next = d.mode === 'doubt_solver' ? 'doubt_solver' : 'tutor';
+    begin(next, next === mode ? selectedLesson : '');
+    return;
+  }
   if (d?.type === 'tutorLessons') {
     if (d.attempt !== attempt || practiceMode) return;
     if (selectedLesson && !(selectionPage && d.browse)) return;
@@ -2205,6 +2293,7 @@ window.addEventListener('message', e => {
   }
   if (d?.type === 'chooseCourse' && typeof d.course === 'string') {
     if (practiceMode) return;
+    workspaceBusy = false; closePracticeList();
     // Continuing the lesson that is already open keeps its live session and notebook.
     if (typeof d.lesson === 'string' && d.lesson && d.lesson === selectedLesson) {
       if(button('end').disabled)begin(mode,d.lesson);
@@ -2215,6 +2304,7 @@ window.addEventListener('message', e => {
   }
   if (d?.type === 'openPractice') {
     practiceMode = true; document.body.classList.add('practice-notebook');
+    workspaceBusy = false; closePracticeList();
     button('end').hidden = true; button('doubt_solver').hidden = true;
     begin('tutor'); return;
   }
@@ -2228,6 +2318,7 @@ window.addEventListener('message', e => {
   if(d?.type==='doubtHistory' && Array.isArray(d.chats)){renderChatHistory(d.chats);return;}
   if (d?.type === 'restoreNotebook') {
     if (d.attempt !== undefined && d.attempt !== attempt) return;
+    if (documentKey !== d.documentKey) composer.cancelCapture();
     clearTimeout(saveTimer); notebookConflict(false); pendingDoubt = '';
     documentKey = d.documentKey; saveSequence = 0; restoreNotebook(d.notebook);
     document.getElementById('runtime-restore')?.remove();
@@ -2257,25 +2348,41 @@ window.addEventListener('message', e => {
       const resume = document.querySelector('#stopping-point > button');
       if (resume) resume.before(bar); else toolbar?.after(bar);
     }
-    bar.replaceChildren(); bar.hidden = (!d.count && !notebook.drafts.some(draft=>draft.language==='python')) || !d.needsRestore || selectedRuntime !== 'course';
+    bar.replaceChildren(); bar.hidden = (!d.count && !notebook.drafts.some(draft=>draft.language==='python')) || !d.needsRestore
+      || (selectedRuntime !== 'course' && !selectedRuntime.startsWith('machine:'));
+    if (bar.hidden) return;
     const message = document.createElement('p');
+    bar.append(message);
     if (!d.count) {
       message.textContent = 'No execution history is available for these saved cells. Run your setup cells once to begin recording recoverable state.';
-      bar.append(message); return;
+      return;
     }
-    message.textContent = d.restoring ? 'Restoring previous successful Python runs…'
+    message.textContent = d.restoreBlockReason ? 'Python session state was reset.'
+      : d.restoring ? 'Restoring previous successful Python runs…'
       : `Python variables need restoring. Replay ${d.count} successful run(s) for this lesson, in order. This repeats file writes, installations and other code effects.`;
-    const restore = document.createElement('button'); restore.textContent = d.restoring ? 'Stop restoring' : 'Restore session state';
-    restore.onclick = () => {restore.disabled = true; host.postMessage({type:d.restoring?'stopRestore':'restoreRuntime', documentKey});};
+    const error = document.createElement('p');
+    if (d.error || d.restoreBlockReason) {
+      error.setAttribute('role','alert'); error.textContent = d.error || d.restoreBlockReason;
+      bar.append(error);
+    }
+    if (!d.restoreBlockReason) {
+      const restore = document.createElement('button'); restore.textContent = d.restoring ? 'Stop restoring' : 'Restore session state';
+      restore.onclick = () => {error.remove(); restore.disabled = true; host.postMessage({type:d.restoring?'stopRestore':'restoreRuntime', documentKey});};
+      bar.append(restore);
+    }
     const fresh = document.createElement('button'); fresh.className = 'quiet'; fresh.textContent = 'Start fresh'; fresh.disabled = d.restoring;
-    fresh.onclick = () => confirmRemoval(fresh, 'Start a fresh Python session? Saved code stays; the replay history will be cleared.',
-      () => host.postMessage({type:'freshRuntime', documentKey}));
-    bar.append(message, restore, fresh); return;
+    fresh.onclick = () => {
+      error.remove();
+      confirmRemoval(fresh, 'Start a fresh Python session? Your code stays in the notebook. This clears its replay history.',
+        () => host.postMessage({type:'freshRuntime', documentKey}), 'Start fresh');
+    };
+    bar.append(fresh); return;
   }
   if (d?.type === 'runtimeRestored' && d.documentKey === documentKey) {
     editors.restartRuntime(); status.textContent = 'Previous successful Python runs restored. Continue with your unfinished cell.'; return;
   }
   if (d?.type === 'runtimeRestarted') {
+    if (d.documentKey && d.documentKey !== documentKey) return;
     host.postMessage({type:'runtimeStatus',documentKey});
     replyContexts.clear(); updateHelpReplies();
     pendingNotebook?.finish({error:'Runtime changed. Ask ' + names[mode] + ' again with a current run.'});
@@ -2324,13 +2431,15 @@ window.addEventListener('message', e => {
     visible = d.visible === true;
     // Coming back (for example from the catalog after a purchase) refreshes which lessons are open.
     if (returned) { if (selectionPage && selectionOpen) loadCourseSelection(); else reloadLessons(); }
-    if (!visible) devices.stop();
+    if (!visible) stopDevices();
     controls();
     const selected = editors.selection(); observeCode(selected?.snapshot, selected?.run);
     for (const el of audio) el.muted = roomAudioMuted();
     return;
   }
   if (d?.type === 'signedOut') {
+    workspaceBusy = false; closePracticeList();
+    byId('practice-questions')?.replaceChildren(); byId('practice-chapter')?.replaceChildren();
     if (selectionPage) selectionOpen = true;
     chatSwitchPending=false;renderChatHistory([]);
     close('Your account changed. Retry to sign in.'); selectedLesson = ''; lessonCourses = [];
@@ -2399,7 +2508,7 @@ window.addEventListener('message', e => {
   if (d.type === 'videoChecked') {
     const v = videos.get(d.videoId);
     if (!v) return;
-    if (!d.ok) { v.body.textContent = 'This video is unavailable in the DhimantAI catalog.'; return; }
+    if (!d.ok) { v.body.textContent = 'This video is unavailable in the dhimantAI catalog.'; return; }
     // Let the player negotiate its formats. A few canPlayType combinations
     // cannot predict which video/audio streams YouTube will choose.
     v.url = d.url; renderVideo(d.videoId, true);
@@ -2407,7 +2516,8 @@ window.addEventListener('message', e => {
 });
 if (button('course-notes')) button('course-notes').onclick = () => {saveNotebook(true); host.postMessage({type:'courseNotes',documentKey});};
 button('tutor').onclick = () => {if(!sending)begin(mode, selectedLesson, browserObservationFailed);};
-if(button('skip-chapter'))button('skip-chapter').onclick=()=>{const next=followingChapter();if(next)selectChapter(next.id);};
+if(button('previous-chapter'))button('previous-chapter').onclick=()=>{const prior=adjacentChapter(true);if(prior)selectChapter(prior.id);};
+if(button('skip-chapter'))button('skip-chapter').onclick=()=>{const next=adjacentChapter();if(next)selectChapter(next.id);};
 if (byId('lesson-course')) byId('lesson-course').onchange = () => {
   preferredCourse = byId<HTMLSelectElement>('lesson-course').value;
   if (byId('lesson-search')) byId<HTMLInputElement>('lesson-search').value = '';
@@ -2432,10 +2542,7 @@ if (button('sound')) button('sound').onclick = async () => {
   await resumeSpeaker();
 };
 field.addEventListener('pointerdown',()=>{if(blockedAudio)void resumeSpeaker();});
-if (button('attach-images')) button('attach-images').onclick = () => attachments.choose(false);
-if (button('attach-pdfs')) button('attach-pdfs').onclick = () => attachments.choose(true);
 if (button('import-data')) button('import-data').onclick = () => { if (ready && dataState === 'ready') host.postMessage({type:'dataImport', attempt}); };
-bindComposer(byId<HTMLFormElement>('composer'), field, submitField);
 // One way to get unstuck: each press climbs one rung (question, hint, where, similar example) after a fresh try.
 let nextHelp = 1;
 function showHelp(d: {next?: unknown; waiting?: unknown; trend?: unknown}) {
@@ -2500,15 +2607,16 @@ function doubtComposer() {
   const doubt = mode === 'doubt_solver' && !practiceMode;
   let tried = document.getElementById('doubt-tried-box');
   if (!tried && doubt) {
-    tried = document.createElement('div'); tried.id = 'doubt-tried-box'; tried.className = 'doubt-tried';
+    tried = document.createElement('details'); tried.id = 'doubt-tried-box'; tried.className = 'doubt-tried';
+    const summary = document.createElement('summary'); summary.textContent = 'What I tried (optional)';
     const label = document.createElement('label'), input = document.createElement('textarea'), nudge = document.createElement('small');
-    label.htmlFor = 'doubt-tried'; label.textContent = 'What I tried (optional)';
+    label.htmlFor = 'doubt-tried'; label.textContent = 'What I tried'; label.className = 'sr-only';
     input.addEventListener('input',()=>saveNotebook());
     input.id = 'doubt-tried'; input.rows = 1; input.maxLength = 1500; input.placeholder = 'The step you tried and where it stopped making sense';
     nudge.id = 'doubt-tried-nudge'; nudge.className = 'muted';
     nudge.textContent = 'Sharing what you tried helps Doubt Solver find the exact step that went wrong.';
     input.setAttribute('aria-describedby', nudge.id);
-    tried.append(label, input, nudge);
+    tried.append(summary, label, input, nudge);
     document.querySelector('#composer .composer-box')?.before(tried);
     const fresh = document.createElement('button'); fresh.type = 'button'; fresh.id = 'new-doubt'; fresh.className = 'quiet'; fresh.textContent = 'New Chat';
     fresh.title = 'Start a fresh conversation. This chat stays in Chat history.';
@@ -2540,14 +2648,14 @@ function doubtComposer() {
     roles.hidden = !doubt || !attachments.count; roles.disabled = sending;
   }
 }
-async function sendDoubt() {
+async function sendDoubt(draft: LearnerMessage) {
   const input = document.getElementById('doubt-tried') as HTMLTextAreaElement | null, tried = input?.value.trim() ?? '';
-  const message = field.value;
+  const message = draft.text;
   // The id of a first doubt is saved with a divider before its first message.
   if (!notebook.cells.some(isDivider) && notebook.cells.some(cell => cell.kind === 'message') === false && documentKey && ready)
     addCell('recap', 'New doubt', {doubt_divider:true, doubt_id:currentDoubt()});
   const text = (tried ? 'What I tried: ' + tried.replace(/\s+/g, ' ') + '\n' : '') + message;
-  const ok = await send(text, true, message + (tried ? '\n\nWhat I tried: ' + tried : ''));
+  const ok = await send(text, draft, message + (tried ? '\n\nWhat I tried: ' + tried : ''));
   if (ok && input && input.value.trim() === tried) input.value = '';
   controls();
   return ok;
@@ -2587,12 +2695,6 @@ document.addEventListener('click', event => {
   for (const menu of document.querySelectorAll<HTMLDetailsElement>('.workspace-menu[open]')) {
     if (!menu.contains(event.target as Node) || (event.target as Element).closest('button')) menu.open = false;
   }
-});
-// Open downward when a short notebook leaves no room above the message bar.
-for (const menu of document.querySelectorAll<HTMLDetailsElement>('.composer-menu')) menu.addEventListener('toggle', () => {
-  if (!menu.open) return;
-  const content = menu.querySelector<HTMLElement>('.menu-content'), feedTop = byId('feed').getBoundingClientRect().top;
-  menu.classList.toggle('drop-down', !!content && menu.getBoundingClientRect().top - feedTop < content.offsetHeight + 16);
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && document.body.classList.contains('focus-view')) focusView(false);

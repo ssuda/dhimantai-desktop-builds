@@ -1,3 +1,4 @@
+import { notebookMessageBar } from '../src/learningComposer';
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -8,7 +9,7 @@ import { EditorView } from '@codemirror/view';
 import { chapterId, lessonPicker, selectLesson } from './lessonPicker';
 
 test('learning room accepts only host grants, renders agent Markdown and drops late packets on mode change', async () => {
-  const dom = new JSDOM('<button id="wide"></button><button id="latest"></button><button id="tutor"></button><button id="doubt_solver"></button><button id="end" disabled></button><button id="sound"></button><span id="status"></span><input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox"><small id="code-observer-status"></small><main id="feed"></main><form id="composer"><textarea id="message"></textarea><button id="send"></button><button type="button" id="teach-back" disabled></button><button id="video"></button></form>',
+  const dom = new JSDOM('<button id="wide"></button><button id="latest"></button><button id="tutor"></button><button id="doubt_solver"></button><button id="end" disabled></button><span id="status"></span><input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox"><small id="code-observer-status"></small><main id="feed"></main>' + notebookMessageBar('Instructor', false, '<button type="button" id="sound"></button>'),
     {runScripts:'outside-only', url:'https://webview.example', pretendToBeVisual: true});
   const w = dom.window, sent: any[] = [], chats: any[] = [], rpcs: any[] = [], rooms: Room[] = [];
   w.document.body.insertAdjacentHTML('afterbegin', lessonPicker);
@@ -119,14 +120,27 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     const execution = {status: 'exited', exit_code: 0, stdout: 'edited\n', stderr: '', truncated: false};
     post({...result, execution}, 'https://untrusted.example'); assert.equal(output.hidden, true);
     post({...result, execution}); assert.match(output.textContent!, /edited/);
+    const prediction = editor.querySelector<HTMLTextAreaElement>('.practice-prediction')!;
+    const runCount = sent.filter(m => m.type === 'codeAction').length;
+    check.click();
+    await new Promise(r => setTimeout(r, 0));
+    const reviewed = JSON.parse(chats.at(-1).text.split('\n').slice(1).join('\n'));
+    assert.equal(reviewed.run.output, 'edited\n');
+    assert.equal(reviewed.prediction, '');
+    assert.equal(reviewed.cell_id, requested.snippet);
+    assert.match(reviewed.message, /new case to test/);
+    prediction.value = 'written after seeing the result';
+    check.click(); await new Promise(r => setTimeout(r, 0));
+    assert.equal(JSON.parse(chats.at(-1).text.split('\n').slice(1).join('\n')).prediction, '');
+    assert.equal(sent.filter(m => m.type === 'codeAction').length, runCount, 'reviews of the same result must not execute the cell again');
+    prediction.value = '';
     setCode('print("next")');
     assert.equal(output.hidden, true);
     post({...result, execution}); assert.equal(output.hidden, true, 'late runs never restore stale output');
-    const prediction = editor.querySelector<HTMLTextAreaElement>('.practice-prediction')!;
     const sentBefore = sent.length;
     check.click();
     assert.equal(sent.length, sentBefore, 'Check first asks for a prediction');
-    assert.match(editor.textContent!, /Write your prediction before reviewing/);
+    assert.match(editor.textContent!, /“I expect it to print” before running/);
     check.click();
     assert.equal(sent.at(-1).prediction, '', 'a second press skips the prediction');
     setCode('print("next")  ');

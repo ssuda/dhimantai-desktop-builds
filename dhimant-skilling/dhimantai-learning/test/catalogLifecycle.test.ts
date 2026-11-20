@@ -51,6 +51,7 @@ test('catalog focus, repeated open and token renewal preserve the displayed page
   assert.deepEqual(f.counts,counts);
   await f.catalog.handle({type:'buy',id:'python-once'});
   assert.equal(f.urls.length,1,'a refreshed token still opens checkout');assert.equal(f.counts.writes,counts.writes);
+  assert.match(f.messages.at(-1).message,/select Refresh purchases/);
   f.pay();f.focus();await flush();
   assert.equal(f.checks.at(-1),true);assert.equal(f.counts.joined,1);
   assert.equal(f.catalog.selection.catalog.courses[0].unlocked,true);
@@ -67,6 +68,8 @@ test('Manage payments is a dedicated view and returning to courses keeps account
     assert.equal((dom.window.document.getElementById('catalog-content') as HTMLElement).hidden,true);
     assert.equal((dom.window.document.getElementById('manage-payments') as HTMLElement).hidden,false);
     assert.match(dom.window.document.getElementById('manage-payments')!.textContent!,/Paid/);
+    assert.ok([...dom.window.document.querySelectorAll('button[data-action="refresh"]')].some(
+      button => !button.closest('[hidden]') && button.textContent === 'Refresh purchases'));
     assert.ok(dom.window.document.querySelector('[data-action="receipt"]'));
     if(process.env.DHIMANTAI_PAYMENTS_PREVIEW)await writeFile(process.env.DHIMANTAI_PAYMENTS_PREVIEW,f.panel.webview.html);
   }finally{dom.window.close();}

@@ -45,7 +45,7 @@ export async function selectedEvidence(root:string, paths:string[]) {
 }
 
 export async function createGuidedProject(context:vscode.ExtensionContext, plan:SkillingBrief,stillCurrent:()=>Promise<boolean>) {
-  const parent=await vscode.commands.executeCommand<vscode.Uri>('dhimantai.setupCourse',plan.course_title);
+  const parent=await vscode.commands.executeCommand<vscode.Uri>('dhimantai.projectFolder',plan.course_title);
   if(!parent||!(await stillCurrent())) return;
   const name=await vscode.window.showInputBox({title:plan.brief.title,prompt:'New project folder name',value:`${plan.course_id}-${plan.kind}`,validateInput:v=>/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(v)?null:'Use letters, numbers, hyphens or underscores.'});
   if(!name||!(await stillCurrent())) return;
@@ -53,7 +53,7 @@ export async function createGuidedProject(context:vscode.ExtensionContext, plan:
   await stageProject(destination,async root=>{
     await mkdir(join(root,'src'),{recursive:true});await mkdir(join(root,'tests'));
     await writeFile(join(root,'.dhimantai-project.json'),JSON.stringify({id:'skilling-project',version:1}));
-    await writeFile(join(root,'.dhimantai-skilling.json'),JSON.stringify({course_id:plan.course_id,kind:plan.kind,title:plan.brief.title,requirements:plan.brief.requirements,profile_hash:plan.profile_hash,language:plan.language}));
+    await writeFile(join(root,'.dhimantai-skilling.json'),JSON.stringify({course_id:plan.course_id,course_title:plan.course_title,kind:plan.kind,title:plan.brief.title,requirements:plan.brief.requirements,profile_hash:plan.profile_hash,language:plan.language}));
     await writeFile(join(root,'README.md'),`# ${plan.brief.title}\n\n${plan.brief.requirements}\n\n## Acceptance criteria\n\nState observable inputs, outputs and failure behaviour.\n\n## Run and test\n\nAdd reproducible commands for the course container.\n\n${plan.brief.milestones.map(m=>`## ${m.title}\n\n${m.task}`).join('\n\n')}\n`);
     await writeFile(join(root,'EXPLANATION.md'),'# Design and evidence\n\nRecord predictions, trade-offs, test results, limitations and assistance.\n');
     await writeFile(join(root,'src/README.md'),'Add your implementation here using this course’s language and technology stack.\n');

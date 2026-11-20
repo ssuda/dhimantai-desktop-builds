@@ -75,7 +75,7 @@ export async function run() {
   };
   const facts = (title: string, draft: string) => webview(`d => {
     if (d.querySelector('.workspace-title h1')?.textContent !== ${JSON.stringify(title)} || d.querySelector('#message')?.value !== ${JSON.stringify(draft)}) return null;
-    return {heading:d.querySelector('h1').textContent, mode:d.querySelector('#notebook-mode')?.textContent,
+    return {heading:d.querySelector('h1').textContent, mode:d.querySelector('#workspace-mode [aria-pressed="true"]')?.textContent, course:d.querySelector('#notebook-mode')?.textContent,
       status:d.querySelector('#status')?.textContent, question:d.querySelector('#feed h3')?.textContent};
   }`);
   try {
@@ -99,8 +99,24 @@ export async function run() {
       assert.equal(panels.length, index + 1);
       assert.equal(panel.title, 'Practice notebook · ' + title);
       const shown = await until(() => facts(title, ''), value => value?.status === 'Practice is ready. Ask questions and get feedback here.', 'exercise heading and ready state');
-      assert.equal(shown.mode, 'DHIMANTAI · PRACTICE NOTEBOOK');
+      assert.equal(shown.mode, 'Practice');
+      assert.equal(shown.course, 'Python');
       assert.equal(shown.question, title);
+      if (index === 0) {
+        await webview(`d => { d.querySelector('[data-room="practice"]').click(); return true; }`);
+        await until(() => webview(`d => d.querySelector('#practice-questions button')?.textContent`), Boolean, 'browse exercises from standalone Practice');
+        await webview(`d => { d.getElementById('practice-back').click(); return true; }`);
+        assert.ok(await facts(title, ''));
+        assert.equal(await webview(`d => d.getElementById('audio-microphone').disabled`), false);
+        await webview(`d => {
+          const w = d.defaultView;
+          w.navigator.mediaDevices.getUserMedia = async () => { throw new w.DOMException('Denied', 'NotAllowedError'); };
+          d.getElementById('audio-microphone').click(); return true;
+        }`);
+        await until(() => webview(`d => d.getElementById('dictation-status').textContent`),
+          message => message?.includes('access was denied'), 'Practice explains microphone permission denial');
+        assert.equal(await webview(`d => d.getElementById('audio-microphone').disabled`), false, 'learner can retry');
+      }
       const source = 'print(' + (index + 1) + ')';
       await webview(`d => { d.querySelector('.cm-content').focus(); return true; }`);
       await cdp.send('Input.insertText', {text:source}, visibleSession);

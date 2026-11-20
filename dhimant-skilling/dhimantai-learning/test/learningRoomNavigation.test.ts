@@ -55,7 +55,7 @@ test('Instructor and Doubt Solver switch in one tab, preserve separate drafts an
   const chapter = '10000000-0000-0000-0000-000000000001';
   const lesson = 'Chapter 1: Compile, Run, and Read Values';
   const session = {user:{id:'navigation-learner'}, access_token:'test-token'};
-  const context: any = {extensionUri:{fsPath:resolve(__dirname, '../..')}, extensionPath:resolve(__dirname, '../..'),
+  const context: any = {subscriptions: [], extensionUri:{fsPath:resolve(__dirname, '../..')}, extensionPath:resolve(__dirname, '../..'),
     globalStorageUri:{fsPath:storage}, secrets:{onDidChange:() => disposable}, globalState:{get:() => undefined, update:async () => {}}};
   const auth: any = {session:async () => session, signIn:async () => session, accessToken:async () => 'test-token'};
   const requestedModes: string[] = [], errors: unknown[] = [], windows: JSDOM[] = [];
@@ -122,8 +122,7 @@ test('Instructor and Doubt Solver switch in one tab, preserve separate drafts an
       status:() => w.document.getElementById('status')!.textContent,
       type:(text: string) => { input.value = text; input.dispatchEvent(new w.Event('input')); },
       selectMode:(mode: string) => {
-        const picker = w.document.querySelector<HTMLSelectElement>('#workspace-mode')!;
-        picker.value = mode; picker.dispatchEvent(new w.Event('change'));
+        w.document.querySelector<HTMLButtonElement>(`#workspace-mode button[data-room="${mode}"]`)!.click();
       },
       openInInstructor:() => { w.document.querySelector<HTMLDetailsElement>('.workspace-menu')!.open = true; w.document.getElementById('doubt_solver')!.click(); }};
     mounted.set(panel, surface);

@@ -68,6 +68,11 @@ test('course screen gates claiming, preserves historical grades, escapes text an
   let html=courseGradeHtml('nonce',grade,[],'Offline',1);
   assert.match(html,/data-action="claim"[^>]*disabled/); assert.ok(!html.includes('<script>Python'));
   assert.match(html,/Sync pending results/); assert.match(html,/Keep practising/); assert.ok(!html.includes('Start final exam'));
+  const paused = {kind:'project' as const, id:'shelf-reading', title:'Shelf reading', score:null, passed:false, gradable:false};
+  const requirements = courseGradeHtml('nonce', {...grade, requirements:[paused, {...paused, id:'shelf', title:'Shelf capstone'}]}, [], '', 0);
+  assert.match(requirements, /Paused on desktop/);
+  assert.doesNotMatch(requirements, /data-action="project" data-id="shelf-reading"/);
+  assert.match(requirements, /data-action="project" data-id="shelf"/);
   html=courseGradeHtml('nonce',{...grade,eligible:true,certificate_id:'c'},[{id:'c',course_id:'python',course_title:'Python',recipient_name:'Learner',
     grade:'C',score:75,issued_at:'2026-11-10',revoked_at:null,policy_version:'coursework-v1'}],'',0);
   assert.match(html,/Grade C · 75\/100/); assert.ok(!html.includes('data-action="claim"'));

@@ -1,8 +1,7 @@
 import { AgentRoom, AgentGrant } from './agentRoom';
-import { NotebookAttachments } from './notebookAttachments';
 import { diagram } from './diagram';
 import { StudyCropSelector, uploadStudyCrop, type CropImage } from './studyCrop';
-import { bindComposer } from './composer';
+import { bindComposer, type LearnerMessage } from './composer';
 import { showStudyQuiz } from './studyQuiz';
 import { showStudyResponse } from './studyResponse';
 import 'katex/dist/katex.min.css';
@@ -21,8 +20,6 @@ const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as
 const btn = (id: string) => el<HTMLButtonElement>(id);
 const courses = btn('course'), chapters = el<HTMLSelectElement>('chapter');
 const questionField = el<HTMLTextAreaElement>('question');
-questionField.setAttribute('aria-label','Ask Study');
-questionField.rows=1;
 const studyDialog = el<HTMLDialogElement>('study-dialog');
 let choices: {id:string;title:string;chapters:{id:string;title:string}[]}[] = [];
 let courseId = '';
@@ -33,7 +30,7 @@ let atStart = true, atEnd = true;
 const post = (data: object) => host.postMessage({...data, documentKey});
 
 let roomReady=false, requestId='', deliveredQuiz='', responding=false;
-let submittedDraft='';
+let submitted: LearnerMessage | undefined;
 let exchange:HTMLElement|undefined;
 const writtenCards = new Set<string>();
 let action:StudyAction|undefined;
@@ -69,7 +66,11 @@ const agentRoom=new AgentRoom({
         exchange.append(card);
         if(studyDialog.open)card.querySelector('.study-your-turn')?.scrollIntoView({block:'start'});
       }
-      if(action==='ask'&&questionField.value===submittedDraft){questionField.value='';attachments.clear();}
+      if (action === 'ask' && submitted) {
+        if (questionField.value === submitted.text) questionField.value = '';
+        attachments.clear();
+        submitted = undefined;
+      }
       if(action!=='quiz')finishHelp();
     }else if(packet.method==='draw_svg'&&typeof packet.svg==='string'){
       exchange.insertAdjacentHTML('beforeend',diagram(packet.svg));
@@ -79,15 +80,25 @@ const agentRoom=new AgentRoom({
   state(state){responding=state==='thinking'||state==='speaking';controls();},
   error(message){roomReady=false;finishHelp(message);}
 });
-const attachments=new NotebookAttachments(el('attachments'),el('attachment-status'),controls);
+const dictation = window.installDictation?.(host, questionField, () => agentRoom.sound(false));
+const composer = bindComposer(el<HTMLFormElement>('ask'), message => help('ask', undefined, message), {
+  changed: controls,
+  stopResponse() {
+    if (!busy && !responding) return false;
+    disconnectAgent(); finishHelp('Response stopped.'); return true;
+  },
+});
+const {attachments} = composer;
 btn('send').querySelector('svg')!.insertAdjacentHTML('beforeend','<rect class="stop-icon" x="7" y="7" width="10" height="10" rx="1"/>');
-function disconnectAgent(){requestId='';roomReady=false;responding=false;void agentRoom.close();grantWait?.reject(new Error('The Study chapter changed.'));grantWait=undefined;clearTimeout(responseTimer);}
+function disconnectAgent(){submitted=undefined;requestId='';roomReady=false;responding=false;void agentRoom.close();grantWait?.reject(new Error('The Study chapter changed.'));grantWait=undefined;clearTimeout(responseTimer);}
 function syncSound(){agentRoom.sound(visible&&studyDialog.open&&btn('sound').getAttribute('aria-pressed')==='true');}
 function openStudy(requestedAction?:StudyAction){
   const target = requestedAction ?? screen;
   if(studyDialog.open)screenScroll=el('study-content').scrollTop;
   if(target !== screen) {
     // Detach the entire view so quiz choices, folds, references and scroll state survive.
+    composer.cancelCapture();
+    dictation?.cancel();
     disconnectAgent();
     screens.set(screen,{draft:questionField.value,nodes:Array.from(el('study-content').childNodes),scroll:screenScroll,attachments:attachments.snapshot()});
     const saved = screens.get(target);
@@ -106,8 +117,9 @@ function openStudy(requestedAction?:StudyAction){
 const contentTemplate = el('study-content').cloneNode(true) as HTMLElement;
 function freshContent(): Node[] { return Array.from(contentTemplate.cloneNode(true).childNodes); }
 function closeStudy(){
+  composer.cancelCapture();
   screenScroll=el('study-content').scrollTop;
-  studyDialog.close();syncSound();
+  dictation?.setScope(''); studyDialog.close();syncSound();
   if(busy){disconnectAgent();finishHelp('Request stopped. Ask again when ready.');}
 }
 btn('open-study').onclick=()=>{openStudy('ask');questionField.focus();};
@@ -138,8 +150,9 @@ async function connectAgent(currentRequest:string){
 }
 function controls() {
   const working=busy||responding;
+  dictation?.setScope(ai && !busy && visible && studyDialog.open ? documentKey : '');
   for (const name of ['summary','quiz']) btn(name).disabled = !source || !ai || busy;
-  btn('send').disabled = !source || !ai || (!working&&!questionField.value.trim()&&!attachments.count);
+  composer.setAvailable(visible && studyDialog.open && !!source && ai, working);
   btn('send').dataset.working=String(working);
   btn('send').title=working?'Stop response':'Send message';
   btn('send').setAttribute('aria-label',working?'Stop response':'Send message');
@@ -147,9 +160,6 @@ function controls() {
   btn('clear-question').hidden = !questionField.value;
   btn('clear-question').disabled = busy;
   el('send-label').textContent = working ? 'Stop response' : 'Send message';
-  attachments.lock(busy);
-  for(const id of ['attach-images','attach-pdfs'])btn(id).disabled=!source||!ai||busy;
-  el('attachment-menu').setAttribute('aria-disabled',String(!source||!ai||busy));
   el('study-content').setAttribute('aria-busy',String(busy));
   el('ask').setAttribute('aria-busy',String(busy));
   btn('open-study').disabled = !source || !ai;
@@ -164,6 +174,7 @@ function controls() {
   btn('sign-in').hidden = signedIn;
 }
 function clear() {
+  composer.cancelCapture();
   exchange=undefined;
   screens.clear();screen='ask';screenScroll=0;action=undefined;
   attachments.clear();
@@ -220,15 +231,16 @@ btn('sign-in').onclick = () => host.postMessage({type:'signIn'});
     el('loading').style.display = 'flex';
   }
 };
-async function help(requestedAction: StudyAction,image?:CropImage) {
+async function help(requestedAction: StudyAction,image?:CropImage, message?:LearnerMessage) {
   if (!source || !ai || busy || (requestedAction === 'explain' && !selected && !image)) return;
-  const draft = questionField.value, question = draft.trim() || (attachments.count?'Help me understand the attached material.':'');
+  const files = message?.attachments ?? [];
+  const question = message?.text.trim() || (files.length ? 'Help me understand the attached material.' : '');
   if (requestedAction === 'ask' && !question) return;
   openStudy(requestedAction === 'ask' ? screen : requestedAction);
   action=requestedAction;
   const key=documentKey;
   busy=true;requestId=crypto.randomUUID();writtenCards.clear();controls();
-  submittedDraft=draft;
+  submitted=message;
   const currentRequest=requestId;
   if(image){el('help-title').textContent='Explain selected area';el('crop-reference').hidden=false;el<HTMLImageElement>('crop-reference-image').src=image.dataUrl;}
   else if(action!=='ask'){el('crop-reference').hidden=true;el<HTMLImageElement>('crop-reference-image').removeAttribute('src');}
@@ -241,7 +253,7 @@ async function help(requestedAction: StudyAction,image?:CropImage) {
   exchange.dataset.requestId=currentRequest;
   if(action==='ask') {
     const message=document.createElement('p');message.className='study-question';
-    message.textContent=[question,...attachments.names].join('\n');exchange.append(message);
+    message.textContent=[question,...files.map(file => file.name)].join('\n');exchange.append(message);
   }
   el('response').append(exchange);
   if(action==='ask')exchange.scrollIntoView({block:'start'});
@@ -256,9 +268,9 @@ async function help(requestedAction: StudyAction,image?:CropImage) {
       if(key!==documentKey||currentRequest!==requestId||!source)return;
     }
     let uploaded:{image_submission_id:string;image_count:number}|undefined;
-    if(action==='ask'&&attachments.count){
+    if(action==='ask'&&files.length){
       el('help-status').textContent='Sending attachments…';
-      const sent=await agentRoom.upload(attachments,question,()=>key===documentKey&&currentRequest===requestId);
+      const sent=await agentRoom.upload(attachments,files,question,()=>key===documentKey&&currentRequest===requestId);
       uploaded={image_submission_id:sent.image_submission_id,image_count:Number(sent.image_count)};
       if(key!==documentKey||currentRequest!==requestId||!source)return;
     }
@@ -277,16 +289,6 @@ for (const action of ['explain','summary','quiz'] as const) btn(action).onclick 
   openStudy(action);
   if(action==='explain'||(action==='quiz'?!el('questions').hasChildNodes():!el('response').querySelector('.study-answer-card')))void help(action);
 };
-bindComposer(el<HTMLFormElement>('ask'),questionField,()=>{
-  if(busy||responding){disconnectAgent();finishHelp('Response stopped.');return;}
-  return help('ask');
-});
-const attachmentMenu=el<HTMLDetailsElement>('attachment-menu');
-attachmentMenu.querySelector('summary')!.onclick=event=>{if(!source||!ai||busy)event.preventDefault();};
-for(const [id,pdf] of [['attach-images',false],['attach-pdfs',true]] as const)btn(id).onclick=()=>{attachmentMenu.open=false;attachments.choose(pdf);};
-document.addEventListener('click',event=>{if(!attachmentMenu.contains(event.target as Node))attachmentMenu.open=false;});
-attachmentMenu.addEventListener('keydown',event=>{if(event.key==='Escape'){event.stopPropagation();attachmentMenu.open=false;attachmentMenu.querySelector('summary')!.focus();}});
-questionField.addEventListener('paste',event=>{const files=Array.from(event.clipboardData?.files??[]);if(files.length){event.preventDefault();attachments.add(files);}});
 questionField.oninput=controls;
 btn('clear-question').onclick=()=>{questionField.value='';controls();questionField.focus();};
 function showReply(reply: StudyReply) {
@@ -295,7 +297,7 @@ function showReply(reply: StudyReply) {
 }
 window.addEventListener('message', async event => {
   const message = event.data;
-  if(message.type==='visibility'){visible=!!message.visible;syncSound();if(!visible){cropSelector.reset();if(busy){disconnectAgent();finishHelp('Request stopped when Study was hidden. Ask again when ready.');}}return;}
+  if(message.type==='visibility'){visible=!!message.visible;controls();syncSound();if(!visible){cropSelector.reset();if(busy){disconnectAgent();finishHelp('Request stopped when Study was hidden. Ask again when ready.');}}return;}
   if(message.type==='studyGrant'&&message.documentKey===documentKey&&message.requestId===requestId){grantWait?.resolve(message.grant);grantWait=undefined;return;}
   if(message.type==='helpError'&&message.documentKey===documentKey&&message.requestId===requestId){grantWait?.reject(new Error(message.message));grantWait=undefined;finishHelp(message.message);return;}
   if (message.type === 'catalog') {

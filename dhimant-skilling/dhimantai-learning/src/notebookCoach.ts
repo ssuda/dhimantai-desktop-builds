@@ -6,6 +6,9 @@ import { Api } from './api';
 import { Auth } from './auth';
 import { Environment, EnvironmentName } from './environments';
 import { contextFor, jupyterMetadata, learnerCell } from './notebookCommands';
+import { bindDictation } from './dictation';
+import { messageComposer } from './learningComposer';
+import { attachmentNote, practiceAttachments } from './practiceAttachments';
 import { CoachAudio, audioControls, audioPolicy } from './coachAudio';
 import { CoachSurface, CoachRenderer } from './coachSurface';
 import { comparePrediction, predictionFeedback } from './learningLoop';
@@ -173,8 +176,8 @@ export class NotebookCoach implements vscode.Disposable {
     const nonce = randomBytes(16).toString('base64');
     const asset = (file: string) => webview.asWebviewUri(vscode.Uri.joinPath(this.media, file));
     webview.html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; connect-src ${audioPolicy}; media-src blob:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource}">
-<link rel="stylesheet" href="${asset('coachMarkdown.css')}"><link rel="stylesheet" href="${asset('coach.css')}"></head><body>${notebookRuntimeControls(webview, this.media, nonce)}<main class="notebook-coach"><h2>dhimantAI Instructor</h2>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; connect-src ${audioPolicy}; media-src blob:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource}">
+<link rel="stylesheet" href="${asset('coachMarkdown.css')}"><link rel="stylesheet" href="${asset('coach.css')}"><link rel="stylesheet" href="${asset('learning-room/composer.css')}"></head><body>${notebookRuntimeControls(webview, this.media, nonce)}<main class="notebook-coach"><h2>dhimantAI Instructor</h2>
 <details><summary>Notebook context and tools</summary><div class="notebook-tools"><div id="question" class="markdown"></div><p id="cell"></p>
 <p id="run-status" role="status"></p><p id="run-hint" class="plain-text"></p><details id="kernel-help" hidden><summary>Python kernel setup</summary><p>${kernelSetup}</p></details>
 <details><summary>Predict the output of your next run</summary><p>Include every output line in order, including labels. Press Enter between lines.</p><label>Expected text output <textarea maxlength="600" id="prediction"></textarea></label><button id="save-prediction">Save prediction for next Run Cell</button></details>
@@ -183,17 +186,21 @@ export class NotebookCoach implements vscode.Disposable {
 <p id="empty-chat" class="empty">Ask about your code, an error, or an idea. Instructor uses the selected cell and its latest run when you ask.</p>
 <div id="conversation" class="log" role="log" aria-label="Conversation with Instructor" aria-live="polite" aria-relevant="additions"></div>
 <p id="turn-status" role="status"></p>
-<div class="coach-composer"><textarea maxlength="600" id="message" aria-label="Your question, prediction or explanation" placeholder="Message…" rows="1"></textarea>
-<div class="composer-actions">${audioControls(webview, this.media, nonce)}<button id="ask" class="composer-send" title="Ask Instructor" aria-label="Ask Instructor"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></div></div>
-</main><script nonce="${nonce}" src="${asset('coachMarkdown.js')}"></script><script nonce="${nonce}" src="${asset('notebookCoach.js')}"></script></body></html>`;
-    return vscode.Disposable.from(this.surface.bindRuntime(webview), this.audio.bind(webview, () => this.spokenReply()), webview.onDidReceiveMessage(m => {
+${messageComposer({assistant:'Instructor', maxlength:600, sendId:'ask', audio:audioControls(webview, this.media, nonce), camera:vscode.env.appName === 'dhimantAI'})}</main><script nonce="${nonce}" src="${asset('dictation.js')}"></script><script nonce="${nonce}" src="${asset('coachMarkdown.js')}"></script><script nonce="${nonce}" src="${asset('learning-room/composer.js')}"></script><script nonce="${nonce}" src="${asset('notebookCoach.js')}"></script></body></html>`;
+    const dictation = bindDictation(webview, () => {
+      const target = this.selection(), account = this.account;
+      if (!target || !account || !this.surface.visible || !enabled()) return;
+      const name = target.link.environment, service = () => this.service(name);
+      return {key:this.conversation.id, api:new Api(new Auth(this.secrets, () => name, service), service, account)};
+    });
+    return vscode.Disposable.from(dictation, this.surface.bindRuntime(webview), this.audio.bind(webview, () => this.spokenReply()), webview.onDidReceiveMessage(m => {
       if (m?.type === 'ready') this.refresh();
       if (m?.type === 'wrapSettings') void vscode.commands.executeCommand('workbench.action.openSettings', '@id:notebook.output.wordWrap');
       if (m?.type === 'predict' && m.revision === this.revision && typeof m.text === 'string') this.predict(m.text);
       if (m?.type === 'newChat' && m.revision === this.revision && m.conversationId === this.conversation.id) { this.startNewChat(); return; }
       if (m?.type !== 'ask') return;
       this.refresh();
-      if (m.revision === this.revision && typeof m.message === 'string' && m.message.trim()) void this.ask('guide', m.message);
+      if (m.revision === this.revision && typeof m.message === 'string' && (m.message.trim() || m.attachments?.length)) void this.ask('guide', m.message, m.attachments);
     }));
   };
 
@@ -287,12 +294,12 @@ export class NotebookCoach implements vscode.Disposable {
     void webview.postMessage({ audioId: this.spokenReply()?.id ?? null, revision: this.revision, question: target?.link.question ?? '',
       cell: target ? `${basename(target.cell.notebook.uri.fsPath)} · Cell ${target.cell.index + 1} · ${target.link.environment} · ${this.account === undefined ? 'Checking sign-in…' : this.account ? 'Signed in' : 'Sign in to ask'}` : 'Select a code cell.',
       python, runStatus: pending && pending.runStart === undefined ? 'Prediction saved. Use Run Cell to check it.' : runStatus,
-      runHint: hint, conversationId: this.conversation.id, messages: enabled() && this.account !== undefined ? this.conversation.messages : [],
+      runHint: hint, canDictate: !!this.account && !!target && enabled(), conversationId: this.conversation.id, messages: enabled() && this.account !== undefined ? this.conversation.messages : [],
       turnStatus: !enabled() ? 'AI assistance is off in dhimantAI settings.' : this.busy ? 'Waiting for an Instructor reply…' : '',
       busy: this.busy || !target || !enabled() });
   }
 
-  async ask(stage: Stage, message: string) {
+  async ask(stage: Stage, message: string, attached?: unknown) {
     this.refresh();
     const target = this.selection();
     if (!this.surface.webviewFor(this.render) || !target || this.busy || !enabled()) return;
@@ -313,7 +320,15 @@ export class NotebookCoach implements vscode.Disposable {
     const revision = this.revision;
     const current = () => revision === this.revision && !!this.surface.webviewFor(this.render) && enabled();
     message = message.slice(0, 600);
-    let promptId = addMessage('learner', message || 'Help me with this cell.', `Cell ${cell.index + 1}`);
+    let files;
+    try { files = practiceAttachments(attached); }
+    catch (error) {
+      addMessage('status', error instanceof Error ? error.message : 'Could not read the attachments.');
+      this.refresh(); return;
+    }
+    const question = message.trim() || (files.length ? 'Help me understand the attached material.' : 'Help me with this cell.');
+    const display = [question, attachmentNote(files)].filter(Boolean).join('\n');
+    let promptId = addMessage('learner', display, `Cell ${cell.index + 1}`);
     this.busy = true;
     this.refresh();
     void this.surface.webviewFor(this.render)?.postMessage({type: 'accepted', revision, message});
@@ -326,7 +341,7 @@ export class NotebookCoach implements vscode.Disposable {
       if (!session) { addMessage('status', 'Sign in to ask Instructor, then send your question again.'); return; }
       conversation.forAccount(session.user.id);
       this.account = session.user.id;
-      if (!conversation.messages.some(item => item.id === promptId)) promptId = addMessage('learner', message || 'Help me with this cell.', `Cell ${cell.index + 1}`);
+      if (!conversation.messages.some(item => item.id === promptId)) promptId = addMessage('learner', display, `Cell ${cell.index + 1}`);
       const history = conversation.history(cellId, revision, promptId);
       const usesCode = ['guide', 'steps', 'run', 'error', 'review', 'teach_back', ...skillStages].includes(stage);
       const source = usesCode ? cell.document.getText() : '';
@@ -339,7 +354,7 @@ export class NotebookCoach implements vscode.Disposable {
       const { error = '', ...observation } = run ?? {};
       const reply = await api.notebookCoach(link.path, { stage, language: link.language, question: link.question, source, ladder_token: ladderToken(link.path),
         ...(run && ['guide', 'run', 'error', 'review', 'teach_back', ...skillStages].includes(stage) ? { observed_run: observation } : {}),
-        error: ['guide', 'run', 'error', 'review', 'teach_back', ...skillStages].includes(stage) ? error : '', message, history,
+        error: ['guide', 'run', 'error', 'review', 'teach_back', ...skillStages].includes(stage) ? error : '', message:question, history, ...(files.length ? {attachments:files} : {}),
         previous: this.lastTurn?.stage === stage && this.lastTurn.account === session.user.id ? this.lastTurn.text : '' });
       if (!current() || (await auth.session())?.user.id !== session.user.id || !current()) return;
       rememberLadderToken(link.path, reply.ladder_token ?? ladderToken(link.path));

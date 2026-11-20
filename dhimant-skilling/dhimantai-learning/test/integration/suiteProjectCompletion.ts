@@ -21,9 +21,9 @@ export async function run() {
   const ext = vscode.extensions.getExtension<{auth: Auth; catalog: CourseCatalog; practice: PracticeBrowser; projectResults: ProjectResults}>('optficial.dhimantai-learning')!;
   const {auth, catalog, practice, projectResults} = await ext.activate();
   const root = vscode.workspace.workspaceFolders![0].uri.fsPath;
-  const originalEngine = CourseWorkspaces.prototype.forFile, originalRecord = CourseWorkspaces.prototype.recordFor;
+  const originalEngine = CourseWorkspaces.prototype.forProject, originalRecord = CourseWorkspaces.prototype.recordFor;
   const engine = new CourseEngine(process.env.DHIMANTAI_PROJECT_PODMAN!, process.env.DHIMANTAI_PROJECT_CONTAINER!, dirname(root));
-  CourseWorkspaces.prototype.forFile = async () => engine;
+  CourseWorkspaces.prototype.forProject = async () => engine;
   CourseWorkspaces.prototype.recordFor = () => ({root, course: 'Python', key: 'test', account: 'test', environment: 'staging'});
   await auth.signInWithPassword(EMAIL, PASSWORD);
   const account = (await auth.session())!.user.id;
@@ -140,6 +140,6 @@ export async function run() {
     const out = process.env.DHIMANTAI_UX_OUT;
     if (out) { mkdirSync(out, {recursive: true}); const screenshot = await cdp.send('Page.captureScreenshot', {format: 'png'}); writeFileSync(join(out, 'project-completion.png'), Buffer.from(screenshot.data, 'base64')); }
   } catch (error) { results.push({passed: false, error: String(error instanceof Error ? error.stack : error)}); throw error; }
-  finally { CourseWorkspaces.prototype.forFile = originalEngine; CourseWorkspaces.prototype.recordFor = originalRecord;
+  finally { CourseWorkspaces.prototype.forProject = originalEngine; CourseWorkspaces.prototype.recordFor = originalRecord;
     cdp.close(); writeFileSync(process.env.DHIMANTAI_TEST_RESULTS!, JSON.stringify(results, null, 2)); }
 }

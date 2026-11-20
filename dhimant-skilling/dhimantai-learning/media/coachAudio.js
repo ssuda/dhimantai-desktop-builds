@@ -38,35 +38,59 @@ window.installCoachAudio = api => {
   }
   function releaseMedia() {
     source?.disconnect(); source = undefined;
-    if (media) { media.pause(); media.srcObject = null; media.remove(); media = undefined; }
+    if (media?.srcObject) { media.pause(); media.srcObject = null; }
   }
   function stop() {
     ++attempt;
     clearTimeout(timer); clearTimeout(drainTimer);
     releaseMedia();
     buffer?.disconnect(); buffer = undefined;
-    const oldContext = context; context = undefined;
-    if (oldContext) { oldContext.onstatechange = null; void oldContext.close().catch(() => {}); }
+    if (context) context.onstatechange = null;
     const old = room; room = undefined;
     if (old) void old.disconnect().catch(() => {});
     retryPlay = undefined;
     paused = false;
   }
-  function turnOff() {
-    stop(); enabled = false; muted = false; failure = ''; phase = 'off'; status.textContent = 'Spoken explanations off'; draw();
+  function closeOutput() {
+    stop();
+    media?.remove(); media = undefined;
+    if (context) { void context.close().catch(() => {}); context = undefined; }
   }
-  function start() {
+  function enable(waitForNext = false) {
+    enabled = true;
+    start(waitForNext);
+    if (context) return;
+    try {
+      // Chromium grants playback to the element and context used during the gesture.
+      // Keep them for subsequent replies while releasing each finished remote track.
+      context = new AudioContext();
+      media = document.createElement('audio');
+      media.hidden = true; media.muted = true; media.volume = 0;
+      controls.append(media);
+      const silent = context.createMediaStreamDestination().stream;
+      media.srcObject = silent;
+      void context.resume().catch(() => {});
+      void media.play().catch(() => {}).finally(() => {
+        for (const track of silent.getTracks()) track.stop();
+      });
+    } catch { fail(); }
+  }
+  function turnOff() {
+    closeOutput(); enabled = false; muted = false; failure = ''; phase = 'off'; status.textContent = 'Spoken explanations off'; draw();
+  }
+  function start(waitForNext = false) {
     stop();
     failure = '';
-    phase = id ? 'connecting' : 'waiting';
-    status.textContent = id ? 'Connecting audio…' : 'Spoken explanations on · waiting for a reply';
+    const play = id && !waitForNext;
+    phase = play ? 'connecting' : 'waiting';
+    status.textContent = play ? 'Connecting audio…' : 'Spoken explanations on · waiting for a reply';
     draw();
-    if (!id) return;
+    if (!play) return;
     api.postMessage({type: 'audioJoin', id, attempt});
     timer = setTimeout(fail, 45000);
   }
   function fail(message = 'Spoken explanation unavailable. Select the speaker to retry.') {
-    stop(); enabled = false; phase = 'off';
+    closeOutput(); enabled = false; phase = 'off';
     failure = message; status.textContent = message;
     draw();
   }
@@ -77,7 +101,7 @@ window.installCoachAudio = api => {
     draw();
   };
   toggle.onclick = () => {
-    if (!enabled) { enabled = true; start(); return; }
+    if (!enabled) { enable(); return; }
     if (phase === 'blocked' || paused) { void retryPlay?.(); return; }
     if (phase === 'complete') { start(); return; }
     if (phase === 'playing' || phase === 'buffering' || phase === 'muted') {
@@ -112,11 +136,10 @@ window.installCoachAudio = api => {
       if (!active() || attached || peer.identity !== 'dhimantai-coach' || pub.trackName !== 'coach-reply' || track.kind !== 'audio') return;
       attached = true;
       try {
-        const audio = new AudioContext();
-        context = audio;
+        const audio = context;
         await audio.audioWorklet.addModule(controls.dataset.worklet);
         if (!active()) return;
-        if (speaker.deviceId !== 'default') {
+        if (speaker.deviceId !== 'default' && audio.sinkId !== speaker.deviceId) {
           await audio.setSinkId(speaker.deviceId);
           if (!active()) return;
         }
@@ -144,15 +167,14 @@ window.installCoachAudio = api => {
         // Chromium can supply only silence to Web Audio for an unattached remote
         // WebRTC track. Keep a silent media element playing to drive its receiver.
         // The worklet is the sole audible path, including while paused.
-        const element = document.createElement('audio');
-        element.hidden = true; element.muted = true; element.volume = 0; element.srcObject = stream;
-        controls.append(element); media = element;
+        const element = media;
+        element.srcObject = stream;
         source = audio.createMediaStreamSource(stream);
         source.connect(buffer);
         retryPlay = async () => {
           try {
             // Start both directly in the click handler when a gesture is needed.
-            await Promise.all([audio.resume(), media ? element.play() : Promise.resolve()]);
+            await Promise.all([audio.resume(), element.srcObject ? element.play() : Promise.resolve()]);
             if (!active()) return;
             if (audio.state !== 'running') throw new Error('Playback needs a gesture');
             paused = false;
@@ -225,5 +247,12 @@ window.installCoachAudio = api => {
   document.addEventListener('visibilitychange', () => { if (document.hidden && enabled) turnOff(); });
   window.addEventListener('pagehide', turnOff);
   draw();
-  return {reply: audioId => accept(typeof audioId === 'string' ? audioId : null)};
+  return {
+    reply: audioId => accept(typeof audioId === 'string' ? audioId : null),
+    // A microphone gesture interrupts this reply and opts into the next one.
+    listenForReply() {
+      enable(true);
+    },
+    turnOff,
+  };
 };

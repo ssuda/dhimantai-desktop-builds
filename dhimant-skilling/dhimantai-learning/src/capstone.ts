@@ -6,6 +6,7 @@ import { createProject, createReadingProject, createShelfProject } from './proje
 import { projectWorkspace } from './projectWorkspace';
 import { projectSetupError, validateProjectWorkspace } from './projectSetup';
 import { CATALOG_PROJECTS } from './catalogProjects';
+import { CODE_READING_PAUSED, CODE_READING_PROJECTS_ENABLED, desktopProjectEnabled } from './desktopFeatures';
 
 export async function openProject(context: vscode.ExtensionContext, title: string, destination: string, created: boolean) {
   const choice = await vscode.window.showInformationMessage(`${title} — ${created ? 'project created' : 'project ready'}`,
@@ -23,6 +24,10 @@ export async function openProject(context: vscode.ExtensionContext, title: strin
 
 export function registerCapstone(context: vscode.ExtensionContext) {
   return vscode.commands.registerCommand('dhimantai.startCapstone', async (target?: string) => {
+    if (target && (!desktopProjectEnabled(target) || (target === 'engineering-code-reading' && !CODE_READING_PROJECTS_ENABLED))) {
+      void vscode.window.showInformationMessage(CODE_READING_PAUSED);
+      return;
+    }
     const selected = CATALOG_PROJECTS.find(p => p.id === target);
     if (target && target !== 'engineering-code-reading' && !selected) return;
     const project = selected ?? await vscode.window.showQuickPick(CATALOG_PROJECTS
@@ -32,7 +37,7 @@ export function registerCapstone(context: vscode.ExtensionContext) {
     if (!project) return;
     let destination = '';
     try {
-      const parent = await vscode.commands.executeCommand<vscode.Uri>('dhimantai.setupCourse', {kind: 'bundledProject', projectId: project.id});
+      const parent = await vscode.commands.executeCommand<vscode.Uri>('dhimantai.projectFolder', {kind: 'bundledProject', projectId: project.id});
       if (!parent) return;
       destination = join(parent.fsPath, project.id === 'shelf' ? 'shelf-capstone' : project.id === 'course-agent' ? 'course-research-agent' : project.id);
       const media = vscode.Uri.joinPath(context.extensionUri, 'media').fsPath;

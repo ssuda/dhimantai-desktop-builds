@@ -73,15 +73,11 @@ test('certificate grade loading bounds concurrency, tolerates failures and stops
   assert.equal(calls,1);
 });
 
-test('the single-column notebook preserves drafts, keyboard focus and chapter navigation', async () => {
-  const dom=new JSDOM(`<select id="workspace-mode"></select><section id="tutor-lessons"><div id="lesson-list"><div class="lesson-outline"><button>First</button></div><div class="lesson-outline"><button aria-pressed="true">Second</button></div></div></section><div id="learning-document"><textarea id="code">print(1)</textarea><button id="previous-chapter"></button><footer id="message-bar"><textarea id="message">unfinished question</textarea></footer></div>`,{url:'https://workspace.test'});
+test('the notebook shortcut focuses the composer and preserves the editor and draft', async () => {
+  const dom=new JSDOM(`<div id="learning-document"><textarea id="code">print(1)</textarea><footer id="message-bar"><textarea id="message">unfinished question</textarea></footer></div>`,{url:'https://workspace.test'});
   const w=dom.window,doc=w.document;bindLearningWorkspace(doc);
   const input=doc.getElementById('message') as HTMLTextAreaElement,code=doc.getElementById('code');
   doc.dispatchEvent(new w.KeyboardEvent('keydown',{key:'a',altKey:true,shiftKey:true,bubbles:true}));
   assert.equal(doc.activeElement,input);assert.equal(input.value,'unfinished question');assert.equal(doc.getElementById('code'),code);
-  let clicked=false;doc.querySelector<HTMLButtonElement>('.lesson-outline button')!.onclick=()=>{clicked=true;};
-  doc.getElementById('previous-chapter')!.click();assert.equal(clicked,true);
-  doc.getElementById('tutor-lessons')!.hidden=true;await new Promise(r=>setTimeout(r,0));
-  assert.equal(doc.getElementById('previous-chapter')!.hidden,true);
   dom.window.close();
 });

@@ -108,7 +108,7 @@ export class PracticeCodeEditors {
     this.counter = Math.max(0, ...drafts.map(draft => Number(draft.snippet.slice(5))));
   }
   invalidateRuns() { for (const editor of this.editors) editor.invalidateRun(); }
-  restartRuntime() { for (const editor of this.editors) { editor.cancelPending(); editor.update(); } }
+  restartRuntime() { for (const editor of this.editors) { editor.cancelPending('Run this cell for a current result.'); editor.update(); } }
   add(body: HTMLElement, key: string, language = 'python', source = '') {
     const saved = this.restored.get(key);
     const editor = new PracticeCodeEditor(this, saved?.snippet ?? 'code-' + ++this.counter,
@@ -143,7 +143,17 @@ export class PracticeCodeEditors {
       const editor = saved ?? new PracticeCodeEditor(this, draft?.snippet ?? 'code-' + ++this.counter,
         codeLanguage(task.language)!, draft?.source ?? task.starter, task.question, task, key, draft);
       if (!saved) this.editors.push(editor);
-      body.append(editor.element);
+      const instructions = document.createElement('details');
+      instructions.className = 'exercise-instructions';
+      instructions.open = true;
+      const summary = document.createElement('summary');
+      summary.textContent = 'Exercise instructions';
+      instructions.append(summary, ...Array.from(body.childNodes));
+      const solution = document.createElement('div');
+      solution.className = 'exercise-solution';
+      solution.append(editor.element);
+      body.classList.add('exercise-workspace');
+      body.append(instructions, solution);
       return; // Public examples stay read-only; exactly one solution editor, even without a fence.
     }
     let index = 0;
@@ -196,6 +206,8 @@ class PracticeCodeEditor {
   private liveInput = document.createElement('input');
   private inputControls = document.createElement('div');
   private prediction = document.createElement('textarea');
+  private runPrediction = '';
+  private get predictionLabel() { return this.language === 'sql' ? 'Prediction (not executed)' : 'I expect it to print'; }
   private skipPrediction = -1;
   private resultBlock = document.createElement('section');
   private runTitle = document.createElement('strong');
@@ -252,7 +264,7 @@ class PracticeCodeEditor {
     this.languagePicker.value = language;
     this.languagePicker.title = task ? 'This exercise uses ' + codeLanguages[language] : 'Language used to edit and run this cell';
     this.languagePicker.onchange = () => this.setLanguage(this.languagePicker.value);
-    if (task) title.textContent = codeLanguages[language] + ' · ' + task.source;
+    if (task) title.textContent = 'Your solution';
     else title.append(this.languagePicker, ' · Code cell');
     const heading = document.createElement('div'); heading.className = 'practice-editor-heading';
     heading.append(title, this.resizeButton);
@@ -311,7 +323,7 @@ class PracticeCodeEditor {
     this.prediction.onfocus = () => this.owner.focus(this);
     // Predicting before running is the habit that turns runs into learning, so it stays in view above Run.
     const predictionLabel = document.createElement('label'); predictionLabel.className = 'predict-row';
-    predictionLabel.textContent = language === 'sql' ? 'Prediction (not executed)' : 'I expect it to print';
+    predictionLabel.textContent = this.predictionLabel;
     this.prediction.placeholder = 'Your prediction, before you run';
     predictionLabel.append(this.prediction);
     this.status.className = 'practice-status'; this.status.setAttribute('role', 'status');
@@ -367,7 +379,7 @@ class PracticeCodeEditor {
       useInput: stdin => {
         if (!this.current() || this.busy || this.toolBusy) return;
         this.input.value = stdin; this.changed(); this.input.closest('details')!.open = true;
-        this.input.focus(); this.status.textContent = 'Test input copied. Predict the result, then Run or Step through to investigate.';
+        this.input.focus(); this.status.textContent = `Test input copied. Enter your prediction in “${this.predictionLabel}”, then Run or Step through.`;
       },
       ask: (stage, message) => {
         if (!this.current() || this.busy || this.toolBusy || !this.owner.aiEnabled || !this.owner.hooks.tutor) return;
@@ -395,7 +407,7 @@ class PracticeCodeEditor {
     this.prediction.oninput = this.explanation.oninput = () => this.owner.hooks.changed?.();
     this.update();
   }
-  context() { return {snapshot:this.snapshot(), run:this.execution && observedRun(this.execution), prediction:this.prediction.value,
+  context() { return {snapshot:this.snapshot(), run:this.execution && observedRun(this.execution), prediction:this.execution ? this.runPrediction : this.prediction.value,
     focusLine:this.code.view.state.doc.lineAt(this.code.view.state.selection.main.head).number}; }
   focusLine(line: number) {
     if (!Number.isSafeInteger(line) || line < 1 || line > this.code.view.state.doc.lines) return;
@@ -422,15 +434,21 @@ class PracticeCodeEditor {
   }
   private async askTutor(stage?: SkillStage, skillMessage?: string, debuggerState?: DebugEvidence) {
     if (!this.owner.hooks.tutor) return;
-    const revision = this.revision;
+    const request = this.request;
     this.helped = true; this.owner.hooks.changed?.();
     if (this.attemptVariation) this.attemptVariation.assisted = true;
     try {
-      const ok = await this.owner.hooks.tutor(this.snapshot(), this.execution && observedRun(this.execution),
-        skillMessage || (this.busy === 'check' ? 'Review my current attempt using this run. Help me reason about what to try next.' : 'Explain what this code does, starting with the selected line.'),
-        this.prediction.value, stage, debuggerState);
-      if (this.revision === revision) this.status.textContent = ok ? `Request sent to ${this.assistant()}.` : `Your request was not sent. Ask ${this.assistant()} again.`;
-    } finally { if (this.revision === revision) { this.busy = undefined; this.update(); } }
+      const {snapshot, run, prediction} = this.context();
+      const ok = await this.owner.hooks.tutor(snapshot, run,
+        skillMessage || 'Explain what this code does, starting with the selected line.', prediction, stage, debuggerState);
+      if (this.request === request) this.status.textContent = ok ? `Request sent to ${this.assistant()}.` : `Your request was not sent. Ask ${this.assistant()} again.`;
+    } finally { if (this.request === request) { this.busy = undefined; this.update(); } }
+  }
+  private reviewRun() {
+    this.busy = 'coach';
+    this.status.textContent = `Asking ${this.assistant()} about this run…`;
+    this.update();
+    void this.askTutor(undefined, 'Review the result shown for this run and suggest one new case to test or one next debugging step.');
   }
   receiveDebug(revision:number,state:NativeDebugState) {
     this.nativeDebug.receive(revision,state);
@@ -507,7 +525,7 @@ class PracticeCodeEditor {
     this.language = language; this.languagePicker.value = language;
     this.code.setLanguage(language);
     this.element.setAttribute('aria-label', codeLanguages[language] + ' practice editor');
-    this.element.querySelector('.predict-row')!.firstChild!.textContent = language === 'sql' ? 'Prediction (not executed)' : 'I expect it to print';
+    this.element.querySelector('.predict-row')!.firstChild!.textContent = this.predictionLabel;
     this.changed();
     this.status.textContent = 'Cell language changed to ' + codeLanguages[language] + '. Run to see a current result.';
   }
@@ -542,6 +560,7 @@ class PracticeCodeEditor {
   private beginRun() {
     this.archiveResult();
     this.cleanRun = -1; this.execution = undefined;
+    this.runPrediction = this.prediction.value.trim();
     this.runTitle.textContent = `Live run · ${this.id} #${++this.runCount}`;
     this.runInput.textContent = runInputs(this.snapshot());
     this.runInput.hidden = !this.runInput.textContent;
@@ -553,7 +572,7 @@ class PracticeCodeEditor {
     this.archiveResult();
     this.owner.invalidateRuns();
     this.owner.hooks.changed?.();
-    this.status.textContent = 'Edited. Predict, then Run to see a current result.';
+    this.status.textContent = `Edited. Enter your prediction in “${this.predictionLabel}”, then Run.`;
     this.update();
     if (!this.current()) return;
     this.owner.hooks.post({type: 'codeChanged', attempt: this.born, ...this.snapshot()});
@@ -583,19 +602,24 @@ class PracticeCodeEditor {
     }
     if(!validCellInputs(this.snapshot())){this.status.textContent='Use at most 32 arguments and up to 1 MB of input files.';return;}
     this.owner.focus(this);
+    clearTimeout(this.guidanceTimer); clearTimeout(this.observationTimer);
+    if (action === 'check' && this.execution && this.owner.hooks.tutor) {
+      ++this.request;
+      this.reviewRun();
+      return;
+    }
     // Predict before Check, as in Practice. A second press skips, so it never blocks.
     if (action === 'check' && !this.prediction.value.trim() && this.skipPrediction !== this.revision) {
       this.skipPrediction = this.revision;
-      this.status.textContent = `Write your prediction before reviewing. Or press Review with ${this.assistant()} again to skip.`;
+      this.status.textContent = `Enter your prediction in “${this.predictionLabel}” before running, or press Review with ${this.assistant()} again to skip.`;
       this.prediction.focus();
       return;
     }
     if (action === 'run' && this.attemptVariation && !this.prediction.value.trim()) {
-      this.status.textContent = 'New input: write exactly what you expect your program to print, then Run.';
+      this.status.textContent = `Enter your prediction for the new input in “${this.predictionLabel}”, then Run.`;
       this.prediction.focus();
       return;
     }
-    clearTimeout(this.guidanceTimer); clearTimeout(this.observationTimer);
     this.busy = action; ++this.request;
     if (action === 'run' || action === 'check') this.beginRun();
     else { this.feedback.hidden = true; this.feedback.replaceChildren(); }
@@ -641,7 +665,7 @@ class PracticeCodeEditor {
         + (run.stderr ? '\n' + run.stderr : '') + (run.truncated ? '\nOutput was truncated.' : '');
       this.resultBlock.hidden = this.output.hidden = false;
       this.observe();
-      if (this.busy === 'check' && this.owner.hooks.tutor) { void this.askTutor(); return; }
+      if (this.busy === 'check' && this.owner.hooks.tutor) { this.reviewRun(); return; }
       if (this.busy === 'run') {
         this.busy = undefined;
         this.status.textContent = run.status==='cancelled' ? 'Stopped. You can edit or run another cell.'
@@ -735,7 +759,7 @@ class PracticeCodeEditor {
       || this.owner.tutorBusy || this.submitting || (this.submitted && this.task?.source !== 'Practice exercise') || this.task?.checkpoint_id !== this.owner.activeCheckpoint
       || !this.code.value.trim() || this.code.value.length > 12000;
     if (!active) { this.skills.invalidate(); this.dispose(); this.busy = undefined; this.status.textContent = 'This session is inactive.'; }
-    else if (this.status.textContent === 'This session is inactive.') this.status.textContent = 'Ready. Write code, predict what it prints, then Run.';
+    else if (this.status.textContent === 'This session is inactive.') this.status.textContent = `Ready. Enter your prediction in “${this.predictionLabel}”, then Run.`;
     if (!this.owner.aiEnabled || !this.owner.following) this.dispose();
     else if (!this.owner.stuckHints) clearTimeout(this.guidanceTimer);
   }
@@ -807,12 +831,12 @@ class PracticeCodeEditor {
     this.reflection.open = true; this.prediction.focus();
     const note = document.createElement('p'); note.textContent = variation.prompt;
     this.toolOutput.replaceChildren(note); this.toolOutput.hidden = false;
-    this.status.textContent = 'Predict exactly what your program prints for this input, then Run.';
+    this.status.textContent = `Enter your prediction for the new input in “${this.predictionLabel}”, then Run.`;
   }
   private finishVariation(run: Execution) {
     const current = this.attemptVariation!;
     this.attemptVariation = undefined;
-    const outcome = judgeVariation(current.variation, this.prediction.value, run, current.assisted);
+    const outcome = judgeVariation(current.variation, this.runPrediction, run, current.assisted);
     const title = document.createElement('strong');
     title.textContent = outcome.prediction.exact && outcome.clean && !current.assisted ? 'You predicted it exactly, on your own.' : 'Not quite yet.';
     const detail = document.createElement('p');
@@ -822,11 +846,11 @@ class PracticeCodeEditor {
     restore.onclick = () => { this.input.value = current.previousStdin; this.changed(); };
     this.toolOutput.replaceChildren(title, detail, restore); this.toolOutput.hidden = false;
   }
-  cancelPending() {
+  cancelPending(message = 'Assistance settings changed. Run again for a current result.') {
     this.skills.invalidate();
     ++this.request; this.busy = undefined; this.execution = undefined;
     this.resultBlock.hidden = this.output.hidden = this.feedback.hidden = true;
-    this.status.textContent = 'Assistance settings changed. Run again for a current result.';
+    this.status.textContent = message;
     this.dispose();
   }
   dispose() { clearTimeout(this.observationTimer); clearTimeout(this.guidanceTimer); }

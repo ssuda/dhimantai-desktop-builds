@@ -4,8 +4,10 @@ import {writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {buildSync} from 'esbuild';
 import * as vscode from 'vscode';
-import {learningComposer} from '../../src/learningComposer';
-import {connect} from './suiteStudy';
+import {notebookMessageBar} from '../../src/learningComposer';
+import {connect, submitNotebookMessage} from './suiteNotebookCoachHistory';
+import {EMAIL, PASSWORD} from './contractServer';
+import type {Auth} from '../../src/auth';
 
 export async function run() {
   const panel=vscode.window.createWebviewPanel('dhimantai.composerShortcut','Composer keyboard check',vscode.ViewColumn.One,{enableScripts:true});
@@ -14,10 +16,9 @@ export async function run() {
     const field=document.getElementById('message'), form=document.getElementById('composer');
     window.probe={sent:[],forwarded:0};
     window.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey)window.probe.forwarded++;});
-    document.getElementById('send').disabled=false;
-    bindComposer(form,field,()=>{window.probe.sent.push(field.value);field.value='';});
+    bindComposer(form,message=>{window.probe.sent.push(message.text);field.value='';}).setAvailable(true);
   `},bundle:true,write:false,platform:'browser',format:'iife'}).outputFiles[0].text;
-  panel.webview.html=`<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-keyboard-check';"></head><body>${learningComposer('Instructor',false,'')}<script nonce="keyboard-check">${source}</script></body></html>`;
+  panel.webview.html=`<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-keyboard-check';"></head><body>${notebookMessageBar('Instructor',false,'')}<script nonce="keyboard-check">${source}</script></body></html>`;
   const cdp=await connect();
   const ui=(expression:string)=>cdp.webview(`d=>{if(!d.defaultView.probe)return null;return (${expression})(d);}`);
   const pause=()=>new Promise(r=>setTimeout(r,100));
@@ -43,6 +44,20 @@ export async function run() {
     const result=await ui('d=>d.defaultView.probe');
     assert.deepEqual(result.sent,[draft]);
     assert.equal(result.forwarded,0,'editing keys never reach the workbench forwarding listener');
+    const {auth} = await vscode.extensions.getExtension<{auth:Auth}>('optficial.dhimantai-learning')!.activate();
+    await auth.signInWithPassword(EMAIL, PASSWORD);
+    const code = new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'print(42)', 'python');
+    const notebook = await vscode.workspace.openNotebookDocument('jupyter-notebook', new vscode.NotebookData([code]));
+    await vscode.window.showNotebookDocument(notebook);
+    const request = vscode.commands.executeCommand('dhimantai.notebook.ask');
+    await submitNotebookMessage(cdp, 'Explain this diagram.', true);
+    await request;
+    const state = await (await fetch(process.env.DHIMANTAI_TEST_SERVER + '/__state')).json() as any;
+    assert.equal(state.coach.length,1, JSON.stringify(notebook.getCells().map(c => c.document.getText())));
+    assert.equal(state.coach[0].source,'print(42)');
+    assert.equal(state.coach[0].message,'Explain this diagram.');
+    assert.equal(state.coach[0].attachments[0].name,'error.png');
+    assert.ok(notebook.getCells().some(cell => cell.document.getText().includes('Check which name this line reads.')));
     writeFileSync(process.env.DHIMANTAI_TEST_RESULTS!,JSON.stringify({passed:true,vscode:vscode.version,platform:process.platform,...result},null,2));
   } finally {cdp.close();panel.dispose();}
 }

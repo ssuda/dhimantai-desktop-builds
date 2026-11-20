@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type { Auth } from '../../src/auth';
 import { mirrorFolder } from '../../src/cellMirror';
+import { connect, submitNotebookMessage } from './suiteNotebookCoachHistory';
 import { cellCompletions } from '../../src/cellCompletion';
 import { jupyterMetadata } from '../../src/notebookCommands';
 import { openPracticeFile } from '../../src/practiceInNotebook';
@@ -23,7 +24,6 @@ export async function run() {
   const state = async () => (await fetch(`${process.env.DHIMANTAI_TEST_SERVER}/__state`)).json() as Promise<any>;
   const {auth} = await vscode.extensions.getExtension<{auth: Auth}>('optficial.dhimantai-learning')!.activate();
   await auth.signInWithPassword(EMAIL, PASSWORD);
-  await vscode.workspace.getConfiguration('dhimantai').update('courseContainers', false, vscode.ConfigurationTarget.Global);
   const account = (await auth.session())!.user.id;
   const role = (cell: vscode.NotebookCell) => cell.metadata?.metadata?.dhimantai_practice_role;
   const until = async (test: () => boolean, ms = 8000) => {
@@ -87,31 +87,18 @@ export async function run() {
       assert.match(turns.at(-2)!.document.getText(), /Review my code against the task/);
       assert.match(turns.at(-1)!.document.getText(), /Code review/);
     });
-    await check('Ask Instructor takes a photo through the paperclip and sends it with the question', async () => {
-      const photo = vscode.Uri.joinPath(notebook.uri, '..', 'error.png');
-      await vscode.workspace.fs.writeFile(photo, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
-      const window = vscode.window as any, original = {box: window.createInputBox, open: window.showOpenDialog};
-      window.showOpenDialog = async () => [photo];
-      // A stand-in input box: the learner clicks the paperclip, then types a question and presses Enter.
-      window.createInputBox = () => {
-        const on: Record<string, (...args: any[]) => any> = {}, listen = (name: string) => (f: any) => { on[name] = f; return {dispose() {}}; };
-        let shown = false;
-        const box: any = {value: '', buttons: [], dispose() {}, hide() { on.hide?.(); },
-          onDidChangeValue: listen('change'), onDidTriggerButton: listen('button'), onDidAccept: listen('accept'), onDidHide: listen('hide'),
-          show() {
-            if (shown) return; shown = true;
-            setTimeout(async () => { await on.button(box.buttons[0]); box.value = 'Why does it say this?'; on.accept(); });
-          }};
-        return box;
-      };
+    await check('Ask Instructor submits a photo and text from the shared notebook composer', async () => {
+      const cdp = await connect();
       try {
         const before = (await state()).coach.length;
-        await vscode.commands.executeCommand('dhimantai.practice.ask');
-        const sent = (await state()).coach.slice(before);
-        assert.equal(sent.length, 1);assert.equal(sent[0].message, 'Why does it say this?');
-        assert.deepEqual(sent[0].attachments.map((a: any) => [a.name, a.type]), [['error.png', 'image/png']]);
+        const asking = vscode.commands.executeCommand('dhimantai.practice.ask');
+        await submitNotebookMessage(cdp, 'Why does it say this?', true);
+        await asking;
+        const requests = (await state()).coach.slice(before);
+        assert.equal(requests.length, 1); assert.equal(requests[0].message, 'Why does it say this?');
+        assert.deepEqual(requests[0].attachments.map((a: any) => [a.name, a.type]), [['error.png', 'image/png']]);
         assert.ok(notebook.getCells().some(c => role(c) === 'tutor' && /Attached: error\.png/.test(c.document.getText())));
-      } finally { window.createInputBox = original.box; window.showOpenDialog = original.open; }
+      } finally { cdp.close(); }
     });
     await check('sample tests run against the code cells and their results replace one results cell', async () => {
       await vscode.commands.executeCommand('dhimantai.practice.check');

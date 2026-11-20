@@ -36,7 +36,7 @@ export function registerNotebookSubmission(context: vscode.ExtensionContext, _te
     void vscode.commands.executeCommand('setContext', 'dhimantai.notebookSubmitting', false);
   };
   const retired = () => vscode.window.showInformationMessage(
-    'Code transfer and server submission are retired. Run and save this notebook in VS Code. Return to DhimantAI and attach your file for live feedback; it will not be stored or executed there.');
+    'Code transfer and server submission are retired. Run and save this notebook in VS Code. Return to dhimantAI and attach your file for live feedback; it will not be stored or executed there.');
   context.subscriptions.push(view,
     vscode.window.onDidChangeActiveNotebookEditor(update),
     vscode.workspace.onDidChangeNotebookDocument(update),

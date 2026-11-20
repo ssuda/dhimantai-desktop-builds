@@ -253,7 +253,7 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     } catch (error) {
       if (sequence !== this.sequence) return [];
       const message = !node && error instanceof ApiError && [404, 410].includes(error.status)
-        ? 'Practice browsing is unavailable on this service. Check the DhimantAI environment and backend version.'
+        ? 'Practice browsing is unavailable on this service. Check the dhimantAI environment and backend version.'
         : error instanceof Error ? error.message : 'Could not load Practice.';
       // An ended access period is bought again from the catalog.
       const expired = error instanceof ApiError && error.status === 403;
@@ -328,7 +328,18 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     return {...scope, course: selected.label};
   }
 
+  async projectFolder(target: WorkstationTarget) {
+    const scope = await this.workstationScope(target);
+    if (scope) return this.containers!.courseFolder(scope);
+  }
+
   async setupCourse(target?: WorkstationTarget) {
+    const uri = target instanceof vscode.Uri ? target : !target ? vscode.window.activeTextEditor?.document.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri : undefined;
+    const project = uri && await this.containers?.projectAt(uri);
+    if (project) {
+      await this.containers!.forProject(project.root,project.curriculum);
+      return vscode.Uri.file(project.root);
+    }
     const scope = await this.workstationScope(target);
     if (!scope) return;
     const engine = await this.containers!.setup(scope);
@@ -344,6 +355,8 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
   }
 
   async courseTerminalOptions(target?: vscode.Uri) {
+    const active = target ?? vscode.window.activeTextEditor?.document.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (active && await this.containers?.projectAt(active)) return this.containers!.terminalOptions(active);
     const scope = await this.workstationScope(target);
     if (!scope) return;
     const root = await this.containers!.courseFolder(scope);
@@ -400,7 +413,7 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     const scope = {account, environment: this.environment()};
     const metadata = jupyterMetadata(doc);
     if (metadata.dhimantai_coach?.environment && metadata.dhimantai_coach.environment !== scope.environment)
-      throw new Error('Select the same DhimantAI environment as this notebook before opening it in a course.');
+      throw new Error('Select the same dhimantAI environment as this notebook before opening it in a course.');
     const {courses, languages} = await this.scopedApi(scope).practiceCatalog();
     const language = metadata.kernelspec?.language;
     if (!languages.some(l => l.id === language)) throw new Error('This notebook language is unavailable in the course runtime.');
@@ -433,7 +446,7 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     await this.requireScope(node);
     if (node.chapter.locked) { await vscode.commands.executeCommand('dhimantai.pricing'); return; }
     if (!vscode.workspace.getConfiguration('dhimantai').get<boolean>('aiAssistance', true)) {
-      throw new Error('Turn on AI assistance in DhimantAI settings to generate an exercise.');
+      throw new Error('Turn on AI assistance in dhimantAI settings to generate an exercise.');
     }
     const language = await vscode.window.showQuickPick(node.languages.map(l => ({label: l.name, id: l.id})),
       { title: node.chapter.name, placeHolder: 'Choose the programming language' });

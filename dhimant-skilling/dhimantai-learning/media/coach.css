@@ -53,7 +53,7 @@ button { font: inherit; border: none; border-radius: 3px; padding: 4px 10px; cur
 button:hover { background: var(--vscode-button-hoverBackground); }
 button:disabled { opacity: 0.5; cursor: default; }
 button:focus-visible, a:focus-visible, textarea:focus-visible, input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
-button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
+button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border: 1px solid var(--vscode-button-border,var(--vscode-contrastBorder,transparent)); }
 button.primary { font-weight: 600; }
 button.icon { background: transparent; color: var(--vscode-foreground); font-size: 1.2em; line-height: 1; padding: 2px 8px; }
 button.icon:hover, button.link:hover { background: var(--vscode-list-hoverBackground); }
@@ -133,13 +133,6 @@ table.vars tr.changed { background: var(--vscode-editor-findMatchHighlightBackgr
 
 #coach-audio { display: flex; align-items: center; gap: 4px; padding: 0; }
 #coach-audio[hidden], #coach-audio #audio-help { display: none; }
-.coach-composer { display: flex; align-items: center; min-width: 0; margin-top: 8px; padding: 6px; border-radius: 22px; border: 1px solid var(--vscode-input-border, #8883); background: var(--vscode-input-background); box-shadow: 0 3px 12px #0000000a; }
-.coach-composer:focus-within { border-color: var(--vscode-focusBorder); }
-.coach-composer textarea, .notebook-coach .coach-composer textarea { display: block; flex: 1; min-width: 40px; width: 100%; min-height: 44px; max-height: 100px; padding: 12px 8px; border: 0; background: transparent; outline: none; resize: none; }
-.composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-.coach-composer .audio-picker { top: auto; bottom: calc(100% + 8px); left: auto; right: 0; }
-.composer-send { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px; padding: 10px; border-radius: 50%; font-size: 24px; line-height: 1; }
-.composer-send svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .notebook-coach { display: grid; grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; gap: 12px; padding: 12px 0; }
 .notebook-coach h2 { margin: 0; font-size: 1.2em; }
 .notebook-coach label { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
@@ -156,4 +149,4 @@ table.vars tr.changed { background: var(--vscode-editor-findMatchHighlightBackgr
 .notebook-coach .message-label { font-weight: 600; margin-bottom: 4px; }
 .notebook-coach .message-context { color: var(--vscode-descriptionForeground); font-size: 0.9em; margin-bottom: 4px; }
 .notebook-coach .msg.status { padding: 8px; border-left: 2px solid var(--vscode-editorWarning-foreground); }
-.notebook-coach .coach-composer { position: sticky; bottom: 8px; }
+.notebook-coach #composer { position: sticky; bottom: 8px; }

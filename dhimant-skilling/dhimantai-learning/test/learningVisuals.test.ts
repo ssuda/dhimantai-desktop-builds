@@ -1,3 +1,4 @@
+import { notebookMessageBar } from '../src/learningComposer';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -112,7 +113,7 @@ test('SVGs preserve portrait, landscape and small intrinsic dimensions and suppo
 });
 
 test('Instructor receives textbook image packets beside explanations and restores them from saved notebooks', async () => {
-  const dom = new JSDOM('<!doctype html><button id="wide"></button><button id="latest"></button><button id="tutor"></button><button id="doubt_solver"></button><button id="end"></button><button id="sound"></button><span id="status"></span><input id="follow-code" type="checkbox"><input id="stuck-hints" type="checkbox"><small id="code-observer-status"></small><main id="feed"></main><form id="composer"><textarea id="message"></textarea><button id="send"></button><button id="teach-back"></button><button id="video"></button></form>',
+  const dom = new JSDOM('<!doctype html><button id="wide"></button><button id="latest"></button><button id="tutor"></button><button id="doubt_solver"></button><button id="end"></button><span id="status"></span><input id="follow-code" type="checkbox"><input id="stuck-hints" type="checkbox"><small id="code-observer-status"></small><main id="feed"></main>' + notebookMessageBar('Instructor', false, '<button type="button" id="sound"></button>'),
     {runScripts:'outside-only',url:'https://webview.example',pretendToBeVisual:true});
   const w = dom.window, sent: any[] = [], rooms: Room[] = [];
   const agent = {identity:'worker',isAgent:true,trackPublications:new Map()};

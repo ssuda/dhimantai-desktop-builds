@@ -1,3 +1,4 @@
+import { notebookMessageBar } from '../src/learningComposer';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -81,7 +82,7 @@ test('speaker picker switches outputs, retains the prior selection on failure, a
 });
 
 test('learning room mutes locally, remembers each agent, and applies the chosen output to new sessions', async () => {
-  const dom = new JSDOM('<button id="wide"></button><button id="latest"></button><button id="tutor"></button><button id="doubt_solver"></button><button id="end" disabled></button><button id="sound"></button><span id="status"></span><input id="follow-code"><input id="stuck-hints"><small id="code-observer-status"></small><main id="feed"></main><form id="composer"><textarea id="message"></textarea><button id="send"></button><button id="teach-back"></button><button id="video"></button></form>',
+  const dom = new JSDOM('<button id="wide"></button><button id="latest"></button><button id="tutor"></button><button id="doubt_solver"></button><button id="end" disabled></button><span id="status"></span><input id="follow-code"><input id="stuck-hints"><small id="code-observer-status"></small><main id="feed"></main>' + notebookMessageBar('Instructor', false, '<button type="button" id="sound"></button>'),
     {runScripts: 'outside-only', url: 'https://webview.example'});
   const w = dom.window, sent: any[] = [], rooms: Room[] = [], rpcs: string[] = [], speeds:number[] = [];
   w.document.body.insertAdjacentHTML('afterbegin', lessonPicker);

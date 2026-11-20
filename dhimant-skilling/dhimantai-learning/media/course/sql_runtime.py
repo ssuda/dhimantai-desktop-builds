@@ -170,15 +170,26 @@ def run_script(host, setup, source, check=''):
     """
     import psycopg
     import threading
-    connection = _connect(host, _database(host))
+    database = _database(host)
+    connection = _connect(host, database)
+    holder = None
     # A learner can change statement_timeout; the cancel from outside the session always applies.
     guard = threading.Timer(STATEMENT_TIMEOUT_MS / 1000 * 2, connection.cancel)
     guard.start()
     try:
         with connection.cursor() as cursor:
+            setup, marker, hold = setup.partition('\n-- @hold-in-second-session\n')
             if setup.strip():
                 try:
                     cursor.execute(setup)
+                except psycopg.Error as error:
+                    return 'setup_error', None, _error(error)
+            if marker:
+                try:
+                    holder = _connect(host, database)
+                    holder.autocommit = False
+                    holder.execute(hold)
+                    cursor.execute("SET lock_timeout = '750ms'")
                 except psycopg.Error as error:
                     return 'setup_error', None, _error(error)
             try:
@@ -195,6 +206,8 @@ def run_script(host, setup, source, check=''):
             return 'ok', sets, ''
     finally:
         guard.cancel()
+        if holder is not None:
+            holder.close()
         connection.close()
 
 

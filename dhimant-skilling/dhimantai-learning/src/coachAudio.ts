@@ -2,10 +2,10 @@ import * as vscode from 'vscode';
 import { Api } from './api';
 import { Auth } from './auth';
 import { Environment, EnvironmentName } from './environments';
-import { mediaIcon } from './mediaIcons';
+import { microphoneControl } from './dictation';
 
 export interface SpokenReply {
-  id: string; text: string; account: string; environment: EnvironmentName; path: string;
+  id: string; text: string; account: string; environment: EnvironmentName; path: string; query?: string;
 }
 
 // Only the configured DhimantAI signaling hosts are reachable in this webview.
@@ -25,8 +25,7 @@ export function trustedRoomUrl(environment: EnvironmentName, url: string) {
     : hosts[environment].includes(endpoint.origin);
 }
 
-export const microphoneControl = '<button type="button" id="audio-microphone" disabled aria-label="Voice input is unavailable. Type your message." title="Voice input is unavailable. Type your message.">' +
-  mediaIcon('microphone', false) + '</button>';
+export { microphoneControl } from './dictation';
 
 export function audioControls(webview: vscode.Webview, media: vscode.Uri, nonce: string) {
   const script = (file: string) => `<script nonce="${nonce}" src="${webview.asWebviewUri(vscode.Uri.joinPath(media, file))}"></script>`;
@@ -67,10 +66,10 @@ export class CoachAudio {
           const issued = ticket;
           ticket = undefined;
           const speed = [0.5, 1, 1.5, 2].includes(m.speed) ? m.speed : 1;
-          await api.startAudio(target.path, target.text, issued!, speed);
+          await api.startAudio(target.path, target.text, issued!, speed, target.query);
           return;
         }
-        const grant = await api.audioGrant(target.path, target.text);
+        const grant = await api.audioGrant(target.path, target.text, target.query);
         if (!active()) return;
         if (!trustedRoomUrl(target.environment, grant.url)) throw new Error('Unknown playback host');
         ticket = grant.token;

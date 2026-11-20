@@ -2,7 +2,7 @@
   "name": "dhimantai-learning",
   "displayName": "dhimantAI Learning",
   "description": "Learn in VS Code with Course Catalog, Instructor, Doubt Solver, and coding practice. Write, debug, and test here; run projects and tests in the course container.",
-  "version": "0.39.50",
+  "version": "0.39.59",
   "publisher": "optficial",
   "enabledApiProposals": [
     "browser"
@@ -87,6 +87,16 @@
       {
         "command": "dhimantai.desktopWelcome",
         "title": "Open Desktop Welcome",
+        "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.showUpdates",
+        "title": "Show Updates",
+        "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.profile",
+        "title": "Open Profile",
         "category": "dhimantAI"
       },
       {
@@ -895,13 +905,13 @@
         },
         {
           "id": "dhimantai.practice",
-          "name": "DhimantAI Practice",
+          "name": "dhimantAI Practice",
           "icon": "media/icon.svg",
           "visibility": "visible"
         },
         {
           "id": "dhimantai.notebookSubmission",
-          "name": "DhimantAI Notebook",
+          "name": "dhimantAI Notebook",
           "icon": "media/icon.svg",
           "when": "dhimantai.linkedNotebook",
           "order": 0,
@@ -912,7 +922,7 @@
     "viewsWelcome": [
       {
         "view": "dhimantai.notebookSubmission",
-        "contents": "Run All uses your selected VS Code kernel. Save your notebook on this computer.\n\nNo open DhimantAI page is needed. Code, outputs and run history are not stored on the DhimantAI server.\n\nReturn to your DhimantAI question and attach the file for live feedback when ready. Local output is not a verified assessment."
+        "contents": "Run All uses your selected VS Code kernel. Save your notebook on this computer.\n\nNo open dhimantAI page is needed. Code, outputs and run history are not stored on the dhimantAI server.\n\nReturn to your dhimantAI question and attach the file for live feedback when ready. Local output is not a verified assessment."
       }
     ]
   },
@@ -930,12 +940,10 @@
     "test:vscode": "npm run compile && node out/test/integration/runTest.js suiteExternalProgramming",
     "test:coach-chat": "npm run compile && node out/test/integration/runTest.js suiteNotebookCoachHistory",
     "test:coach-history": "npm run compile && node out/test/integration/runTest.js suiteNotebookCoachHistory",
-    "test:projects": "npm run compile && node out/test/integration/runTest.js suiteProjectCoach"
+    "test:projects": "npm run compile && node out/test/integration/runTest.js suiteProjectCoach",
+    "test:desktop-ux": "npm run compile && node out/test/integration/runTest.js suiteDesktopUx"
   },
   "devDependencies": {
-    "playwright-core": "1.65.0",
-    "ws": "8.18.3",
-    "@types/ws": "8.18.1",
     "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-cpp": "^6.0.3",
@@ -952,9 +960,11 @@
     "@types/markdown-it": "14.1.2",
     "@types/node": "^20.14.0",
     "@types/vscode": "~1.93.0",
+    "@types/ws": "8.18.1",
     "@viz-js/viz": "3.31.0",
     "@vscode/markdown-it-katex": "1.1.2",
     "@vscode/test-electron": "^2.4.1",
+    "axe-core": "4.10.3",
     "codemirror": "^6.0.2",
     "esbuild": "0.28.2",
     "jsdom": "^25.0.1",
@@ -962,7 +972,9 @@
     "markdown-it": "14.2.0",
     "mermaid": "12.3.0",
     "pdfjs-dist": "6.5.438",
-    "typescript": "~5.5.4"
+    "playwright-core": "1.65.0",
+    "typescript": "~5.5.4",
+    "ws": "8.18.3"
   },
   "extensionPack": [
     "mads-hartmann.bash-ide-vscode",

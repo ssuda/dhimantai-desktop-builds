@@ -16,6 +16,8 @@ export const UI_TOKENS = `:root{
   --dh-accent-fg:var(--vscode-button-foreground);
   --dh-success:var(--vscode-testing-iconPassed,var(--vscode-charts-green));
   --dh-shadow:0 1px 4px var(--vscode-widget-shadow,transparent);
+  /* Outlines secondary actions where the theme gives them no fill (Dark Modern, High Contrast). */
+  --dh-button-border:var(--vscode-button-border,var(--vscode-contrastBorder,transparent));
 }
 .dh-eyebrow{margin:0;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--dh-muted)}
 .dh-chip{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:var(--dh-radius-pill);font-size:11px;line-height:18px;font-weight:600;

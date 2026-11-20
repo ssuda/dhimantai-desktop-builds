@@ -1,7 +1,8 @@
 import type { Course } from './api';
+import { desktopProjectEnabled } from './desktopFeatures';
 
 /** Bundled projects shared by the catalog and the course-project launcher. */
-export const CATALOG_PROJECTS = [
+const bundledProjects = [
   {
     id: 'shelf-reading',
     level: 'Micro',
@@ -55,6 +56,8 @@ export const CATALOG_PROJECTS = [
     ],
   },
 ] as const;
+
+export const CATALOG_PROJECTS = bundledProjects.filter(project => desktopProjectEnabled(project.id));
 
 /** Companion courses for the four bundled Python projects. */
 export const PROJECT_COURSES: Readonly<Record<string, string>> = {

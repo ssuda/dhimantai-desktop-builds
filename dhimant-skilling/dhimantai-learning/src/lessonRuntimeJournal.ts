@@ -14,6 +14,10 @@ export class LessonRuntimeJournal {
     catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
   }
   constructor(readonly file:string) {}
+  get restoreBlockReason(): string | undefined {
+    if (this.runs.some(run => run.interactive))
+      return 'This history includes interactive input and cannot be restored. Choose Start fresh to run your saved cells.';
+  }
   async load() {
     await LessonRuntimeJournal.writes.get(this.file);
     try {

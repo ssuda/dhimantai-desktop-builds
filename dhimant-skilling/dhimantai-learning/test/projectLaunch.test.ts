@@ -33,7 +33,7 @@ async function launch(options: {choice?: string; existing?: boolean; failure?: '
       commands: {
         registerCommand: (_name: string, callback: typeof command) => { command = callback; },
         executeCommand: async (name: string, target?: any, settings?: any) => {
-          if (name === 'dhimantai.setupCourse') {
+          if (name === 'dhimantai.projectFolder') {
             assert.equal(target.kind, 'bundledProject');
             assert.equal(target.projectId, id);
             return options.cancelSetup ? undefined : uri(parent);
@@ -86,7 +86,7 @@ test('new and existing projects explain the destination and honour both explicit
   }
 });
 
-test('all catalog cards use the named launch choice, including recovered Rich projects', async () => {
+test('all available catalog cards use the named launch choice', async () => {
   for (const project of CATALOG_PROJECTS) for (const existing of [false, true]) {
     const result = await launch({target: project.id, existing, choice: 'Open in Current Window'});
     assert.deepEqual(result.errors, []);
@@ -99,7 +99,16 @@ test('all catalog cards use the named launch choice, including recovered Rich pr
   }
 });
 
-test('bundled project setup prepares the chosen preview or purchased course and offers the catalog if none qualifies', async () => {
+test('paused project commands leave existing work alone and never open a window', async () => {
+  for (const target of ['shelf-reading', 'rich-reading', 'engineering-code-reading']) {
+    const result = await launch({target, existing: true, choice: 'Open in Current Window'});
+    assert.equal(result.creations + result.restorations + result.selections + result.opened.length, 0);
+    assert.match(result.prompts[0][0], /paused on desktop/);
+    assert.equal(result.preserved, 'Keep my changes');
+  }
+});
+
+test('bundled project creation gets a folder for the selected course without starting its runtime', async () => {
   const prepared: string[] = [], opened: string[] = [], notices: string[] = [];
   const chapter = {id:'one', name:'First chapter'};
   const available = [
@@ -112,7 +121,7 @@ test('bundled project setup prepares the chosen preview or purchased course and 
     EventEmitter: class {}, Uri: {file:(fsPath:string) => ({fsPath})},
     window: {
       showQuickPick: async (items: {label:string}[], options: {title:string}) => {
-        assert.equal(options.title, 'Read a codebase · shelf');
+        assert.equal(options.title, 'Fix a repository bug · shelf');
         assert.deepEqual(Array.from(items, item => item.label), available.slice(0, 2).map(c => c.name));
         return items.find(item => item.label === selection);
       },
@@ -126,20 +135,20 @@ test('bundled project setup prepares the chosen preview or purchased course and 
   const sandbox = {exports: {}, require: (name: string) => modules[name] ?? {}};
   runInNewContext(readFileSync(join(extension, 'out/src/practiceBrowser.js'), 'utf8'), sandbox);
   const practice = new (sandbox.exports as any).PracticeBrowser({session:async () => ({user:{id:'learner'}})}, () => 'staging', () => ({}),
-    {enabled:true, setup:async (scope:{course:string;account:string}) => {
-      assert.equal(scope.account, 'learner'); prepared.push(scope.course); return {root:'/courses/' + scope.course};
+    {enabled:true, courseFolder:async (scope:{course:string;account:string}) => {
+      assert.equal(scope.account, 'learner'); prepared.push(scope.course); return {fsPath:'/courses/' + scope.course};
     }});
-  const target = {kind:'bundledProject', projectId:'shelf-reading'};
+  const target = {kind:'bundledProject', projectId:'shelf'};
   for (const course of available.slice(0, 2)) {
     selection = course.name;
-    assert.equal((await practice.setupCourse(target)).fsPath, '/courses/' + selection);
+    assert.equal((await practice.projectFolder(target)).fsPath, '/courses/' + selection);
   }
   selection = '';
-  assert.equal(await practice.setupCourse(target), undefined);
+  assert.equal(await practice.projectFolder(target), undefined);
   courses = [available[2]];
-  assert.equal(await practice.setupCourse(target), undefined);
+  assert.equal(await practice.projectFolder(target), undefined);
   assert.match(notices.at(-1)!, /free first chapter/);
-  assert.deepEqual(opened, ['engineering-code-reading']);
+  assert.deepEqual(opened, ['python']);
   assert.deepEqual(prepared, available.slice(0, 2).map(c => c.name));
 });
 

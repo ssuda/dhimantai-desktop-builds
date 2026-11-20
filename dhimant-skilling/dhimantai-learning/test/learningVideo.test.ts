@@ -1,3 +1,4 @@
+import { notebookMessageBar } from '../src/learningComposer';
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -9,10 +10,10 @@ const VIDEO = 'ZjU3sikq8Mg', OTHER = 'aaaaaaaaaaa', ORIGIN = 'https://api-stagin
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
 async function setup(playable = true) {
-  const ids = ['wide', 'latest', 'tutor', 'doubt_solver', 'end', 'sound', 'send', 'teach-back', 'video'];
+  const ids = ['wide', 'latest', 'tutor', 'doubt_solver', 'end'];
   const dom = new JSDOM('<!doctype html>' + ids.map(id => `<button id="${id}"${id === 'end' ? ' disabled' : ''}></button>`).join('') +
     '<span id="status"></span><input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox">' +
-    '<small id="code-observer-status"></small><main id="feed"></main><form id="composer"><textarea id="message"></textarea></form>',
+    '<small id="code-observer-status"></small><main id="feed"></main>' + notebookMessageBar('Instructor', false, '<button type="button" id="sound"></button>'),
     {runScripts: 'outside-only', url: 'https://webview.example', pretendToBeVisual: true});
   const w = dom.window, messages: any[] = [], rpcs: any[] = [], chats: string[] = [], commands: any[] = [];
   w.document.body.insertAdjacentHTML('afterbegin', lessonPicker);
