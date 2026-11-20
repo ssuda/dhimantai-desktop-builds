@@ -18,21 +18,20 @@ function fixture() {
   return {devices,calls,stopped,tracks,track,disconnect:()=>{current=false;devices.stop();},capture:fn=>{capture=fn;}};
 }
 test('microphone uses existing audio RPC and stops hardware immediately', async()=>{
-  const f=fixture(); await f.devices.toggle('microphone');
+  const f=fixture(); await f.devices.toggle();
   assert.deepEqual(f.calls,[{input_enabled:true}]); assert.equal(f.tracks.length,1);
   f.devices.stop(); assert.equal(f.stopped.length,1);
   await new Promise(resolve=>setImmediate(resolve)); assert.deepEqual(f.calls[1],{input_enabled:false});
 });
-test('camera publishes video using Flutter semantics without a new server RPC',async()=>{
-  const f=fixture(); await f.devices.toggle('camera'); assert.equal(f.tracks.length,1); assert.deepEqual(f.calls,[]);
-  f.devices.stop(); assert.equal(f.stopped.length,1);
-});
-test('capture granted after leaving never publishes or enables agent input',async()=>{
+// Live camera video was replaced by still photos attached to a message (webview/notebookCamera.ts);
+// LearningDevices now owns only the microphone.
+test('microphone granted after leaving never publishes or enables agent input',async()=>{
   const f=fixture(); let resolve; f.capture(()=>new Promise(r=>{resolve=r;}));
-  const pending=f.devices.toggle('camera'); f.disconnect(); resolve(f.track); await pending;
+  const pending=f.devices.toggle(); await new Promise(r=>setImmediate(r)); f.disconnect(); resolve(f.track); await pending;
   assert.equal(f.stopped.length,1); assert.equal(f.tracks.length,0); assert.deepEqual(f.calls,[]);
 });
-test('denied capture never publishes',async()=>{
-  const f=fixture(); f.capture(async()=>{throw new Error('Denied');}); await f.devices.toggle('camera');
-  assert.equal(f.tracks.length,0); assert.deepEqual(f.calls,[]);
+test('denied microphone never publishes or enables agent input',async()=>{
+  const f=fixture(); f.capture(async()=>{throw new Error('Denied');}); await f.devices.toggle();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.tracks.length,0); assert.ok(f.calls.every(call=>call.input_enabled===false));
 });
