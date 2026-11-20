@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {desktopExtensionPath,preserveDesktopDefaults,migrateDesktopAppBar} from '../src/desktopConfiguration';
+import {applyLearnerChrome,desktopExtensionPath,preserveDesktopDefaults,migrateDesktopAppBar} from '../src/desktopConfiguration';
 
 test('the old persisted hidden default migrates once; later and workspace layout choices survive', async () => {
   const state = new Map<string, unknown>(), values = new Map<string, unknown>([['workbench.activityBar.location', 'hidden']]);
@@ -36,4 +36,17 @@ test('an updated extension preserves desktop defaults without replacing explicit
     await preserveDesktopDefaults(root,{...settings,update:async()=>{throw new Error('Already preserved settings must not be rewritten');}});
     assert.equal(values.get('dhimantai.autoUpdate'),false);
   }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('learner chrome hides the title-bar search and layout toggles once, keeping explicit choices', async () => {
+  const state = new Map<string, unknown>(), values = new Map<string, unknown>([['workbench.layoutControl.enabled', true]]);
+  const store = {get: (key: string) => state.get(key), update: async (key: string, value: boolean) => { state.set(key, value); }};
+  const settings = {inspect: (key: string) => ({globalValue: values.get(key)}),
+    update: async (key: string, value: unknown) => { values.set(key, value); }};
+  await applyLearnerChrome(store, settings);
+  assert.equal(values.get('window.commandCenter'), false);
+  assert.equal(values.get('workbench.layoutControl.enabled'), true, 'an explicit learner choice is kept');
+  values.set('window.commandCenter', true);
+  await applyLearnerChrome(store, settings);
+  assert.equal(values.get('window.commandCenter'), true, 'turning the search back on is respected');
 });

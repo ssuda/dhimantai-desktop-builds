@@ -36,7 +36,7 @@ import { useColabForNotebook } from './colab';
 import { newNotebook } from './notebookRuntime';
 import { ExtensionUpdates, automaticUpdates, quietStart } from './updates';
 import { DesktopAppControls } from './desktopAppControls';
-import { preserveDesktopDefaults } from './desktopConfiguration';
+import { applyLearnerChrome, preserveDesktopDefaults } from './desktopConfiguration';
 import { registerNotebookSubmission } from './notebookCommands';
 import { registerLearningRoom } from './learningRoom';
 import { registerCapstone } from './capstone';
@@ -55,6 +55,10 @@ export async function activate(context: vscode.ExtensionContext) {
   if (desktop) {
     const settings = vscode.workspace.getConfiguration();
     await preserveDesktopDefaults(vscode.env.appRoot, {
+      inspect: key => settings.inspect(key),
+      update: (key,value) => settings.update(key,value,vscode.ConfigurationTarget.Global),
+    });
+    await applyLearnerChrome(context.globalState, {
       inspect: key => settings.inspect(key),
       update: (key,value) => settings.update(key,value,vscode.ConfigurationTarget.Global),
     });

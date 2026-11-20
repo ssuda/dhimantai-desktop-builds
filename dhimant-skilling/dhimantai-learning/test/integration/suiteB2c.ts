@@ -76,8 +76,9 @@ export async function run() {
         const joined = new JSDOM((catalog as any).panel.webview.html);
         try {
           const course = joined.window.document.querySelector('[data-course="python"]')!;
-          assert.match(course.textContent!, /1\/2 chapters covered/);
-          assert.equal(course.querySelector('.topic-coverage s')!.textContent, 'Indexing');
+          assert.match(course.textContent!, /1\/2 chapters taught/);
+          assert.equal(course.querySelector('.topic-coverage s'), null, 'taught topics are not struck through as done');
+          assert.match(course.textContent!, /✓ Indexing Taught/);
           assert.match(course.textContent!, /For loops Not started/);
           assert.equal(course.querySelector('button[data-action="practice"]')!.getAttribute('data-id'), 'python');
         } finally { joined.window.close(); }

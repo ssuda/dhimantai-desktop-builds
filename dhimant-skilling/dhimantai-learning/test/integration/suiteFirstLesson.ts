@@ -58,14 +58,25 @@ export async function run() {
         await view.getByRole('button',{name:'Try in a code cell'}).click();
         assert.equal(await view.locator('.practice-code-editor').count(),1);
       }
-      await answers.getByRole('button',{name:'10',exact:true}).click();
+      await answers.getByRole('button',{name:'10',exact:true}).evaluate(button => new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('No notebook save acknowledgement')), 10000);
+        const onSave = (event: MessageEvent) => {
+          if (event.data?.type !== 'notebookSaved') return;
+          window.removeEventListener('message', onSave);
+          clearTimeout(timeout);
+          resolve();
+        };
+        window.addEventListener('message', onSave);
+        (button as HTMLButtonElement).click();
+      }));
       await view.getByRole('status').filter({hasText:'Exercise complete.'}).waitFor();
-      await view.locator('#notebook-save-status').filter({hasText:'Saved on this computer.'}).waitFor();
+      assert.equal(await view.locator('#notebook-save-status').isVisible(), false);
       assert.ok((await call('/__state')).users.find((u:any) => u.email === email).joined);
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
       await vscode.commands.executeCommand('dhimantai.openLearningRoom','Data Science with Python','10000000-0000-0000-0000-000000000001');
       await view.getByRole('status').filter({hasText:'Exercise complete.'}).waitFor();
       assert.equal(await answers.getByRole('button',{name:'10',exact:true}).isDisabled(),true);
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
       await auth.signOut();
       verified.push(delayed ? 'email confirmation and later sign-in' : 'immediate signup');
     }

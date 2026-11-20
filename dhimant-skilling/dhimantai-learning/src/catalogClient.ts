@@ -57,7 +57,8 @@ export function catalogClient(scope: string, initialQuery: string) {
       card.style.order = pathIds && !query ? String(pathIds.indexOf(card.dataset.course!)) : '';
       const score = rank(entry);
       card.hidden = score < 0 || !!category && card.dataset.category !== category || !!level && card.dataset.level !== level
-        || !!status && card.dataset[status] !== 'true' || !!pathIds && !pathIds.includes(card.dataset.course!);
+        || !!status && card.dataset[status] !== 'true' || !!pathIds && !pathIds.includes(card.dataset.course!)
+        || !query && !category && !level && !status && !pathIds && card.dataset.resumed === 'true';
       if (!card.hidden) matches.push({card, score});
       if ((!query || card.hidden) && card.parentElement === ranked) slot.after(card);
     }

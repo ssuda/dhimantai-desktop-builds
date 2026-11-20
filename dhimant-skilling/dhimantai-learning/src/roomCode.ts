@@ -156,3 +156,11 @@ function sameSnapshot(a: CodeSnapshot, b: CodeSnapshot) {
     && a.source === b.source && a.stdin === b.stdin && a.question === b.question
     && JSON.stringify(a.argv??[])===JSON.stringify(b.argv??[]) && JSON.stringify(a.files??[])===JSON.stringify(b.files??[]) && !!a.interactive===!!b.interactive;
 }
+
+/** Ask learners to predict what they will actually see: printed output when the code prints,
+ * otherwise the result (a function's return value, a variable). SQL is shown, not executed. */
+export function predictionPrompt(language: string, source: string) {
+  if (language === 'sql') return 'Prediction (not executed)';
+  const prints = /\b(print|println|printf|puts|echo|cout|display|console\s*\.\s*(log|info|warn|error)|System\s*\.\s*out|fmt\s*\.\s*Print|Console\s*\.\s*Write)\b/;
+  return prints.test(source) ? 'I expect it to print' : 'I expect the result to be';
+}

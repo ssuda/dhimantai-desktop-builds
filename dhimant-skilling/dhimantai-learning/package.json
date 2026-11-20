@@ -2,7 +2,7 @@
   "name": "dhimantai-learning",
   "displayName": "dhimantAI Learning",
   "description": "Learn in VS Code with Course Catalog, Instructor, Doubt Solver, and coding practice. Write, debug, and test here; run projects and tests in the course container.",
-  "version": "0.39.59",
+  "version": "0.39.60",
   "publisher": "optficial",
   "enabledApiProposals": [
     "browser"

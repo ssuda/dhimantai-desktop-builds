@@ -22,7 +22,7 @@ export class NotebookNavigation {
     this.select.replaceChildren(new Option('Notebook entries', ''), ...entries.map((entry, index) =>
       new Option(`${index + 1}. ${entry.label}`, entry.id)));
     this.select.hidden = entries.length < 2;
-    this.label.textContent = topics ? `${topics.covered}/${topics.total} topics covered` : 'Chapter progress';
+    this.label.textContent = topics ? `${topics.covered}/${topics.total} topics taught` : 'Chapter progress';
     this.meter.hidden = !topics;
     if (topics) { this.meter.max = topics.total; this.meter.value = topics.covered; }
     this.description.textContent = progress + ' ' + note;

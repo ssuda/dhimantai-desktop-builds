@@ -162,13 +162,29 @@ LEARNER_UNPINNED_CONTAINERS = ('workbench.view.search', 'workbench.view.scm', 'w
 
 def hide_developer_activity(root):
     ids = ', '.join(f"'{c}'" for c in LEARNER_UNPINNED_CONTAINERS)
+    # CompositeBarModel.add() already creates new items pinned, so skipping pin() is not enough:
+    # a container new to this profile must be unpinned explicitly.
     replace(root, 'src/vs/workbench/browser/parts/paneCompositeBar.ts',
         '\t\t\tif (!cachedViewContainer) {\n\t\t\t\tthis.compositeBar.pin(viewContainer.id);',
-        f'\t\t\tif (!cachedViewContainer && ![{ids}].includes(viewContainer.id)) {{\n\t\t\t\tthis.compositeBar.pin(viewContainer.id);')
+        f'\t\t\tif (!cachedViewContainer && [{ids}].includes(viewContainer.id)) {{\n\t\t\t\tthis.compositeBar.unpin(viewContainer.id);\n\t\t\t}} else if (!cachedViewContainer) {{\n\t\t\t\tthis.compositeBar.pin(viewContainer.id);')
+
+
+# Status bar items a new learner cannot act on: the errors/warnings counter (squiggles and the
+# Problems view stay) and the remote-connection indicator. A learner can show either again
+# from the status bar's context menu; a profile that already chose hidden items keeps them.
+LEARNER_HIDDEN_STATUS = ('status.problems', 'status.host')
+
+
+def hide_developer_status(root):
+    ids = ','.join(f'"{i}"' for i in LEARNER_HIDDEN_STATUS)
+    replace(root, 'src/vs/workbench/browser/parts/statusbar/statusbarModel.ts',
+        'const hiddenRaw = this.storageService.get(StatusbarViewModel.HIDDEN_ENTRIES_KEY, StorageScope.PROFILE);',
+        f"const hiddenRaw = this.storageService.get(StatusbarViewModel.HIDDEN_ENTRIES_KEY, StorageScope.PROFILE, '[{ids}]');")
 
 
 def hide_developer_views(root):
     hide_developer_activity(root)
+    hide_developer_status(root)
     replace(root, 'src/vs/workbench/contrib/outline/browser/outline.contribution.ts',
         'hideByDefault: false,', 'hideByDefault: true,')
     replace(root, 'src/vs/workbench/contrib/timeline/browser/timeline.contribution.ts',

@@ -1708,7 +1708,8 @@ test('browser task questions use the Instructor composer and acknowledge progres
     failObservation=false;
     fail=true;click('send');await wait();
     assert.equal(sent.some(m=>m.type==='browserAnswer'),false);assert.ok(field.value);
-    assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/delivery could not be confirmed/);
+    assert.match(w.document.getElementById('status')!.textContent!,/delivery could not be confirmed/);
+    assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/draft is still here.*before sending again/);
     fail=false;click('send');await wait();
     assert.equal(forwarded,before,'editing keys never escape to the desktop workbench');
     assert.match(messages.at(-1)!,/Question: What grows.*\nMy answer: Receivables/);
@@ -1765,7 +1766,8 @@ test('opening the same ERPNext lesson reconnects after disconnect and preserves 
     post({type:'grant',attempt:retry.attempt,url:'unused',token:'unused',chapterId,browserCourse:true});
     post({type:'browserObservation',attempt:retry.attempt,chapter:chapterId,observation:{task:'supplier'},question,focusQuestion:question.id});await wait();
     assert.equal(field.value,answer);assert.equal(messages.length,0);
-    assert.equal(w.document.getElementById('notebook-help-status')!.textContent,'Instructor connected');
+    assert.equal(w.document.getElementById('notebook-help-status')!.textContent,'','the earlier failure is cleared; the connection is reported once, in the header');
+    assert.equal(w.document.getElementById('status')!.textContent,'Instructor connected');
     click('send');await wait();
     assert.equal(messages.length,1);assert.match(messages[0],/My answer: Separate records/);
     assert.equal(field.value,'');assert.equal(sent.filter(m=>m.type==='browserAnswer').length,1);
@@ -1837,7 +1839,8 @@ test('ERPNext observation failure exposes reconnect and preserves the unsent exp
     field.value=answer;field.dispatchEvent(new w.Event('input'));
     const retryButton=w.document.getElementById('tutor') as HTMLButtonElement;
     assert.equal(retryButton.hidden,false);assert.equal(retryButton.textContent,'Reconnect Instructor');
-    assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/draft.*Reconnect Instructor/);
+    assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/Reconnect Instructor/);
+    assert.doesNotMatch(w.document.getElementById('notebook-help-status')!.textContent!,/draft/i);
     click('send');await wait();
     assert.equal(field.value,answer);assert.equal(messages.length,0);
     assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/draft.*Reconnect Instructor/);
@@ -1943,7 +1946,7 @@ test('sticky notebook index expands earlier explanations and retains chapter cov
       {id:'verify',kind:'code',text:'assert 2 + 2 == 4',packet:{language:'python'}}];
     post({type:'restoreNotebook',attempt,documentKey:'navigation',notebook});
     const summary=w.document.querySelector('.notebook-progress')!;
-    assert.match(summary.textContent!,/Functions.*1\/3 topics covered.*1\/2 chapters covered/);
+    assert.match(summary.textContent!,/Functions.*1\/3 topics taught.*1\/2 chapters taught/);
     assert.match(summary.getAttribute('title')!,/mastery.*separately/);
     const select=w.document.querySelector<HTMLSelectElement>('.notebook-index')!;
     assert.equal(select.hidden,false);assert.match(select.options[1].textContent!,/Save the module/);

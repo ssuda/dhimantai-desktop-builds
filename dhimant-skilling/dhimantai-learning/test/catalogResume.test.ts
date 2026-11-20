@@ -116,7 +116,7 @@ test('a returning learner resumes from the top of Course Catalog in one click; a
   assert.ok(resume, 'Continue learning comes first');
   assert.ok(resume.compareDocumentPosition(document.querySelector('#results')!) & 4, 'it precedes the catalog');
   assert.match(resume.textContent!, /Pick up: py chapter 1/);
-  assert.match(resume.textContent!, /1 of 3 chapters covered/);
+  assert.match(resume.textContent!, /1 of 3 chapters taught/);
   assert.equal(resume.querySelector('progress')!.getAttribute('value'), '1');
   const button = resume.querySelector<HTMLButtonElement>('button[data-action="practice"]')!;
   assert.equal(button.dataset.id, 'py');

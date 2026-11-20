@@ -465,9 +465,10 @@ test('opening a course shows topic coverage without granting access or losing re
       {id:'c2', name:'Loops', locked:true, progress:{status:'covered', covered:1, total:1,
         topics:[{id:'c', title:'For loop', status:'covered'}]}},
     ]}]});
-    assert.match($('#lesson-list').textContent!, /1\/2 chapters covered · 1 in progress/);
-    assert.deepEqual([...w.document.querySelectorAll('.topic-coverage s')].map(n => n.textContent), ['Indexing','For loop']);
-    assert.match($('.topic-coverage').textContent!, /Covered · Needs review/);
+    assert.match($('#lesson-list').textContent!, /1\/2 chapters taught · 1 in progress/);
+    assert.equal(w.document.querySelectorAll('.topic-coverage s').length, 0, 'taught topics are not struck through as done');
+    assert.match([...w.document.querySelectorAll('.topic-coverage')].map(n => n.textContent).join(' | '), /✓ Indexing Taught[\s\S]*✓ For loop Taught/);
+    assert.match($('.topic-coverage').textContent!, /Taught · Needs review/);
     assert.match($('.topic-coverage').textContent!, /Slicing Not started/);
     const locked = [...w.document.querySelectorAll<HTMLButtonElement>('#lesson-list button')][1];
     assert.equal(locked.disabled, true); assert.match(locked.textContent!, /Locked/);
@@ -525,7 +526,7 @@ test('Instructor teaches through open questions, struggle signals, Your turn cel
       {id:'a', title:'Indexing', covered:true, learning_status:'Needs review'},
       {id:'b', title:'Slicing', covered:false, learning_status:'Not taught'},
     ]});
-    assert.equal($('#lesson-list .topic-coverage s').textContent, 'Indexing');
+    assert.equal($('#lesson-list .topic-coverage').textContent!.includes('✓ Indexing'), true);
     assert.match($('#lesson-list .topic-coverage').textContent!, /Needs review/);
     assert.match($('#feed').innerHTML, /<s>Indexing<\/s>/, 'live recap also strikes only covered topics');
     data({method:'tutor_example_progress', subject:'Python', chapter_name:'Lists', lesson_name:'Lists',
@@ -765,6 +766,38 @@ test('Doubt Solver keeps doubts separate, recaps the current one on reconnect an
     assert.equal($('#access-notice').hidden, false);
     $<HTMLButtonElement>('#access-notice button').click();
     assert.equal(sent.at(-1).type, 'courseCatalog');
+  } finally { await ui.close(); }
+});
+
+test('local saves stay quiet and an interrupted send identifies a confirmed draft beside the answer', async () => {
+  const ui = room('Instructor'), {w, post, sent, $, rooms, tick} = ui;
+  try {
+    post({type:'openTutor'});
+    selectLesson(w, sent.at(-1).attempt);
+    const attempt = sent.at(-1).attempt, documentKey = 'saved-lesson';
+    post({type:'restoreNotebook', attempt, documentKey, notebook:emptyNotebook()});
+    assert.equal($('#notebook-save-status').textContent, '');
+    post({type:'grant', attempt, url:'unused', token:'unused', chapterId:'c1'}); await tick();
+    const field = $<HTMLTextAreaElement>('#message');
+    field.value = 'My answer'; field.dispatchEvent(new w.Event('input'));
+    post({type:'notebookError', documentKey, message:'Disk full.'});
+    assert.equal($('#notebook-save-status').textContent, 'Disk full.');
+    post({type:'notebookSaved', documentKey, textDraft:field.value});
+    assert.equal($('#notebook-save-status').textContent, '');
+    assert.equal($('#notebook-help-status').textContent, '');
+    let finish!: () => void;
+    rooms[0].localParticipant.sendText = () => new Promise<void>(resolve => { finish = resolve; });
+    $('#send').click(); await tick();
+    rooms[0].listeners.get('Disconnected')();
+    finish(); await tick();
+    assert.equal(field.value, 'My answer');
+    assert.equal($('#tutor').hidden, false);
+    assert.match($('#notebook-help-status').textContent!, /Your draft is saved on this device.*Reconnect.*before sending again/);
+    post({type:'notebookError', documentKey, message:'Another window changed this notebook.'});
+    assert.match($('#notebook-help-status').textContent!, /Your draft is still here/);
+    field.value += ' edited'; field.dispatchEvent(new w.Event('input'));
+    assert.equal($('#notebook-help-status').textContent, '');
+    assert.equal($('#notebook-save-status').textContent, 'Another window changed this notebook.');
   } finally { await ui.close(); }
 });
 

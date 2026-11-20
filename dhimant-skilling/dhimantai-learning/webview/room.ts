@@ -54,6 +54,7 @@ const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) 
 const button = (id: string) => byId<HTMLButtonElement>(id);
 const latestButton = button('latest');
 const feed = byId('feed'), status = byId('status'), field = byId<HTMLTextAreaElement>('message');
+const notebookSaveStatus = byId('notebook-save-status');
 const closeVisual = bindVisuals(feed, refreshDiagramAlternatives);
 bindDiagramBlocks(feed, prepareVisuals);
 function notebookPage() {
@@ -218,7 +219,7 @@ function focusBrowserQuestion() {
   browserAskInstead='';controls();
   field.focus();messageBar?.scrollIntoView({block:'nearest'});
   helpStatus(ready?'Write your answer, then use the send arrow for Instructor feedback.'
-    :'Connecting to Instructor… Your draft is saved. Use the send arrow when connected.');
+    :'Connecting to Instructor… Use the send arrow when connected.');
 }
 let browserSync:Promise<void>=Promise.resolve(), browserObservationFailed=false;
 function browserConnectionFailed(message:string) {
@@ -246,7 +247,7 @@ function syncBrowserObservation():Promise<void> {
         if(room!==live || id!==attempt || !browserCourse || !ready)return;
       }while(true);
     } catch(error) {
-      const detail='Instructor could not receive this task. Your draft and saved work are kept. Reconnect Instructor, then send your answer.';
+      const detail='Instructor could not receive this task. Reconnect Instructor.';
       if(room===live && id===attempt && ready) {
         browserConnectionFailed(detail);host.postMessage({type:'browserState',attempt:id,connected:false,detail});
       }
@@ -256,11 +257,11 @@ function syncBrowserObservation():Promise<void> {
     const connected=ack==='ok';
     browserObservationFailed=!connected;
     if(connected)button('tutor').hidden=true;
-    else browserConnectionFailed('Browser observation is unavailable. Your draft and saved work are kept. Reconnect Instructor to retry.');
-    if(connected && status.textContent==='Instructor could not receive the current ERPNext form. Reconnect before asking about it.')helpStatus('Instructor connected');
+    else browserConnectionFailed('Browser observation is unavailable. Reconnect Instructor to retry.');
+    if(connected && status.textContent==='Instructor could not receive the current ERPNext form. Reconnect before asking about it.')connectedStatus('Instructor connected');
     host.postMessage({type:'browserState',attempt:id,connected,detail:connected
       ? observation?'Instructor is following this ERPNext task.':'Observation paused. Instructor can still answer questions.'
-      : 'Browser observation is unavailable. Your draft and saved work are kept. Reconnect Instructor to retry.'});
+      : 'Browser observation is unavailable. Reconnect Instructor to retry.'});
     if(!connected)throw new Error('Instructor could not receive the current ERPNext form. Reconnect before asking about it.');
   });
   return browserSync;
@@ -373,6 +374,9 @@ let observationSequence = 0, latestObservation: Promise<unknown> = Promise.resol
 let lessonScope = '';
 let notebook = emptyNotebook(), documentKey = '', restoring = false, cellSequence = 0;
 let saveSequence = 0;
+let savedTextDraft: string | undefined;
+let sendingComposerMessage = false;
+let deliveryNextStep = '';
 let practice: {id:string; language:string; title:string; course?:string} | undefined;
 // The open question the learner chose to ask about instead of answering, and its toggle (created on first use).
 let askInsteadOf = '', askInstead: HTMLButtonElement | undefined;
@@ -516,7 +520,7 @@ function selectChapter(chapterId:string) {
   const course=lessonCourses.find(course=>course.chapters.some(ch=>ch.id===selectedLesson));
   if(browserCourse && browserSnapshot && course?.chapters.some(ch=>ch.id===chapterId)) {
     host.postMessage({type:'browserChooseChapter',attempt,chapterId});
-    helpStatus('Opening the selected chapter and its browser task. Your unfinished work stays saved.');
+    helpStatus('Opening the selected chapter and its browser task.');
   } else begin(mode,chapterId);
 }
 function renderLessons() {
@@ -579,7 +583,8 @@ function renderLessons() {
     row.append(choice);
     grid.append(row);
     if (mode === 'doubt_solver') continue;
-    if(chapter.compute) {
+    // A CPU lab is the norm; only GPU needs (or an unreviewed requirement) are worth a line on the card.
+    if(chapter.compute && !(chapter.compute.status==='specified' && !chapter.compute.totalGpus)) {
       const compute=document.createElement('small');compute.className='chapter-coverage';
       compute.textContent=chapter.compute.status==='specified'
         ? `${chapter.compute.totalGpus} GPUs · ${chapter.compute.layouts?.length ? chapter.compute.layouts.map(l=>l.nodes+' × '+l.gpusPerNode).join(' or ') : chapter.compute.totalGpus ? chapter.compute.nodes+' machine'+(chapter.compute.nodes===1?'':'s') : 'CPU lab'}`
@@ -612,7 +617,8 @@ function renderLessons() {
 }
 function clearDocument(keepAttachments = false) {
   composer.cancelCapture();
-  clearTimeout(saveTimer); documentKey = ''; saveSequence = 0;
+  clearTimeout(saveTimer); documentKey = ''; saveSequence = 0; savedTextDraft = undefined;
+  if (notebookSaveStatus) notebookSaveStatus.textContent = '';
   if (!keepAttachments) attachments.clear();
   askInsteadOf = ''; editors.restartRuntime();
   restoreNotebook(emptyNotebook());
@@ -661,7 +667,7 @@ function notebookConflict(show: boolean) {
   reload.onclick = () => host.postMessage({type:'reloadNotebook', documentKey});
   keep.onclick = () => host.postMessage({type:'overwriteNotebook', documentKey, notebook:snapshotNotebook()});
   bar.append(reload, keep);
-  (byId('notebook-save-status') ?? status).after(bar);
+  (notebookSaveStatus ?? status).after(bar);
 }
 // Doubt Solver keeps each doubt separate: a divider cell starts a new one with a new id.
 let pendingDoubt = '', attachmentRole: AttachmentRole = 'question';
@@ -821,7 +827,7 @@ function retractTutorRequest(request: string) {
   tutorCancellation = Promise.all([tutorCancellation, ack]).then(([, result]) => {
     if (result !== 'ok') throw new Error('Cancellation unavailable');
   }).catch(() => {
-    if (room === live) close('Instructor could not confirm cancellation. Your draft is saved. Reconnect Instructor to continue.');
+    if (room === live) close('Instructor could not confirm cancellation. Reconnect Instructor to continue.');
   });
 }
 function removeConversation(cells: NotebookCell[]) {
@@ -1244,7 +1250,7 @@ function composerMode() {
 }
 /** The message bar answers Instructor's open question, or asks one. Attachments go with a question. */
 async function deliverNotebookMessage(message: LearnerMessage): Promise<boolean> {
-  if (!ready) { helpStatus(names[mode] + ' is not connected yet. Your draft is saved; send it when connected.'); return false; }
+  if (!ready) { showDeliveryIssue('Reconnect, then send again.'); return false; }
   if (sending) { helpStatus('Sending your message…'); return false; }
   const browserPrompt=message.attachments.length?undefined:openBrowserQuestion();
   if(browserPrompt) {
@@ -1338,7 +1344,7 @@ function close(message: string) {
   if (documentKey) host.postMessage({type:'notebookChanged', documentKey, sequence:++saveSequence, notebook:saved});
   pendingNotebook?.finish({error:'Session changed.'}); pendingNotebook = undefined;
   pendingData?.finish({error:'Session changed.'}); pendingData = undefined;
-  ++attempt; ready = sending = coaching = false; blockedAudio = false; agent = undefined; agentActivity = '';
+  ++attempt; ready = sending = sendingComposerMessage = coaching = false; blockedAudio = false; agent = undefined; agentActivity = '';
   courseData = []; dataState = 'none'; dataStatus('');
   document.querySelector('.data-preview')?.remove();
   lessonScope = '';
@@ -1917,18 +1923,23 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
         || !text.trim() || reader.info.attributes?.['lk.transcription_final'] === 'false') return;
     addCell('voice', text.slice(0,12000), turn ? {tutor_turn_id:turn} : undefined);
   });
-  live.on(RoomEvent.ParticipantDisconnected, peer => { if (current() && peer.identity === agent) close(names[mode] + ' disconnected. Retry to reconnect.'); });
-  live.on(RoomEvent.Disconnected, () => { if (current()) close('Disconnected. Retry to reconnect.'); });
+  function disconnected(message: string) {
+    const interrupted = sendingComposerMessage;
+    close(message);
+    if (interrupted) showDeliveryIssue('Reconnect and check for a reply before sending again.');
+  }
+  live.on(RoomEvent.ParticipantDisconnected, peer => { if (current() && peer.identity === agent) disconnected(names[mode] + ' disconnected. Retry to reconnect.'); });
+  live.on(RoomEvent.Disconnected, () => { if (current()) disconnected('Disconnected. Retry to reconnect.'); });
   live.on(RoomEvent.Reconnecting, () => { if (current()) {
-    stopDevices(); ready = false; agentActivity = ''; helpStatus('Reconnecting to ' + names[mode] + '… Your draft is saved.'); controls();
-    if(browserCourse)host.postMessage({type:'browserState',attempt:id,connected:false,detail:'Reconnecting to Instructor… Your draft is saved.'});
+    stopDevices(); ready = false; agentActivity = ''; helpStatus('Reconnecting to ' + names[mode] + '…'); controls();
+    if(browserCourse)host.postMessage({type:'browserState',attempt:id,connected:false,detail:'Reconnecting to Instructor…'});
   } });
   let switched = false;
   live.on(RoomEvent.Reconnected, () => {
     if (current() && switched && agent) {
       if (!isAgent(live.remoteParticipants.get(agent))) { close('The session changed. Retry to reconnect.'); return; }
       agentActivity = live.remoteParticipants.get(agent)?.attributes?.['lk.agent.state'] ?? '';
-      ready = true; helpStatus(names[mode] + ' connected'); controls();
+      ready = true; connectedStatus(names[mode] + ' connected'); controls();
       if(browserCourse)void syncBrowserObservation().catch(error=>{if(current())helpStatus(error.message);});
     }
   });
@@ -1962,7 +1973,7 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
             // mode-picker instruction, even when this mode is already selected.
             const incompatible = /^error: choose (?:Tutor|Instructor)(?:,| or) Doubt Solver(?: or Study)? in this room$/i.test(ack);
             if (current()) close(incompatible
-              ? names[mode] + ' could not start because the learning service rejected this connection request. Contact support to update the service. Your draft is saved.'
+              ? names[mode] + ' could not start because the learning service rejected this connection request. Contact support to update the service.'
               : ack.startsWith('error:') ? ack.slice(6).trim() : names[mode] + ' could not start. Retry to reconnect.');
             return;
           }
@@ -1982,7 +1993,7 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
             if (!current()) return;
           }
           agentActivity = peer.attributes?.['lk.agent.state'] ?? agentActivity;
-          switched = ready = true; helpStatus(names[mode] + ' connected'); controls(); field.focus();
+          switched = ready = true; connectedStatus(names[mode] + ' connected'); controls(); field.focus();
           if(browserCourse)void syncBrowserObservation().catch(error=>{status.textContent=String(error.message);});
           return;
         } catch (e) {
@@ -1992,10 +2003,10 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
       }
       await new Promise(r => setTimeout(r, 350));
     }
-    if (current()) close(names[mode] + ' did not become ready in time. Retry to reconnect. If this continues, contact support. Your draft is saved.');
+    if (current()) close(names[mode] + ' did not become ready in time. Retry to reconnect. If this continues, contact support.');
   } catch { if (current()) close(transportConnected
-    ? names[mode] + ' could not finish starting. Retry to reconnect. If this continues, contact support. Your draft is saved.'
-    : 'Could not reach ' + names[mode] + '. Check your internet connection, then retry. Your draft is saved.'); }
+    ? names[mode] + ' could not finish starting. Retry to reconnect. If this continues, contact support.'
+    : 'Could not reach ' + names[mode] + '. Check your internet connection, then retry.'); }
 }
 /** Help also works before the learner adds code. The synthetic empty selection never becomes a notebook cell. */
 function helpContext() {
@@ -2004,7 +2015,25 @@ function helpContext() {
     question:([...notebook.cells].reverse().find(cell => cell.kind === 'board' && !cell.packet?.notebook_help)?.text
       || heading?.textContent || 'Help me with this notebook.').slice(0,6000)}, prediction:'', run:undefined, focusLine:undefined};
 }
+/** A working connection is reported once, in the header; the help row clears any earlier failure. */
+function connectedStatus(message: string) {
+  deliveryNextStep = '';
+  status.textContent = message;
+  const inline = byId('notebook-help-status');
+  if (inline) inline.textContent = '';
+}
+function showDeliveryIssue(nextStep: string) {
+  const inline = byId('notebook-help-status');
+  if (!inline) return;
+  deliveryNextStep = nextStep;
+  let draft = '';
+  if (field.value) draft = field.value === savedTextDraft ? 'Your draft is saved on this device. ' : 'Your draft is still here. ';
+  else if (attachments.count) draft = 'Your attachments are still here. ';
+  const message = draft + nextStep;
+  if (inline.textContent !== message) inline.textContent = message;
+}
 function helpStatus(message: string) {
+  deliveryNextStep = '';
   status.textContent = message;
   const inline = byId('notebook-help-status');
   if (inline) inline.textContent = message;
@@ -2077,7 +2106,8 @@ async function sendLive(text: string, draftMessage: false | LearnerMessage, disp
   const live = room, dest = agent, id = attempt, draft = draftMessage && draftMessage.text;
   const attached = draftMessage && draftMessage.attachments.length > 0;
   if (!ready || sending || !live || !dest || (!text.trim() && !attached)) return false;
-  sending = true; controls();
+  sending = true; sendingComposerMessage = !!(draftMessage || question); controls();
+  if (sendingComposerMessage) connectedStatus(names[mode] + ' connected');
   const request = mode === 'tutor' ? 'tutor-request-' + crypto.randomUUID() : '';
   try {
     await tutorCancellation;
@@ -2109,7 +2139,7 @@ async function sendLive(text: string, draftMessage: false | LearnerMessage, disp
         await Promise.race([
           live.localParticipant.sendText(text,{topic:'lk.chat',destinationIdentities:[dest],
             attributes:{...(request ? {tutor_request_id:request} : {}), ...(action ? {tutor_action_id:action} : {})}}),
-          new Promise<never>((_,reject)=>{deliveryTimer=setTimeout(()=>reject(new Error('Message delivery timed out. Your draft is still here. Check for a reply before sending it again.')),20000);}),
+          new Promise<never>((_,reject)=>{deliveryTimer=setTimeout(()=>reject(new Error('Message delivery timed out.')),20000);}),
         ]);
       } finally {clearTimeout(deliveryTimer);}
     }
@@ -2127,10 +2157,18 @@ async function sendLive(text: string, draftMessage: false | LearnerMessage, disp
     return true;
   } catch (error) {
     pendingTutorRequests.delete(request);
-    if (id === attempt) helpStatus(error instanceof Error && (browserObservationFailed || /pages|Session changed|Message delivery timed out/.test(error.message)) ? error.message
-      : 'Message delivery could not be confirmed. Your draft and attachments are still here. Try the send arrow again.');
+    if (id === attempt) {
+      if (browserObservationFailed) {
+        if (sendingComposerMessage) showDeliveryIssue('Reconnect Instructor, then send again.');
+      } else if (error instanceof Error && /pages|Session changed/.test(error.message)) helpStatus(error.message);
+      else {
+        const timedOut = error instanceof Error && error.message === 'Message delivery timed out.';
+        helpStatus(timedOut ? 'Message delivery timed out. Check for a reply before sending again.' : 'Message delivery could not be confirmed.');
+        if (sendingComposerMessage) showDeliveryIssue(ready ? 'Check for a reply before sending again.' : 'Reconnect and check for a reply before sending again.');
+      }
+    }
   }
-  finally { if (id === attempt) { sending = false; controls(); } }
+  finally { if (id === attempt) { sending = sendingComposerMessage = false; controls(); } }
   return false;
 }
 
@@ -2322,12 +2360,15 @@ window.addEventListener('message', e => {
     clearTimeout(saveTimer); notebookConflict(false); pendingDoubt = '';
     documentKey = d.documentKey; saveSequence = 0; restoreNotebook(d.notebook);
     document.getElementById('runtime-restore')?.remove();
-    if (byId('notebook-save-status')) byId('notebook-save-status').textContent = 'Saved on this computer. Runs are temporary.';
+    savedTextDraft = notebook.textDraft;
+    if (notebookSaveStatus) notebookSaveStatus.textContent = '';
     return;
   }
   if (d?.type === 'notebookSaved' || d?.type === 'notebookError') {
     if (d.documentKey && d.documentKey !== documentKey) return;
-    if (byId('notebook-save-status')) byId('notebook-save-status').textContent = d.type === 'notebookSaved' ? 'Saved on this computer.' : d.message;
+    savedTextDraft = d.type === 'notebookSaved' ? d.textDraft : undefined;
+    if (deliveryNextStep) showDeliveryIssue(deliveryNextStep);
+    if (notebookSaveStatus) notebookSaveStatus.textContent = d.type === 'notebookError' ? d.message : '';
     if (d.type === 'notebookSaved' || d.conflict === true) notebookConflict(d.conflict === true);
     return;
   }
@@ -2501,7 +2542,10 @@ window.addEventListener('message', e => {
     editors.runtime = typeof d.codeRuntime === 'string' ? d.codeRuntime.slice(0, 200) : 'Local language tools';
     // A new course brings its own language for new code cells.
     const picker = document.getElementById('cell-language') as HTMLSelectElement | null;
-    if (picker && typeof d.codeLanguage === 'string' && [...picker.options].some(option => option.value === d.codeLanguage)) picker.value = d.codeLanguage;
+    const courseLanguage = !!picker && typeof d.codeLanguage === 'string' && [...picker.options].some(option => option.value === d.codeLanguage);
+    if (courseLanguage) picker!.value = d.codeLanguage as string;
+    // With a course language, new cells use it and each cell keeps its own picker: one fewer decision up front.
+    picker?.closest('.add-code-group')?.classList.toggle('course-language', courseLanguage);
     void connect(d, attempt);
   }
   if (d.type === 'failed') { close(d.message); if (d.accessEnded === true) accessNotice(d.message); }
@@ -2558,6 +2602,7 @@ function showHelp(d: {next?: unknown; waiting?: unknown; trend?: unknown}) {
       dot.title = `Step ${item.level}: ${item.short}`; return dot;
     }));
     steps.setAttribute('aria-label', `Help step ${nextHelp} of ${HELP_LEVELS.length}`);
+    steps.hidden = nextHelp === 1; // Progress through the hint ladder appears once a hint has been used.
   }
   const note = document.getElementById('help-note');
   if (note) note.textContent = d.waiting === true ? 'Try the last suggestion and run your code to unlock the next step.' : '';
@@ -2601,7 +2646,9 @@ if (tutorActions) for (const item of notebookHelpActions) {
   };
   tutorActions.append(action);
 }
-field.oninput = () => { askNormally = false; controls(); saveNotebook(); smallerStep(false); if (!practiceMode && mode === 'tutor') watchIdle(openQuestion(), true); };
+field.oninput = () => {
+  if (deliveryNextStep) { deliveryNextStep = ''; byId('notebook-help-status').textContent = ''; }
+  askNormally = false; controls(); saveNotebook(); smallerStep(false); if (!practiceMode && mode === 'tutor') watchIdle(openQuestion(), true); };
 /** Doubt Solver composer: an optional "What I tried" note, which file is the question, and New doubt. */
 function doubtComposer() {
   const doubt = mode === 'doubt_solver' && !practiceMode;
@@ -2712,7 +2759,7 @@ function dataStatus(text: string) {
   let note = document.getElementById('course-data-status');
   if (!note && text) {
     note = document.createElement('small'); note.id = 'course-data-status'; note.setAttribute('role', 'status');
-    (byId('notebook-save-status') ?? status).after(note);
+    (notebookSaveStatus ?? status).after(note);
   }
   if (note) { note.textContent = text; note.hidden = !text; }
 }

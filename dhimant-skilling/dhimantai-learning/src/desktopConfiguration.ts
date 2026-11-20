@@ -37,3 +37,25 @@ export async function preserveDesktopDefaults(appRoot:string, settings:{
     await settings.update(key,value);
   }
 }
+
+/** Developer chrome a new learner cannot use: the title-bar search (Ctrl/Cmd+P and the
+ * Command Palette still work) and the layout toggles. Applied once per profile, and only
+ * where the learner has not chosen a value, so turning either back on is respected. */
+export const LEARNER_CHROME: Record<string, boolean> = {
+  'window.commandCenter': false,
+  'workbench.layoutControl.enabled': false,
+};
+export async function applyLearnerChrome(store: {
+  get(key: string): unknown; update(key: string, value: boolean): PromiseLike<void>;
+}, settings: {
+  inspect(key: string): {globalValue?: unknown; workspaceValue?: unknown; workspaceFolderValue?: unknown} | undefined;
+  update(key: string, value: unknown): PromiseLike<void>;
+}) {
+  if (store.get('learnerChromeApplied')) return;
+  for (const [key, value] of Object.entries(LEARNER_CHROME)) {
+    const explicit = settings.inspect(key);
+    if (explicit?.globalValue !== undefined || explicit?.workspaceValue !== undefined || explicit?.workspaceFolderValue !== undefined) continue;
+    await settings.update(key, value);
+  }
+  await store.update('learnerChromeApplied', true);
+}

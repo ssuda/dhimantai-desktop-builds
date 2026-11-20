@@ -720,7 +720,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
             if (practice && value.exerciseId !== practice.id) throw new Error('This notebook belongs to a different Practice task.');
             notebookWrites = notebookWrites.catch(() => {}).then(() => saveRoomNotebook(target,value,true));
             await notebookWrites;
-            if (documentKey === key) { notebook = value; await view.postMessage({type:'notebookSaved', documentKey:key}); }
+            if (documentKey === key) { notebook = value; await view.postMessage({type:'notebookSaved', documentKey:key, textDraft:value.textDraft}); }
             return;
           }
           await notebookWrites.catch(() => {});
@@ -730,7 +730,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
           courseNoteEdits.clear(); notebook = value; documentKey = randomBytes(16).toString('hex'); savedSequence = 0;
           void debugging.stop(); resetCells(); codeSession?.clear();
           await view.postMessage({type:'restoreNotebook', documentKey, notebook});
-          await view.postMessage({type:'notebookSaved', documentKey});
+          await view.postMessage({type:'notebookSaved', documentKey, textDraft:value.textDraft});
         } catch (error) {
           if (documentKey === key) await view.postMessage({type:'notebookError', documentKey:key, message:error instanceof Error ? error.message : 'Could not reload the notebook.'});
         }
@@ -751,7 +751,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
           notebookWrites = notebookWrites.catch(() => {}).then(async () => {
             if ((await auth.session())?.user.id !== owner) return;
             await saveRoomNotebook(target,value);
-            if (documentKey === key) { notebook = value; await view.postMessage({type:'notebookSaved', documentKey:key}); }
+            if (documentKey === key) { notebook = value; await view.postMessage({type:'notebookSaved', documentKey:key, textDraft:value.textDraft}); }
           });
           await notebookWrites;
         } catch (error) {
@@ -906,7 +906,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
             courseName=workspace.course=lesson.course; selectCourse(lesson.course); workspace.lesson=lesson.id; host.title=lesson.course;
             if(instructor && lesson.course===ERP_COURSE) {
               browserConnectionAccount=account;
-              browserLearning?.setConnection(account,name,false,'Connecting to Instructor… Your draft is saved.');
+              browserLearning?.setConnection(account,name,false,'Connecting to Instructor…');
             }
           }
           let chat=requestedChat;
@@ -1362,7 +1362,7 @@ ${doubt ? `<details id="doubt-history" class="doubt-history"><summary>Chat histo
 <details class="workspace-menu"><summary aria-label="Notebook options" title="Notebook options">⋯</summary><div class="menu-content"><button id="doubt_solver" ${practice ? 'hidden' : ''} aria-pressed="false">Open Doubt Solver</button><hr><button type="button" id="course-notes" class="quiet" title="Search and edit private notes from every chapter">Course Notes</button><button id="save-notebook">Save a copy</button><button id="open-notebook" aria-describedby="notebook-format">Open saved notebook</button><small id="notebook-format">${NOTEBOOK_FORMAT_HELP}</small>${practice ? '<button type="button" id="clear-conversation" disabled>Clear conversation</button>' : ''}<button id="restart-runtime">Restart runtime</button><button id="wide" aria-pressed="false">Focus view</button><hr>
 <label class="code-follow"><input type="checkbox" id="follow-code" checked> Let ${assistantName} follow code edits and runs</label><label class="code-follow"><input type="checkbox" id="stuck-hints"> Offer hints when I’m stuck</label><small id="code-observer-status" role="status"></small>${languageSetting}${practice ? '' : learningPreferencesHtml}</div></details></div></div>
 <div class="workspace-topline"><div class="workspace-title"><div class="room-location">${practice ? '' : '<button type="button" id="choose-course" class="quiet" title="Change course or chapter">← Chapters</button>'}<span id="notebook-mode" class="eyebrow">${html(practice?.course || courseName || assistantName)}</span></div><h1>${html(practice?.title || courseName || 'Your learning notebook')}</h1></div></div>
-<div class="workspace-status"><span id="status" role="status">${practice ? 'Opening Practice…' : initialMode === 'doubt_solver' ? 'Choose a course and chapter to ask Doubt Solver.' : 'Choose a lesson to learn with Instructor.'}</span><small id="notebook-save-status" role="status">Your notebook stays on this computer.</small><button id="tutor" hidden aria-pressed="false">Retry</button><button id="end" hidden disabled>End session</button></div>
+<div class="workspace-status"><span id="status" role="status">${practice ? 'Opening Practice…' : initialMode === 'doubt_solver' ? 'Choose a course and chapter to ask Doubt Solver.' : 'Choose a lesson to learn with Instructor.'}</span><small id="notebook-save-status" role="status"></small><button id="tutor" hidden aria-pressed="false">Retry</button><button id="end" hidden disabled>End session</button></div>
 </header><div id="learning-workspace"><div id="learning-document">
 <section class="notebook-toolbar" aria-label="Notebook tools"><div class="notebook-tools" role="toolbar" aria-label="Notebook tools"><div class="add-code-group"><button id="add-code">＋ Code</button><select id="cell-language" aria-label="New code cell language" title="Language for new cells. Change an existing cell using its own language selector.">${Object.entries(cellLanguages).map(([id,label])=>`<option value="${id}"${cellLanguage===id?' selected':''}>${label}</option>`).join('')}</select></div><button id="add-note" class="quiet" title="A private note on this computer. ${assistantName} never sees it unless you share it.">＋ Note</button><button type="button" id="crt-assessment" data-lessons="${CRT_ENTRY} ${CRT_EXIT}" hidden>Start assessment</button><button type="button" id="previous-chapter" class="quiet" hidden>← Previous chapter</button>${practice ? '' : '<button type="button" id="skip-chapter" class="quiet" hidden>Next chapter →</button>'}<button type="button" id="latest" hidden>Jump to latest</button></div></section>
 <main id="feed" aria-label="Learning notebook" aria-live="polite" tabindex="0" data-diagram-renderer="${asset('learning-room/diagramEngines.js')}"></main>

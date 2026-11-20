@@ -1,5 +1,5 @@
 import {pythonCompleteness} from '../src/pythonCompleteness';
-import { cellLanguage as codeLanguage, cellLanguages as codeLanguages, cellLanguageMismatch, observedRun, validCellInputs } from '../src/roomCode';
+import { cellLanguage as codeLanguage, cellLanguages as codeLanguages, cellLanguageMismatch, observedRun, predictionPrompt, validCellInputs } from '../src/roomCode';
 import type { CodeAction, CodeResult, CodeSnapshot, Execution } from '../src/roomCode';
 import { splitArgs } from '../src/practiceIpynb';
 import { CodeBuffer } from './codeBuffer';
@@ -207,7 +207,7 @@ class PracticeCodeEditor {
   private inputControls = document.createElement('div');
   private prediction = document.createElement('textarea');
   private runPrediction = '';
-  private get predictionLabel() { return this.language === 'sql' ? 'Prediction (not executed)' : 'I expect it to print'; }
+  private get predictionLabel() { return predictionPrompt(this.language, this.code?.value ?? ''); }
   private skipPrediction = -1;
   private resultBlock = document.createElement('section');
   private runTitle = document.createElement('strong');
@@ -572,6 +572,8 @@ class PracticeCodeEditor {
     this.archiveResult();
     this.owner.invalidateRuns();
     this.owner.hooks.changed?.();
+    const row = this.element.querySelector('.predict-row');
+    if (row?.firstChild) row.firstChild.textContent = this.predictionLabel; // Follows the code: print vs result.
     this.status.textContent = `Edited. Enter your prediction in “${this.predictionLabel}”, then Run.`;
     this.update();
     if (!this.current()) return;

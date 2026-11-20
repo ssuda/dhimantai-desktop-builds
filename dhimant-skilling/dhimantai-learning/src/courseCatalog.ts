@@ -74,7 +74,7 @@ const hasCoverage = (course: CatalogCourse) => course.chapters.some(ch => ch.pro
 function coverageMeter(course: CatalogCourse): string {
   const covered = coveredCount(course), label = courseCoverage(course.chapters);
   if (!hasCoverage(course)) return '<p class="small muted">Progress unavailable. Your saved notebook can still be opened.</p>';
-  return `<div class="coverage">${progressBar(covered, course.chapters.length, `${covered} of ${course.chapters.length} chapters covered`)}<p class="small muted">${escape(label)}</p></div>`;
+  return `<div class="coverage">${progressBar(covered, course.chapters.length, `${covered} of ${course.chapters.length} chapters taught`)}<p class="small muted">${escape(label)}</p></div>`;
 }
 /** Most recently active first, so the course a learner was just in is the one they resume. */
 function resumeOrder(courses: CatalogCourse[]): CatalogCourse[] {
@@ -452,7 +452,9 @@ export class CourseCatalog implements vscode.Disposable {
       ? button('Use individual account', 'signIn', '', false, secondary)
       : account ? button(label, 'buy', offer.id, !canPay, secondary) : button(label, 'signIn', '', false, secondary);
     const pending = !!billing?.purchases.some(p => p.status === 'created' || p.status === 'creating');
-    const discovery = (course: CatalogCourse) => `data-course="${escape(course.id)}" data-category="${escape(course.category || 'Software Engineering')}" data-level="${escape(course.level)}" data-enrolled="${course.enrolled}" data-available="${!course.expired && (course.enrolled || course.can_join)}" data-covered="${lessonsCovered(course)}"`;
+    // Courses shown under Continue learning are not repeated in their category while browsing.
+    const resumed = new Set(resumeOrder(courses).slice(0, 3).map(course => course.id));
+    const discovery = (course: CatalogCourse) => `data-resumed="${resumed.has(course.id)}" data-course="${escape(course.id)}" data-category="${escape(course.category || 'Software Engineering')}" data-level="${escape(course.level)}" data-enrolled="${course.enrolled}" data-available="${!course.expired && (course.enrolled || course.can_join)}" data-covered="${lessonsCovered(course)}"`;
     const suggestions = courseSuggestions(courses);
     const courseCard = (course: CatalogCourse) => {
       const p=this.pathways?.[course.id];
@@ -513,7 +515,7 @@ export class CourseCatalog implements vscode.Disposable {
       const label = next ? next.lesson && next.lesson !== next.name ? next.lesson : next.name : '';
       return `<article class="resume-card dh-card${first ? ' first' : ''}"><p class="dh-eyebrow">${escape(course.level || 'Course')}</p><h3>${escape(course.title)}</h3>
         <p class="next">${next ? `${next.progress?.status === 'in_progress' ? 'Pick up' : 'Up next'}: <strong>${escape(label)}</strong>` : !hasCoverage(course) ? 'Open your saved course to continue.' : covered === total && total ? 'Every chapter covered. Review any chapter or take the grade check.' : 'Unlock the next chapter to continue.'}</p>
-        ${topic ? `<p class="small muted">Next topic: ${escape(topic)}</p>` : ''}${hasCoverage(course) ? `${progressBar(covered, total, `${covered} of ${total} chapters covered`)}<p class="small muted">${covered} of ${total} chapters covered</p>` : '<p class="small muted">Progress unavailable</p>'}
+        ${topic ? `<p class="small muted">Next topic: ${escape(topic)}</p>` : ''}${hasCoverage(course) ? `${progressBar(covered, total, `${covered} of ${total} chapters taught`)}<p class="small muted">${covered} of ${total} chapters taught</p>` : '<p class="small muted">Progress unavailable</p>'}
         <div class="actions">${button(course.id === 'erpnext-essentials' ? (next ? 'Continue guided tour' : 'Open guided tour') : (next ? 'Continue learning' : 'Open course'), course.id === 'erpnext-essentials' ? 'browserCourse' : 'practice', course.id, false, !first)}${covered === total && total ? button('Roadmap, grade & certificate', 'grade', course.id, false, true) : ''}</div></article>`;
     };
     const available = courses.filter(c => c.can_join && !c.expired && c.chapters.length && (c.chapters[0].free || c.is_free));
@@ -590,7 +592,7 @@ export class CourseCatalog implements vscode.Disposable {
       button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:3px}
       details{margin:10px 0}summary{cursor:pointer}li{margin:4px 0}.course[hidden],[hidden]{display:none}#status{color:var(--vscode-descriptionForeground);min-height:1em}
       footer{margin-top:28px;font-size:.92em}ul{padding-left:20px}
-      .discovery-filters{display:grid;grid-template-columns:minmax(200px,2fr) repeat(3,minmax(140px,1fr));gap:12px;align-items:end}.discovery-filters label{display:block}.discovery-filters .search{margin:0}.discovery-filters input,.discovery-filters select{font:inherit;min-height:42px}
+      .discovery-filters{display:grid;grid-template-columns:minmax(200px,2fr) repeat(3,minmax(140px,1fr));gap:12px;align-items:end}.discovery-filters label{display:block}.discovery-filters .search{margin:0}.discovery-filters input,.discovery-filters select{font:inherit;min-height:34px}
       .course[data-course] h3{font-size:1.3em;margin-block:6px 4px;text-wrap:balance}.preview-caption{display:block;color:var(--dh-muted);font-size:.85em}
       .preview-entry{margin:8px 0;padding:12px 14px;text-align:start;border:1px solid var(--dh-border);border-inline-start:3px solid var(--dh-accent);background:var(--vscode-editor-background);color:var(--vscode-foreground)}
       .preview-entry:hover{background:var(--vscode-list-hoverBackground,var(--dh-surface))}.preview-entry strong{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
@@ -601,7 +603,7 @@ export class CourseCatalog implements vscode.Disposable {
       .preview-answers button[aria-pressed=true]{outline:2px solid var(--vscode-focusBorder);outline-offset:1px}.preview-feedback:not(:empty){padding:10px 12px;border-inline-start:3px solid var(--vscode-focusBorder);background:var(--dh-surface)}.preview-feedback[data-correct=true]{border-color:var(--dh-success)}
       .course-preview footer{display:flex;justify-content:flex-end;border-top:1px solid var(--dh-border);padding-top:14px;margin-top:18px}
       .suggestions{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0 24px}.suggestions button{white-space:normal;text-align:left}.suggestions small{display:block;font-weight:normal;margin-top:4px;max-width:45ch}#result-count{margin:8px 0;color:var(--dh-muted)}
-      @media(max-width:900px){.discovery-filters{grid-template-columns:1fr 1fr}.discovery-filters .search{grid-column:1/-1}}@media(max-width:480px){.discovery-filters{grid-template-columns:1fr}.course{padding:16px}header.top nav{width:100%}}
+      @media(max-width:900px){.discovery-filters{grid-template-columns:repeat(3,minmax(0,1fr))}.discovery-filters .search{grid-column:1/-1}}@media(max-width:480px){.discovery-filters{grid-template-columns:1fr}.course{padding:16px}header.top nav{width:100%}}
       </style></head><body>
       <header class="top"><div><p class="dh-eyebrow">Welcome to dhimantAI</p><h1>${this.payments?'Manage payments':'Course Catalog'}</h1>${environment === 'production' ? '' : `<p class="muted small">${escape(environment)} service</p>`}</div>
       ${vscode.env.appName === 'dhimantAI'

@@ -5,12 +5,12 @@ export interface ChapterCoverage {
   status: CoverageStatus; covered: number; total: number; topics: TopicCoverage[];
   needs_review?: number; updated_at?: string | null;
 }
-export const coverageNote = 'Covered means taught by Instructor. Needs review means a topic check still needs follow-up practice. Practice and mastery are tracked separately.';
+export const coverageNote = 'Taught means Instructor has explained it; it is not a mastery mark. Needs review means a topic check still needs follow-up practice. Practice and mastery are tracked separately.';
 export function coverageLabel(progress?: ChapterCoverage): string {
   if (!progress || progress.status === 'unavailable') return 'Progress unavailable';
   if (progress.status === 'content_changed') return 'Content updated · Revisit';
-  const label = {not_started:'Not started', in_progress:'In progress', covered:'Covered'}[progress.status];
-  return label + (progress.status === 'in_progress' && progress.total ? ` · ${progress.covered}/${progress.total} topics covered` : '')
+  const label = {not_started:'Not started', in_progress:'In progress', covered:'Taught'}[progress.status];
+  return label + (progress.status === 'in_progress' && progress.total ? ` · ${progress.covered}/${progress.total} topics taught` : '')
     + (progress.needs_review ? ' · Needs review' : '');
 }
 export function courseCoverage(chapters: {progress?: ChapterCoverage}[]): string {
@@ -21,14 +21,14 @@ export function courseCoverage(chapters: {progress?: ChapterCoverage}[]): string
   const changed = chapters.filter(ch => ch.progress?.status === 'content_changed').length;
   const unknown = chapters.length - covered - started - remaining - changed;
   if (unknown === chapters.length) return 'Progress unavailable';
-  return `${covered}/${chapters.length} chapters covered · ${started} in progress · ${remaining} not started`
+  return `${covered}/${chapters.length} chapters taught · ${started} in progress · ${remaining} not started`
     + (changed ? ` · ${changed} to revisit` : '') + (unknown ? ` · ${unknown} unavailable` : '');
 }
 const escape = (text: string) => text.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 export function topicCoverageHtml(progress?: ChapterCoverage): string {
   if (!progress?.topics.length) return '';
   return `<ul class="topic-coverage">${progress.topics.map(topic => `<li>${topic.status === 'covered'
-    ? `✓ <s>${escape(topic.title)}</s> <small>Covered${topic.needs_review ? ' · Needs review' : ''}</small>`
+    ? `✓ ${escape(topic.title)} <small>Taught${topic.needs_review ? ' · Needs review' : ''}</small>`
     : `${escape(topic.title)} <small>${coverageLabel({status:topic.status, covered:0, total:0, topics:[], needs_review:topic.needs_review ? 1 : 0})}</small>`}</li>`).join('')}</ul>`;
 }
 

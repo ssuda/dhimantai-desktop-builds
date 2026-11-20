@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from customize import refresh_webview_csp, configure_app_bar, hide_developer_activity
+from customize import refresh_webview_csp, configure_app_bar, hide_developer_activity, hide_developer_status
 
 
 class WebviewCspTests(unittest.TestCase):
@@ -38,9 +38,22 @@ class WebviewCspTests(unittest.TestCase):
             for container in ('search', 'scm', 'debug', 'extensions'):
                 self.assertIn(f"'workbench.view.{container}'", patched)
             self.assertNotIn('explorer', patched)
-            self.assertIn('this.compositeBar.pin(viewContainer.id);', patched)
+            self.assertIn('this.compositeBar.unpin(viewContainer.id);', patched)
+            self.assertIn('} else if (!cachedViewContainer) {\n\t\t\t\tthis.compositeBar.pin(viewContainer.id);\n\t\t\t}', patched)
             with self.assertRaises(RuntimeError):
                 hide_developer_activity(root)
+
+    def test_new_profiles_hide_developer_status_items(self):
+        upstream = "\t\tconst hiddenRaw = this.storageService.get(StatusbarViewModel.HIDDEN_ENTRIES_KEY, StorageScope.PROFILE);\n"
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / 'src/vs/workbench/browser/parts/statusbar/statusbarModel.ts'
+            path.parent.mkdir(parents=True)
+            path.write_text(upstream)
+            hide_developer_status(root)
+            self.assertIn("StorageScope.PROFILE, '[\"status.problems\",\"status.host\"]')", path.read_text())
+            with self.assertRaises(RuntimeError):
+                hide_developer_status(root)
 
     def test_hash_matches_the_changed_script_without_relaxing_policy(self):
         with tempfile.TemporaryDirectory() as folder:
