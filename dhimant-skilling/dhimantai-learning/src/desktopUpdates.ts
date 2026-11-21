@@ -101,7 +101,10 @@ export class DesktopUpdates {
       this.release = undefined;
       this.set({ status: 'checking', installed: this.target.version, message: 'Checking desktop updates…' });
       try {
-        const response = await this.fetcher(DESKTOP_RELEASES, { credentials: 'omit', redirect: 'error', cache: 'no-store',
+        const manifestUrl = this.target.environment === 'production'
+          ? 'https://dhimant.ai/upskill/releases-production.json'
+          : DESKTOP_RELEASES;
+        const response = await this.fetcher(manifestUrl, { credentials: 'omit', redirect: 'error', cache: 'no-store',
           signal: AbortSignal.any([this.abort.signal, AbortSignal.timeout(8000)]) });
         if (!response.ok || !response.body) throw new Error('Could not check desktop updates. Try again later.');
         const reader = response.body.getReader();

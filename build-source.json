@@ -1,5 +1,5 @@
 {
-  "sourceCommit": "4ab1aaae09297e75f933abf4095a1891c325cea2",
+  "sourceCommit": "eb03096b8d77f607e399ad02c3c6d2cfa21ab37b",
   "sourceRepository": "bitbucket.org/optficial/dhimantai",
   "files": {
     ".github/workflows/desktop-build.yml": "4906c6824806ca297853daa4cebaa92bc8b1465683027194ea5c17432d648577",
@@ -151,8 +151,8 @@
     "dhimant-skilling/dhimantai-learning/media/projects/skilling-project.json": "a96f01ac15f7cdc10c9767c1695c88001cf391dc9c52f79c674d942be0df7710",
     "dhimant-skilling/dhimantai-learning/media/pycall.py": "82ee1f1b8adce19f0c1169f48ad9858b2912cc893d2dfc536542c564648afcc6",
     "dhimant-skilling/dhimantai-learning/media/pytrace.py": "241812a047e8f8cf6f17d5e9cc722d2e0650fa1c5081a3acfdaed63881e18da7",
-    "dhimant-skilling/dhimantai-learning/package-lock.json": "eff96ca986b2a73f3b61e62c5ea775b31398ea38362db0ff65606a10d5fbdb58",
-    "dhimant-skilling/dhimantai-learning/package.json": "f23c27c79a35ce4ed218f62d413c750f36b007252b44a18faff90a5580e19d92",
+    "dhimant-skilling/dhimantai-learning/package-lock.json": "6395eab78468d3b4311123c367450d0e1bd02c56ee0b2a4fe1b5f1b0aeb3c36e",
+    "dhimant-skilling/dhimantai-learning/package.json": "a1c3673c3e7ada0f76e2c0ba8ce813b2ff6ad82eceab1ccad0ba16c32534569a",
     "dhimant-skilling/dhimantai-learning/scripts/bundle-audio.mjs": "a9d4324049d726ab111a1e43161752472edb93f553c8954f8bcf5651b5442f77",
     "dhimant-skilling/dhimantai-learning/scripts/bundle-authoring.mjs": "de016ba04f28e498f3ad2997c3659b6a247ac77adc0e85c2ab930e30d8acd440",
     "dhimant-skilling/dhimantai-learning/scripts/capstone/build_shelf.py": "b3dc9a3666cb04dda4953c88684bfeb11a55491b34781457852e521e6e9248b6",
@@ -253,7 +253,7 @@
     "dhimant-skilling/dhimantai-learning/src/desktopConfiguration.ts": "0e1c59a298d270dc3eb366c2a2c9d2b32bcd7322f329729922f76e2fd6253b65",
     "dhimant-skilling/dhimantai-learning/src/desktopFeatures.ts": "473ff88814056c2fe94c97199cb3447b3d3f809e26b22e533415cf394c1fe899",
     "dhimant-skilling/dhimantai-learning/src/desktopRoom.ts": "e87a92b7c9967a626463023d96e88d895c6a48ecf084cbcae77191f412b0a437",
-    "dhimant-skilling/dhimantai-learning/src/desktopUpdates.ts": "b2dafceed4701b7a8e562db1fc75521a20891eecee386bc5b8c8af45a131e331",
+    "dhimant-skilling/dhimantai-learning/src/desktopUpdates.ts": "0e8bad005db01259e24fd2ba2771c41c6aadc833d2f979f26528bacaada882d5",
     "dhimant-skilling/dhimantai-learning/src/dictation.ts": "0fc4c5f8d78bee139cc9cf2b3dc58c70af6529b074836e8931248ed40a52c264",
     "dhimant-skilling/dhimantai-learning/src/doubtConversations.ts": "7067481892e4911bb4926c9d8059c34f4555c7e277377595fc0bc4cc36512948",
     "dhimant-skilling/dhimantai-learning/src/environments.ts": "6fbcce26508c4a97818674b81705e78fe2fd1c0f7b66858d135aa1189c67c296",
