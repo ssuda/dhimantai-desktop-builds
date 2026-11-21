@@ -1,18 +1,19 @@
 name: Custom desktop preview
 on:
   push:
-    branches: [main]
+    branches: [main, production]
 permissions:
   contents: read
   actions: read
 # Keep separate main pushes from building releases at the same time.
 concurrency:
-  group: desktop-preview-main
+  group: desktop-build-${{ github.ref_name }}
   cancel-in-progress: false
 jobs:
   windows_x64:
     uses: ./.github/workflows/desktop-build.yml
     with:
+      environment: ${{ github.ref_name == 'production' && 'production' || 'staging' }}
       target: windows-x64
       runner: windows-2022
       arch: x64
@@ -21,11 +22,13 @@ jobs:
     needs: windows_x64
     uses: ./.github/workflows/desktop-windows-acceptance.yml
     with:
+      environment: ${{ github.ref_name == 'production' && 'production' || 'staging' }}
       arch: x64
   macos_arm64:
     needs: windows_acceptance
     uses: ./.github/workflows/desktop-build.yml
     with:
+      environment: ${{ github.ref_name == 'production' && 'production' || 'staging' }}
       target: macos-arm64
       runner: macos-15
       arch: arm64
@@ -35,6 +38,7 @@ jobs:
     needs: macos_arm64
     uses: ./.github/workflows/desktop-build.yml
     with:
+      environment: ${{ github.ref_name == 'production' && 'production' || 'staging' }}
       target: macos-x64
       runner: macos-15-intel
       arch: x64
@@ -44,6 +48,7 @@ jobs:
     needs: macos_x64
     uses: ./.github/workflows/desktop-build.yml
     with:
+      environment: ${{ github.ref_name == 'production' && 'production' || 'staging' }}
       target: linux-x64
       runner: ubuntu-24.04
       arch: x64
