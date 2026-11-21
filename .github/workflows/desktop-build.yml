@@ -81,7 +81,7 @@ jobs:
       - name: Prepare private client configuration
         env:
           CLIENT_ENVIRONMENT: ${{ inputs.environment }}
-          FLUTTER_CONFIG: ${{ inputs.environment == 'staging' && secrets.FLUTTER_STAGING_ENV_JSON || secrets.FLUTTER_PRODUCTION_ENV_JSON }}
+          FLUTTER_CONFIG: ${{ secrets[inputs.environment == 'production' && 'FLUTTER_PRODUCTION_ENV_JSON' || 'FLUTTER_STAGING_ENV_JSON'] }}
         run: |
           python - <<'PY'
           import json, os
