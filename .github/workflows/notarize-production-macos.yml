@@ -2,8 +2,7 @@ name: Submit signed production desktop to Apple
 on:
   push:
     branches: [codex/notarize-1-143-10012]
-permissions:
-  contents: read
+permissions: {}
 jobs:
   submit:
     name: Submit ${{ matrix.arch }}
@@ -15,10 +14,12 @@ jobs:
       matrix:
         include:
           - arch: arm64
+            url_secret: NOTARY_INPUT_ARM64_URL
             name: dhimantAI-1.143.10012-darwin-arm64.dmg
             sha256: cd5a2cf9f3451fce64bfea984cb0985bb1348efbda1de2ea911a9ce322642eda
             bytes: '284744136'
           - arch: x64
+            url_secret: NOTARY_INPUT_X64_URL
             name: dhimantAI-1.143.10012-darwin-x64.dmg
             sha256: 6f9982290de013f31bd969f417b5e833471390b13e249c14a43b37e4eec5ebf9
             bytes: '293394083'
@@ -30,11 +31,11 @@ jobs:
       - name: Download and check the exact signed disk image
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          INPUT_URL: ${{ secrets[matrix.url_secret] }}
         run: |
           set -euo pipefail
-          id=$(gh api repos/ssuda/dhimantai-desktop-builds/releases/453557118 | jq -er --arg n "$DMG_NAME" --arg sha "sha256:$EXPECTED_SHA" --argjson b "$EXPECTED_BYTES" 'select(.draft and .tag_name=="private-notary-inputs-1.143.10012")|.assets[]|select(.name==$n and .digest==$sha and .size==$b and .state=="uploaded")|.id')
-          gh api -H 'Accept: application/octet-stream' "repos/ssuda/dhimantai-desktop-builds/releases/assets/$id" > "$RUNNER_TEMP/$DMG_NAME"
+          curl --fail --silent --show-error --retry 4 --location --proto '=https' "$INPUT_URL" --output "$RUNNER_TEMP/$DMG_NAME"
+          unset INPUT_URL
           actual=$(shasum -a 256 "$RUNNER_TEMP/$DMG_NAME" | cut -d' ' -f1)
           test "$actual" = "$EXPECTED_SHA"
           codesign --verify --strict -R '=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "HSUM36L347"' "$RUNNER_TEMP/$DMG_NAME"
