@@ -16,13 +16,14 @@ jobs:
       - name: Install Podman on the disposable Windows runner
         shell: pwsh
         run: |
-          $uri = 'https://github.com/podman-container-tools/podman/releases/download/v6.2.0/podman-installer-windows-amd64.msi'
-          $installer = Join-Path $env:RUNNER_TEMP podman.msi
+          $uri = 'https://github.com/podman-container-tools/podman/releases/download/v6.2.0/podman-remote-release-windows_amd64.zip'
+          $installer = Join-Path $env:RUNNER_TEMP podman.zip
           curl.exe --fail --location --retry 2 --output $installer $uri
-          if ($LASTEXITCODE -ne 0 -or (Get-FileHash $installer).Hash -ne 'e4070491d0dba7138a06afd8e89e87a54b75b997801b5a81c911bc2869a743e9') { throw 'Podman installer digest mismatch' }
-          $installed = Start-Process msiexec.exe -ArgumentList @('/i', $installer, '/qn', '/norestart') -PassThru -Wait
-          if ($installed.ExitCode -notin @(0,3010)) { throw "Podman installation failed with $($installed.ExitCode)" }
-          $pod = Get-ChildItem $env:ProgramFiles -Filter podman.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0 -or (Get-FileHash $installer).Hash -ne 'c085a4860cadf8957aaee0b4693ea98117a908ce960aeb2a74d1570eba76aa88') { throw 'Podman installer digest mismatch' }
+          $tools = Join-Path $env:RUNNER_TEMP 'podman-tools'
+          Expand-Archive $installer $tools
+          $pod = Get-ChildItem $tools -Filter podman.exe -Recurse | Select-Object -First 1
+          if (-not $pod) { $pod = Get-ChildItem $tools -Filter podman-remote*.exe -Recurse | Select-Object -First 1; if ($pod) { Copy-Item $pod.FullName (Join-Path $pod.Directory.FullName 'podman.exe') } }
           if (-not $pod) { throw 'Podman executable missing' }
           $pod.Directory.FullName | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       - name: Start the local WSL course runtime
