@@ -1,0 +1,52 @@
+name: Staging first notebook on Windows
+on:
+  push:
+    branches: [codex/preview13-windows-notebook]
+permissions:
+  contents: read
+jobs:
+  notebook:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+      - name: Install Podman on the disposable Windows runner
+        shell: pwsh
+        run: |
+          $uri = 'https://github.com/podman-container-tools/podman/releases/download/v6.2.0/podman-installer-windows-amd64.msi'
+          $installer = Join-Path $env:RUNNER_TEMP podman.msi
+          curl.exe --fail --location --retry 2 --output $installer $uri
+          if ($LASTEXITCODE -ne 0 -or (Get-FileHash $installer).Hash -ne 'e4070491d0dba7138a06afd8e89e87a54b75b997801b5a81c911bc2869a743e9') { throw 'Podman installer digest mismatch' }
+          $installed = Start-Process msiexec.exe -ArgumentList @('/i', $installer, '/qn', '/norestart') -PassThru -Wait
+          if ($installed.ExitCode -notin @(0,3010)) { throw "Podman installation failed with $($installed.ExitCode)" }
+          $pod = Get-ChildItem $env:ProgramFiles -Filter podman.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $pod) { throw 'Podman executable missing' }
+          $pod.Directory.FullName | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Start the local WSL course runtime
+        shell: pwsh
+        env:
+          CONTAINERS_MACHINE_PROVIDER: wsl
+        run: |
+          wsl --version
+          podman machine init
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          podman machine start
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          podman info --format '{{.Host.Arch}}'
+      - name: Run the first two course notebook cells
+        working-directory: dhimant-skilling/dhimantai-learning
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx tsc -p .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node test/firstCourseRuntime.cjs asia-south1-docker.pkg.dev/gen-lang-client-0209569386/course-runtimes/runtime@sha256:aca8bca288fc86570cbfc3d56a1dd310cd3f35e1fbd7c89cfc407e143d0b7b89 windows-first-exercise.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-first-exercise
+          path: dhimant-skilling/dhimantai-learning/windows-first-exercise.json
+          if-no-files-found: error
