@@ -11,7 +11,7 @@ import {courseRecipe, Recipe} from '../src/courseRecipe';
 test('existing speech-to-text workspace gets the new package and a new image fingerprint without losing files', async () => {
   const filename = resolve(__dirname, '../src/courseWorkspace.js'), exports:any = {};
   const nativeRequire = createRequire(filename);
-  const stubs = new Set(['vscode', './podman', './courseEngine', './courseRecovery', './courseDebug',
+  const stubs = new Set(['vscode', './courseAppPreview', './podman', './courseEngine', './courseRecovery', './courseDebug',
     './courseReadiness', './courseTerminal', './colab', './colabNotebooks', './notebookKernelPicker']);
   runInNewContext(readFileSync(filename, 'utf8'), {exports, process,
     require:(name:string) => stubs.has(name) ? {} : nativeRequire(name)});

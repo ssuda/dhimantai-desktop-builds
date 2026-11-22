@@ -33,6 +33,7 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
     env: {appName:'dhimantAI'}, TabInputWebview: class {},
     Uri: {file: uri, joinPath: (base: any, ...parts: string[]) => uri(join(base.fsPath, ...parts)), parse: () => ({fsPath: '', scheme: 'untitled'})},
     Disposable: {from: () => disposable},
+    EventEmitter: class { event = listener; fire() {} dispose() {} },
     RelativePattern: class {},
     commands: {registerCommand: listener, executeCommand: async () => undefined},
     workspace: {isTrusted: true, textDocuments: [], workspaceFolders: [], onDidChangeConfiguration: listener, onDidChangeTextDocument: listener,
@@ -50,6 +51,7 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
   const modules: Record<string, unknown> = {
     vscode,
     './coachAudio': {},
+    './skillingMenu': {courseAction: () => vscode.commands.executeCommand},
     './coachSurface': {CoachSurface: class { select() {} async show() {} async hide() {} webviewFor() { return webview; } dispose() {} }},
     './projectCore': {...core, projectIdentity: async () => 'course-agent', isEnabledProject: async () => true,
       loadProjectCurriculum: async () => curriculum, trackedProjectFiles: () => [],

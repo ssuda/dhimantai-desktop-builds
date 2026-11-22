@@ -83,7 +83,7 @@ test('removed local runtime requests do nothing; cancelled container setup stays
 });
 
 test('a legacy courseContainers=false preference cannot enable host execution', () => {
-  const dependencies=Object.fromEntries(['podman','courseEngine','courseRecovery','courseDebug','courseReadiness',
+  const dependencies=Object.fromEntries(['courseAppPreview','podman','courseEngine','courseRecovery','courseDebug','courseReadiness',
     'courseTerminal','colab','colabNotebooks','notebookKernelPicker'].map(name=>['./'+name,{}]));
   const api=moduleWithHost('courseWorkspace',{workspace:{getConfiguration:()=>({get:()=>false})}},'win32',dependencies);
   const courses=Object.create(api.CourseWorkspaces.prototype);
@@ -120,7 +120,7 @@ test('student GPU selection opens the existing Jupyter picker only for the curre
 });
 
 test('starting the inference course exports labs without setting up a CPU container', async () => {
-  const dependencies=Object.fromEntries(['podman','courseEngine','courseRecovery','courseDebug','courseReadiness',
+  const dependencies=Object.fromEntries(['courseAppPreview','podman','courseEngine','courseRecovery','courseDebug','courseReadiness',
     'courseTerminal','colab','notebookKernelPicker'].map(name=>['./'+name,{}]));
   dependencies['./colabNotebooks'] = {};
   dependencies['./courseConfiguration'] = {};
