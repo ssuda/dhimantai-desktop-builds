@@ -18,7 +18,7 @@ function surface(livekit: unknown = {RoomEvent:{}}, composer = notebookMessageBa
   const ids = ['tutor','doubt_solver','end','wide','latest','add-note','add-code','save-notebook','open-notebook','restart-runtime','clear-conversation'];
   const dom = new JSDOM('<!doctype html><header class="workspace-header"><div class="workspace-title"><h1>Implement `subtract_time` &lt; safely</h1></div><div class="workspace-actions"></div></header><main id="feed"></main>' + composer
     + ids.map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('')
-    + '<section class="notebook-toolbar"><div class="notebook-tools"></div></section><input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox"><span id="status"></span><span id="code-observer-status"></span><span id="notebook-save-status"></span>'
+    + '<section class="notebook-toolbar"><div id="saved-task-actions"></div><div class="notebook-jumps"></div><div class="notebook-tools"></div></section><input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox"><span id="status"></span><span id="code-observer-status"></span><span id="notebook-save-status"></span>'
     + '<select id="cell-language">' + Object.keys(cellLanguages).map(language => `<option>${language}</option>`).join('') + '</select>'
     + '<select id="course-runtime"><option value="course">Course container</option><option value="colab" data-gpu hidden disabled>Google Colab · GPU</option><option value="cloud" data-gpu hidden disabled>Cloud GPU · Jupyter</option><option value="jupyter" data-gpu hidden disabled>Your GPU · Jupyter</option><option value="ssh" data-gpu data-managed-gpu hidden disabled>SSH</option><option value="cloud-cli" data-gpu data-managed-gpu hidden disabled>Cloud Spot GPUs</option><option value="finish" data-gpu hidden disabled>Finish lab</option><option value="terminal">Open course terminal</option><option value="setup">Set up / rebuild course</option></select>',
     {runScripts:'outside-only',url:'https://webview.example',pretendToBeVisual:true});
@@ -1536,7 +1536,8 @@ test('desktop media controls explain connection, session and mode restrictions w
   const mic = w.document.getElementById('audio-microphone') as HTMLButtonElement;
   try {
     post({type:'openTutor'}); selectLesson(w,sent.at(-1).attempt);
-    assert.match(message.textContent!, /Connect to Instructor/); assert.equal(mic.disabled,true);
+    // Not being connected is already in the header; the microphone keeps the reason in its own label.
+    assert.equal(message.hidden,true); assert.match(mic.title, /Connect to Instructor/); assert.equal(mic.getAttribute('aria-label'),mic.title); assert.equal(mic.disabled,true);
     let attempt = sent.at(-1).attempt;
     post({type:'restoreNotebook',attempt,documentKey:'no-media',notebook:emptyNotebook()});
     post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media:false}); await tick();

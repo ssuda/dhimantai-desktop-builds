@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { checkCommand, checkState } from './projectCore';
+import { checkCommand, evidenceFingerprint, checkState } from './projectCore';
+import { redactSecrets } from './projectContext';
 import type { ProjectCheckpoint, ProjectCurriculum, ProjectSnapshot, ProjectStep } from './projectCore';
 
 export interface ProjectProgress {
@@ -48,10 +49,35 @@ export function checkpointCurrent(checkpoint: ProjectCheckpoint, snapshot: strin
 export function projectMilestones(curriculum: ProjectCurriculum, progress: ProjectProgress, snapshot?: string | EvidenceSnapshot) {
   return curriculum.steps.map(step => {
     const checkpoint = progress.checkpoints[step.id];
-    return {id: step.id, status: checkpoint?.completed
-      ? (snapshot && !checkpointCurrent(checkpoint, snapshot) ? 'review' : 'complete')
+    return {id: step.id, verified: !!checkpoint?.verified, status: checkpoint?.completed
+      ? (snapshot && !checkpoint.verified && !checkpointCurrent(checkpoint, snapshot) ? 'review' : 'complete')
       : (checkpoint || progress.visited.includes(step.id) ? 'in_progress' : 'not_started')};
   });
+}
+
+/** Historical demonstrations remain useful after later milestones change the same files. */
+export function milestoneHistory(curriculum: ProjectCurriculum, progress: ProjectProgress, snapshot: ProjectSnapshot) {
+  return curriculum.steps.flatMap(step => {
+    const saved = progress.checkpoints[step.id];
+    if (!saved) return [];
+    const state = saved.verified && saved.completed ? 'verified' : saved.completed ? 'self_reported' : 'draft';
+    const current = saved.verified ? saved.verified.fingerprint === evidenceFingerprint(snapshot)
+      : checkpointCurrent(saved, snapshot);
+    const evidence = redactSecrets(saved.verified?.summary || saved.note).slice(0, 180);
+    const reflection = saved.verified ? redactSecrets(saved.note.trim().split(/\r?\n/).slice(1).join(' ')).slice(0, 120) : '';
+    return [{step: step.id, state, current, evidence, ...(reflection ? {learner_note: reflection} : {})}];
+  }).slice(-12);
+}
+
+export function checkpointProof(step: ProjectStep, output: string, note: string) {
+  const proof = JSON.parse(output) as {summary:string; answers:string[]};
+  const normalize = (text: string) => text.trim().replace(/→/g, '->').replace(/\s*->\s*/g, '->')
+    .replace(/\s*,\s*/g, ',').replace(/\s+/g, ' ');
+  const answer = normalize(note.trim().split(/\r?\n/)[0]);
+  const matches = proof.answers.some(value => /^[0-9a-f]{40}$/.test(value)
+    ? /^[a-f0-9]{7,40}$/i.test(answer) && value.startsWith(answer.toLowerCase()) : normalize(value) === answer);
+  if (!matches) throw new Error('The evidence does not match this milestone. ' + step.evidencePrompt);
+  return proof.summary;
 }
 
 /** Prompts follow observable work. The learner always controls the check and the self-reported checkpoint. */
@@ -59,7 +85,7 @@ export function readingGuidance(curriculum: ProjectCurriculum, index: number, mi
     progress: ProjectProgress, check: ReturnType<typeof checkState>, snapshot?: ProjectSnapshot) {
   const step = curriculum.steps[index], guide = step.guide;
   if (!guide) return;
-  if (!snapshot?.reading) return 'Coach could not read the project files. Open the milestone instructions below to continue.';
+  if (!snapshot?.reading) return 'Open Milestone brief and files to continue while the project files are unavailable.';
   if (milestones[index].status === 'review') return 'Revisit your saved evidence for this milestone. After reviewing the changes, select Save changes to confirm it.';
   if (milestones[index].status === 'complete') {
     const next = milestones.findIndex((m, i) => i > index && m.status !== 'complete');

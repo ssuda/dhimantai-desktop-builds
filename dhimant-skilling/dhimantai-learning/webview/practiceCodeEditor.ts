@@ -2,8 +2,7 @@ import {pythonCompleteness} from '../src/pythonCompleteness';
 import { cellLanguage as codeLanguage, cellLanguages as codeLanguages, cellLanguageMismatch, observedRun, predictionPrompt, validCellInputs } from '../src/roomCode';
 import type { CodeAction, CodeResult, CodeSnapshot, Execution } from '../src/roomCode';
 import { splitArgs } from '../src/practiceIpynb';
-import { CodeBuffer } from './codeBuffer';
-import { expandIcon, collapseIcon } from './icons';
+import { InstructorCodeCell } from './instructorCodeCell';
 import type { NotebookDraft } from '../src/tutorNotebook';
 import { judgeVariation, predictionFeedback } from '../src/learningLoop';
 import type { Variation } from '../src/learningLoop';
@@ -12,6 +11,7 @@ import { SkillPractice } from './skillPractice';
 import { NativeDebugControls } from './nativeDebugControls';
 import type { DebugEvidence, NativeDebugAction, NativeDebugReply, NativeDebugState } from '../src/debugEvidence';
 import { runInputs } from './lessonOutput';
+import { matchesExpectedError } from '../src/lessonExecution';
 
 // Unrequested hints interrupt thinking, so they are opt-in and wait for signs of being stuck.
 export const STUCK_PAUSE_MS = 90000, FAILED_RUN_PAUSE_MS = 30000, HINT_GAP_MS = 120000;
@@ -24,12 +24,12 @@ type Hooks = {
   submit: (text: string, display: string) => Promise<boolean>;
   tutor?: (snapshot: CodeSnapshot, run: ReturnType<typeof observedRun> | undefined, message: string, prediction: string, stage?: SkillStage, debuggerState?: DebugEvidence) => Promise<boolean>;
   changed?: () => void;
-  executionFinished?: (key: string, snapshot: CodeSnapshot, run?: Execution, error?: string) => void;
+  executionFinished?: (key: string, snapshot: CodeSnapshot, run?: Execution, error?: string, expectedError?: string) => void;
   debug?: (snapshot:CodeSnapshot, action:NativeDebugAction) => Promise<NativeDebugReply>;
   /** Practice tools that only run code: sample tests, a Python step-through and a new input. */
   tool?: (snapshot: CodeSnapshot, tool: PracticeTool, cases?: LearnerTestCase[]) => Promise<ToolReply>;
 };
-export type PracticeTool = 'tests' | 'trace' | 'variation' | 'my_tests' | 'test_code';
+export type PracticeTool = 'grade' | 'tests' | 'trace' | 'variation' | 'my_tests' | 'test_code';
 type TestRow = {id: string; verdict: string; stdin: string; expected: string; actual: string; stderr: string};
 type TraceStepView = {line: number; event: string; function: string; output: number | null; locals: Record<string, string>; exception?: string};
 export type ToolReply = {error?: string; tests?: TestRow[]; variation?: Variation; execution?:Execution;
@@ -62,8 +62,13 @@ export class PracticeCodeEditors {
   private lastGuidance = 0;
   private focused?: PracticeCodeEditor;
   private restored = new Map<string, NotebookDraft>();
+  runPracticeTool(tool: 'tests' | 'grade') {
+    const editor = this.editors.find(item => item.task?.source === 'Practice exercise' && item.born === this.attempt);
+    if (editor) void editor.runTool(tool);
+  }
   solution() { return this.editors.find(editor => editor.task?.source === 'Practice exercise')?.context(); }
   context(id: string) { return this.editors.find(editor => editor.id === id)?.context(); }
+  elementForKey(key: string) { return this.editors.find(editor => editor.key === key)?.element; }
   selection() { return (this.focused ?? this.editors.find(editor => !!editor.task) ?? this.editors[0])?.context(); }
   contexts() { return this.editors.map(editor => editor.context()); }
   focusLine(id: string, line: number) { this.editors.find(editor => editor.id === id)?.focusLine(line); }
@@ -118,7 +123,7 @@ export class PracticeCodeEditors {
   connected = false;
   tutorBusy = false;
   aiEnabled = true;
-  private runtimeName = 'Local language tools';
+  private runtimeName = 'Course runtime';
   get runtime() { return this.runtimeName; }
   set runtime(value: string) { this.runtimeName = value; for (const editor of this.editors) editor.update(); }
   following = true;
@@ -164,6 +169,8 @@ export class PracticeCodeEditors {
       if (!language || !code.textContent?.trim() || code.textContent.length > 12000) continue;
       const key = cellId + ':' + index++, draft = this.restored.get(key);
       const editor = new PracticeCodeEditor(this, draft?.snippet ?? 'code-' + ++this.counter, draft?.language ?? language, draft?.source ?? code.textContent, question.slice(0, 6000), undefined, key, draft);
+      const expected = code.parentElement!.dataset.demoError;
+      if (expected) editor.demonstration = {source:code.textContent, language, error:expected};
       this.editors.push(editor);
       code.parentElement!.replaceWith(editor.element);
     }
@@ -195,33 +202,23 @@ export class PracticeCodeEditors {
   }
 }
 
-class PracticeCodeEditor {
-  readonly element = document.createElement('section');
-  private code: CodeBuffer;
+class PracticeCodeEditor extends InstructorCodeCell {
   private input = document.createElement('textarea');
   private args = document.createElement('input');
   private interactive = document.createElement('input');
   private files:{name:string;content:string}[]=[];
-  private rich = document.createElement('div');
   private liveInput = document.createElement('input');
   private inputControls = document.createElement('div');
   private prediction = document.createElement('textarea');
   private runPrediction = '';
   private get predictionLabel() { return predictionPrompt(this.language, this.code?.value ?? ''); }
   private skipPrediction = -1;
-  private resultBlock = document.createElement('section');
-  private runTitle = document.createElement('strong');
-  private runInput = document.createElement('code');
   private runCount = 0;
-  private output = document.createElement('pre');
   private feedback = document.createElement('div');
-  private status = document.createElement('p');
-  private languagePicker = document.createElement('select');
   private completeness = document.createElement('p');
   private mismatch = document.createElement('div');
   private mismatchText = document.createElement('span');
   private switchLanguage = document.createElement('button');
-  private resizeButton = document.createElement('button');
   private actions: HTMLButtonElement[] = [];
   private revision = 0;
   private request = 0;
@@ -230,6 +227,7 @@ class PracticeCodeEditor {
   private observationTimer?: ReturnType<typeof setTimeout>;
   private guidanceTimer?: ReturnType<typeof setTimeout>;
   readonly born: number;
+  demonstration?: {source:string; language:string; error:string};
   private submitButton?: HTMLButtonElement;
   private explanation = document.createElement('textarea');
   private submitting = false;
@@ -238,7 +236,7 @@ class PracticeCodeEditor {
   private helped = false;
   private reflection = document.createElement('details');
   private tools = document.createElement('div');
-  private toolButtons: Record<Exclude<PracticeTool, 'my_tests' | 'test_code'>, HTMLButtonElement> | undefined;
+  private toolButtons: Record<Exclude<PracticeTool, 'grade' | 'my_tests' | 'test_code'>, HTMLButtonElement> | undefined;
   private toolOutput = document.createElement('div');
   private toolBusy = false;
   private testsPassed = -1;
@@ -247,45 +245,24 @@ class PracticeCodeEditor {
   private nativeDebug: NativeDebugControls;
   private debugBusy = false;
   private attemptVariation?: {variation: Variation; previousStdin: string; assisted: boolean};
-  private bar!: HTMLElement;
   private debugging = false;
   private assistant() { return this.owner.hooks.assistant?.() ?? 'Instructor'; }
   constructor(private owner: PracticeCodeEditors, readonly id: string, private language: string,
       source: string, private question: string, readonly task?: TextbookTask, readonly key = id, draft?: NotebookDraft) {
+    super({id, key, language, languages: codeLanguages, source,
+      title: task ? 'Your solution' : undefined,
+      note: owner.runtime + (language === 'python' ? '. Python cells share variables until the runtime restarts.' : '. Cells share files. Use shell cells for project builds and package setup.'),
+      changed: () => this.changed(), focused: () => owner.focus(this),
+      changeLanguage: value => this.setLanguage(value),
+      complete: (text, offset) => owner.complete(this.language, text, offset),
+      run: () => {
+        if (this.busy) owner.hooks.post({type:'cellControl', attempt:this.born, action:'stop'});
+        else this.act('run');
+      },
+    });
+    const {heading, note, buffer, bar} = this;
     this.born = owner.attempt;
-    this.element.className = 'practice-code-editor';
-    this.element.setAttribute('aria-label', codeLanguages[language] + ' practice editor');
-    const title = document.createElement('strong');
-    this.languagePicker.setAttribute('aria-label', 'Code cell language');
-    for (const [value, label] of Object.entries(codeLanguages)) {
-      const option = document.createElement('option'); option.value = value; option.textContent = label;
-      this.languagePicker.append(option);
-    }
-    this.languagePicker.value = language;
-    this.languagePicker.title = task ? 'This exercise uses ' + codeLanguages[language] : 'Language used to edit and run this cell';
-    this.languagePicker.onchange = () => this.setLanguage(this.languagePicker.value);
-    if (task) title.textContent = 'Your solution';
-    else title.append(this.languagePicker, ' · Code cell');
-    const heading = document.createElement('div'); heading.className = 'practice-editor-heading';
-    heading.append(title, this.resizeButton);
-    const note = document.createElement('small'); note.textContent = owner.runtime + (language === 'python' ? '. Python cells share variables until the runtime restarts.' : '. Cells share files. Use shell cells for project builds and package setup.');
-    const buffer = document.createElement('div'); buffer.className = 'practice-buffer';
-    buffer.id = id + '-buffer';
-    this.resizeButton.type = 'button'; this.resizeButton.innerHTML = expandIcon;
-    this.resizeButton.className = 'editor-resize';
-    this.resizeButton.title = 'Enlarge editor';
-    this.resizeButton.setAttribute('aria-label', 'Enlarge editor');
-    this.resizeButton.setAttribute('aria-controls', buffer.id);
-    this.resizeButton.setAttribute('aria-expanded', 'false');
-    this.resizeButton.onclick = () => {
-      const expanded = buffer.classList.toggle('is-enlarged');
-      this.resizeButton.innerHTML = expanded ? collapseIcon : expandIcon;
-      this.resizeButton.title = expanded ? 'Shrink editor' : 'Enlarge editor';
-      this.resizeButton.setAttribute('aria-label', this.resizeButton.title);
-      this.resizeButton.setAttribute('aria-expanded', String(expanded));
-      this.code.view.requestMeasure();
-    };
-    this.code = new CodeBuffer(buffer, source, language, () => this.changed(), () => this.owner.focus(this),(source,offset)=>this.owner.complete(this.language,source,offset));
+    this.actions.push(this.runButton);
     this.input.onfocus = () => this.owner.focus(this);
     this.input.rows = 2; this.input.maxLength = 4000; this.input.oninput = () => this.changed();
     const inputLabel = document.createElement('label'); inputLabel.textContent = 'Standard input (stdin)'; inputLabel.append(this.input);
@@ -308,16 +285,15 @@ class PracticeCodeEditor {
     this.args.value=(draft?.argv??[]).map(a=>JSON.stringify(a)).join(' ');
     const browse=document.createElement('button');browse.type='button';browse.textContent='Notebook files…';browse.onclick=()=>this.owner.hooks.post({type:'cellFiles',attempt:this.born});
     inputs.append(summary,browse,inputLabel,this.args,interactiveLabel,upload,fileNames,help,this.inputControls);
-    const bar = document.createElement('div'); bar.className = 'practice-actions';
     const practiceTask = task?.source === 'Practice exercise';
     const extraActions = document.createElement('div'); extraActions.className = 'practice-actions';
-    for (const [action, label] of [['run', 'Run'], ['check', 'Review with ' + this.assistant()], ['coach', 'Explain code']] as const) {
+    for (const [action, label] of [['check', 'Review with ' + this.assistant()], ['coach', 'Explain code']] as const) {
       if (action === 'check' && task) continue; // Task feedback is available from its review action.
       if (action === 'coach' && practiceTask) continue; // Practice asks in one place: the assistant box below the task.
       const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
-      button.dataset.action = action; button.onclick = () => {if(action==='run' && this.busy){this.owner.hooks.post({type:'cellControl',attempt:this.born,action:'stop'});return;}this.act(action);}; this.actions.push(button);
+      button.dataset.action = action; button.onclick = () => this.act(action); this.actions.push(button);
       // Lesson and Doubt Solver cells keep Review and Explain beside Run; task cells ask from their own review action.
-      (action === 'run' || !task ? bar : extraActions).append(button);
+      (!task ? bar : extraActions).append(button);
     }
     this.prediction.rows = 1; this.prediction.maxLength = 600; this.prediction.className = 'practice-prediction';
     this.prediction.onfocus = () => this.owner.focus(this);
@@ -326,10 +302,6 @@ class PracticeCodeEditor {
     predictionLabel.textContent = this.predictionLabel;
     this.prediction.placeholder = 'Your prediction, before you run';
     predictionLabel.append(this.prediction);
-    this.status.className = 'practice-status'; this.status.setAttribute('role', 'status');
-    this.output.className = 'practice-output'; this.output.hidden = true;
-    this.resultBlock.className = 'execution-result'; this.resultBlock.hidden = true;
-    this.resultBlock.append(this.runTitle, this.runInput, this.output, this.rich);
     this.feedback.className = 'practice-feedback'; this.feedback.setAttribute('aria-live', 'polite'); this.feedback.hidden = true;
     const reflectionTitle = document.createElement('summary');
     reflectionTitle.textContent = 'More';
@@ -345,7 +317,6 @@ class PracticeCodeEditor {
     this.mismatch.append(this.mismatchText, this.switchLanguage);
     this.completeness.className='code-completeness';this.completeness.setAttribute('role','status');
     this.element.append(heading, note, this.completeness, this.mismatch, buffer, inputs, predictionLabel, bar, this.reflection, this.status, this.resultBlock, this.feedback);
-    this.bar = bar;
     if (task) {
       this.explanation.rows = 2; this.explanation.maxLength = 600;
       const label = document.createElement('label'); label.textContent = practiceTask ? 'In a sentence or two, how does your solution work?' : 'Explain your approach (optional)'; label.append(this.explanation);
@@ -653,8 +624,12 @@ class PracticeCodeEditor {
       }
       return;
     }
+    const demo = this.demonstration;
+    const expected = demo && this.code.value.trimEnd() === demo.source.trimEnd() && this.language === demo.language
+      ? demo.error : undefined;
+    const demonstrated = matchesExpectedError(result.execution, expected);
     if ((this.busy === 'run' || this.busy === 'check') && (result.execution || result.error))
-      this.owner.hooks.executionFinished?.(this.key, this.snapshot(), result.execution, result.error);
+      this.owner.hooks.executionFinished?.(this.key, this.snapshot(), result.execution, result.error, expected);
     if (result.execution) {
       this.execution = result.execution;
       const run = result.execution;
@@ -672,6 +647,7 @@ class PracticeCodeEditor {
         this.busy = undefined;
         this.status.textContent = run.status==='cancelled' ? 'Stopped. You can edit or run another cell.'
           : run.status === 'compile_error' ? 'Compilation failed. Fix the compiler errors below, then run again.'
+          : demonstrated ? `This example raised the expected ${expected}.`
           : failed ? `Run failed. Read the error below or ask ${this.assistant()} for help.`
           : run.truncated ? 'Run completed with truncated output. The full result is unavailable.'
           : !run.stdout.trim() && !run.stderr.trim() && !this.rich.childElementCount
@@ -681,7 +657,7 @@ class PracticeCodeEditor {
         if (run.status === 'exited' && run.exit_code === 0 && !run.truncated) this.cleanRun = this.revision;
         if (this.attemptVariation) this.finishVariation(run);
         // Only a failed run that sits untouched suggests being stuck; first give time to read the error.
-        if (failed && this.owner.following && this.owner.stuckHints) this.offerHintAfter(FAILED_RUN_PAUSE_MS);
+        if (failed && !demonstrated && this.owner.following && this.owner.stuckHints) this.offerHintAfter(FAILED_RUN_PAUSE_MS);
       }
     }
     if (result.feedback) {
@@ -765,16 +741,18 @@ class PracticeCodeEditor {
     if (!this.owner.aiEnabled || !this.owner.following) this.dispose();
     else if (!this.owner.stuckHints) clearTimeout(this.guidanceTimer);
   }
-  private async runTool(tool: PracticeTool) {
+  async runTool(tool: PracticeTool) {
     if (!this.owner.hooks.tool || this.toolBusy || this.busy || !this.current()) return;
     if (!this.languageMatches()) return;
+    if (!this.code.value.trim()) { this.status.textContent = 'Write your solution first.'; return; }
     const revision = this.revision;
     this.toolBusy = true; this.update();
-    this.status.textContent = tool === 'tests' ? 'Running the sample tests…' : tool === 'trace' ? 'Recording each step…' : 'Making a new input…';
+    this.status.textContent = tool === 'grade' ? 'Submitting for grading…' : tool === 'tests' ? 'Running the sample tests…' : tool === 'trace' ? 'Recording each step…' : 'Making a new input…';
     try {
       const reply = await this.owner.hooks.tool(this.snapshot(), tool);
       if (this.revision !== revision || !this.current()) return;
       if (reply.error) { this.status.textContent = reply.error; return; }
+      if (tool === 'grade') this.status.textContent = '';
       if (reply.tests) this.showTests(reply.tests);
       if (reply.trace) this.showTrace(reply.trace);
       if (reply.variation) this.startVariation(reply.variation);

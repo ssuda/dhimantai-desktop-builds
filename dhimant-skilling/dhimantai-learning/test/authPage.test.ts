@@ -3,9 +3,11 @@ import * as assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { authPageHtml } from '../src/authPageHtml';
 
+const assets = {root: 'https://webview.test/auth', source: 'https://webview.test'};
+
 for (const mode of ['signIn', 'signUp', 'resetPassword'] as const) {
   test(`${mode} reveals each password independently and remasks on submit and error`, () => {
-    const dom = new JSDOM(authPageHtml(mode, 'test-nonce', 'production'), {runScripts:'outside-only'});
+    const dom = new JSDOM(authPageHtml(mode, 'test-nonce', 'production', assets), {runScripts:'outside-only'});
     const sent: any[] = [], win = dom.window, doc = win.document;
     (win as any).acquireVsCodeApi = () => ({postMessage:(message: any) => sent.push(message)});
     try {
@@ -46,7 +48,7 @@ for (const mode of ['signIn', 'signUp', 'resetPassword'] as const) {
 }
 
 test('Forgot password uses email only, validates it, and permits retry after a delivery error', () => {
-  const dom = new JSDOM(authPageHtml('forgotPassword', 'nonce', 'staging'), {runScripts:'outside-only'});
+  const dom = new JSDOM(authPageHtml('forgotPassword', 'nonce', 'staging', assets), {runScripts:'outside-only'});
   try {
     const win = dom.window, doc = win.document, sent: any[] = [];
     (win as any).acquireVsCodeApi = () => ({postMessage:(message: any) => sent.push(message)});
@@ -68,14 +70,15 @@ test('Forgot password uses email only, validates it, and permits retry after a d
 
 test('account forms explain requirements and reject invalid input before sending credentials', () => {
   for (const mode of ['signUp', 'signIn'] as const) {
-    const dom = new JSDOM(authPageHtml(mode, 'nonce', 'production'), {runScripts:'outside-only'});
+    const dom = new JSDOM(authPageHtml(mode, 'nonce', 'production', assets), {runScripts:'outside-only'});
     try {
       const win = dom.window, doc = win.document, sent: any[] = [];
       (win as any).acquireVsCodeApi = () => ({postMessage:(m: any) => sent.push(m)});
       win.eval(doc.querySelector('script')!.textContent!);
       const input = (id: string, value: string) => { (doc.getElementById(id) as HTMLInputElement).value = value; };
       const submit = () => doc.querySelector('form')!.dispatchEvent(new win.Event('submit', {cancelable:true}));
-      assert.match(doc.getElementById('email-hint')!.textContent!, /name@example.com/);
+      assert.equal(doc.querySelector<HTMLInputElement>('#email')!.placeholder, 'name@example.com');
+      assert.match(doc.getElementById('email-hint')!.textContent!, mode === 'signUp' ? /confirmation link/ : /registered email/);
       input('email', 'name@@example.com'); input('password', 'short');
       if (mode === 'signUp') { input('name', '  '); input('confirmation', 'different'); }
       submit();

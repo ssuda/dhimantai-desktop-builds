@@ -15,6 +15,9 @@ export async function run() {
   await extension.activate();
   const results: object[] = [];
   const course = process.env.DHIMANTAI_NATIVE_COURSE_CONFIG ? JSON.parse(readFileSync(process.env.DHIMANTAI_NATIVE_COURSE_CONFIG,'utf8')) : undefined;
+  if (!course) {
+    throw new Error('Set DHIMANTAI_NATIVE_COURSE_CONFIG to a disposable course container to test debugging.');
+  }
   const engine = course ? new CourseEngine(course.bin,course.name,course.root) : undefined;
   const languages = process.env.DHIMANTAI_NATIVE_LANGUAGES ? process.env.DHIMANTAI_NATIVE_LANGUAGES.split(',') : ['javascript','typescript',...(process.env.DHIMANTAI_NATIVE_PYTHON === '1' ? ['python'] : [])];
   for (const language of languages) {

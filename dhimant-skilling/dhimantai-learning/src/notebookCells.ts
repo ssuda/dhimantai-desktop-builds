@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
-import {programEnvironment, Toolchains, which} from './localRunner';
+import {programEnvironment, assertInCourseContainer, Toolchains, which} from './localRunner';
 import type {CourseEngine} from './courseEngine';
 import type {Execution} from './api';
 import {RuntimePreparationError} from './runtimeErrors';
@@ -40,6 +40,7 @@ export class NotebookCells {
     const requestedGeneration=this.generation;
     const engine=await this.engine?.(language);
     if(requestedGeneration!==this.generation)throw new Error('Notebook runtime restarted. Run again.');
+    if (!engine && !this.transport) assertInCourseContainer();
     const key=this.transport?'transport':engine?engine.bin+'|'+engine.name:'local';
     this.target=this.transport?.target??engine?.target;
     if(this.child && key===this.engineKey)return this.child;
@@ -53,7 +54,7 @@ export class NotebookCells {
         if(generation!==this.generation){this.track(child);child.stdin.end();throw new Error('Notebook runtime restarted. Run again.');}
         return this.attach(child);
       }
-      const python=this.tools().python ?? which(process.platform==='win32'?'python':'python3') ?? which('python');
+      const python=engine ? undefined : this.tools().python ?? which(process.platform==='win32'?'python':'python3') ?? which('python');
       if (!engine && !python) throw new Error('Set up the course runtime or install Python 3 to run notebook cells.');
       const folder=this.folder ?? (this.workspace ? await this.workspace(engine) : engine
         ? await mkdtemp(join(engine.root,'.notebook-')) : await mkdtemp(join(tmpdir(),'dhimantai-notebook-')));

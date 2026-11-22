@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
 const expected = { name: 'dhimantai-learning', publisher: 'optficial', version: '0.16.1' };
@@ -22,6 +23,25 @@ function check(bytes: Buffer, identity = expected) {
 test('release accepts a complete VSIX with matching compiled entry and identity', () => {
   const result = check(valid);
   assert.equal(result.status, 0, result.stderr.toString());
+});
+test('release verifies embedded course editor packages by path, digest and contents', () => {
+  const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+  const nestedPath = (bytes: Buffer) => 'extension/media/course-extensions/' + digest(bytes) + '.vsix';
+  const embed = (name: string, bytes: Buffer) => execFileSync('python3', ['-c', `
+import base64, io, json, sys, zipfile
+outer, inner = map(base64.b64decode, json.load(sys.stdin))
+bundle = io.BytesIO(outer)
+with zipfile.ZipFile(bundle, 'a') as archive:
+    archive.writestr(sys.argv[1], inner)
+sys.stdout.buffer.write(bundle.getvalue())
+`, name], {input: JSON.stringify([valid.toString('base64'), bytes.toString('base64')])});
+  const course = embed(nestedPath(valid), valid);
+  assert.equal(check(course).status, 0);
+  assert.notEqual(check(embed('extension/other.vsix', valid)).status, 0);
+  const corrupt = Buffer.from('invalid course package');
+  assert.notEqual(check(embed(nestedPath(valid), corrupt)).status, 0);
+  assert.notEqual(check(embed(nestedPath(corrupt), corrupt)).status, 0);
+  assert.notEqual(check(embed(nestedPath(course), course)).status, 0);
 });
 test('release rejects trailing bytes, truncation, false end records, HTML and mismatched versions', () => {
   const badComment = Buffer.from(valid);

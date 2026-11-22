@@ -20,7 +20,7 @@ const step = (id: string) => ({id, title: id.toUpperCase(), goal: 'Goal ' + id, 
 
 /** Loads the compiled host class with stubbed VS Code and project services. */
 function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Promise<unknown>; projectFiles?: () => Promise<string[]>;
-    runCheck?: () => Promise<unknown>; inputBox?: () => Promise<string | undefined>; notebookCoach?: (path: string) => Promise<unknown>;
+    runCheck?: () => Promise<unknown>; inputBox?: () => Promise<string | undefined>; notebookCoach?: (path: string, body: any) => Promise<unknown>;
     workspace?: {course: string; account: string; environment: string};
     saved?: unknown; root?: string; curriculum?: ProjectCurriculum} = {}) {
   const curriculum = options.curriculum ?? {id: 'course-agent', version: 1, title: 'Agent', files: [], steps: [step('a'), step('b')]};
@@ -30,6 +30,7 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
   const uri = (fsPath: string) => ({fsPath, scheme: 'file'});
   const webview = {postMessage: async (message: unknown) => { posted.push(message); return true; }};
   const vscode = {
+    env: {appName:'dhimantAI'}, TabInputWebview: class {},
     Uri: {file: uri, joinPath: (base: any, ...parts: string[]) => uri(join(base.fsPath, ...parts)), parse: () => ({fsPath: '', scheme: 'untitled'})},
     Disposable: {from: () => disposable},
     RelativePattern: class {},
@@ -37,7 +38,8 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
     workspace: {isTrusted: true, textDocuments: [], workspaceFolders: [], onDidChangeConfiguration: listener, onDidChangeTextDocument: listener,
       onDidSaveTextDocument: listener, getConfiguration: () => ({get: (_key: string, value: unknown) => value}),
       createFileSystemWatcher: () => ({onDidChange() {}, onDidCreate() {}, onDidDelete() {}, dispose() {}})},
-    window: {activeTextEditor: undefined, onDidChangeTextEditorSelection: listener, onDidChangeActiveTextEditor: listener,
+    window: {activeTextEditor: undefined, onDidChangeTextEditorSelection: listener,
+      tabGroups:{activeTabGroup:{}, onDidChangeTabs:listener, onDidChangeTabGroups:listener},
       showTextDocument: async () => undefined, showErrorMessage: () => undefined,
       showInputBox: options.inputBox ?? (async () => undefined),
       showWarningMessage: async (text: string) => { calls.warnings.push(text); return undefined; }},
@@ -60,9 +62,9 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
     './courseTerminal': {courseTerminalOptions: () => ({})},
     './projectLive': {runManagedProject: async () => ({output: '', passed: true})},
     './projectGitHub': {projectGitHub: async () => undefined},
-    './api': {ApiError, Api: class { notebookCoach(path: string) { return options.notebookCoach!(path); } }},
+    './api': {ApiError, Api: class { notebookCoach(path: string, body: any) { return options.notebookCoach!(path, body); } }},
   };
-  const sandbox = {exports: {}, Error, AbortController, Buffer, URLSearchParams, setTimeout, console,
+  const sandbox = {exports: {}, Error, AbortController, Buffer, URLSearchParams, setTimeout, clearTimeout, console,
     require: (name: string) => name in modules ? modules[name] : name.startsWith('./') ? require('../src/' + name.slice(2)) : require(name)};
   runInNewContext(readFileSync(join(extension, 'out/src/projectCoach.js'), 'utf8'), sandbox);
   const context = {extensionUri: uri(extension), globalState: {get: () => undefined}, workspaceState: {get: (key: string) => store.get(key) ?? options.saved,
@@ -165,6 +167,23 @@ test('a snapshot failure still sends a usable state that names the file and limi
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 
+test('a failure location only opens from the matching current run and public file list', async () => {
+  const {coach, open, message, calls} = harness({projectFiles: async () => []});
+  await open();
+  const diagnostic = {file:'tests/test_regression.py', line:7, cause:'Assertion failed'};
+  coach.run = {digest:'d1', step:'a', status:'failed', diagnostic};
+  const click = (path: string, line: number) => coach.handle(message('checkLocation', {path, line, revision:coach.revision}));
+  await click('README.md', 7);
+  await click(diagnostic.file, 1);
+  assert.equal(calls.projectFiles, 0);
+  coach.run.digest = 'earlier';
+  await click(diagnostic.file, 7);
+  assert.equal(calls.projectFiles, 0, 'a stale run cannot offer a current source location');
+  coach.run.digest = 'd1';
+  await click(diagnostic.file, 7);
+  assert.equal(calls.projectFiles, 1, 'even a matching traceback must refer to a public project file');
+});
+
 test('ended course access explains how to restore Coach instead of a raw error', async () => {
   const {coach, open, message, calls} = harness({notebookCoach: async () => { throw new ApiError(403, ACCESS_ENDED, 'access_ended'); }});
   await open();
@@ -255,4 +274,48 @@ test('opening a Shelf workspace upgrades only verifiable older checkpoints and e
   assert.equal(new URLSearchParams(coach.spoken.query).get('course'), 'Build AI Agents with Python');
   assert.equal(coach.assistance, 0);
   assert.equal(state().messages.length, 0);
+});
+
+test('automatic feedback uses evidence once, keeps questions available and omits silent observations', async () => {
+  const bodies: any[] = [];
+  const pending = deferred<any>();
+  const app = harness({notebookCoach:async (_path, body) => {
+    bodies.push(body);
+    return bodies.length === 1 ? pending.promise : {guidance:'',prompt:'',line:null};
+  }});
+  await app.open();
+  app.coach.surface.visible = true;
+  const review = app.coach.review({event:'saved', path:'course_agent/tools.py'});
+  await settle();
+  assert.equal(app.coach.busy, false);
+  assert.equal(bodies[0].message, '');
+  assert.equal(bodies[0].project_context.observation, 'saved');
+  assert.equal(app.posted.some(m => m.type === 'questionAccepted'), false);
+  pending.resolve({guidance:'Trace the dependency in course_agent/tools.py:1.',prompt:'What belongs at that boundary?',line:1});
+  await review;
+  assert.deepEqual(Array.from(app.coach.messages, (m:any) => m.role), ['tutor']);
+  await app.coach.review({event:'saved', path:'course_agent/tools.py'});
+  await app.coach.review({event:'saved', path:'.env'});
+  assert.equal(bodies.length, 1);
+  app.coach.run = {digest:'d1',step:'a',status:'failed',command:'check',output:'Different outcome',truncated:false};
+  await app.coach.review({event:'check'});
+  assert.equal(bodies[1].project_context.check.status, 'failed');
+  assert.equal(app.coach.messages.length, 1);
+  app.coach.dispose();
+});
+
+test('a learner question supersedes an automatic review in flight', async () => {
+  const pending = deferred<any>();
+  const app = harness({notebookCoach:async (_path, body) => body.project_context.observation ? pending.promise :
+    {guidance:'Here is the answer to your question.',prompt:'',line:null}});
+  await app.open();
+  app.coach.surface.visible = true;
+  const review = app.coach.review({event:'saved', path:'course_agent/tools.py'});
+  await settle();
+  await app.coach.handle(app.message('ask', {text:'Which part reads the data?'}));
+  pending.resolve({guidance:'This obsolete review should be discarded.',prompt:'',line:null});
+  await review;
+  assert.equal(app.coach.messages.length, 2);
+  assert.match(app.coach.messages.at(-1).text, /answer to your question/);
+  app.coach.dispose();
 });

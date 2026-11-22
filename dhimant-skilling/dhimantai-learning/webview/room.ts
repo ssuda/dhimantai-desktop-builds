@@ -14,11 +14,13 @@ import { labelLessonOutputs } from './lessonOutput';
 import { topicTeachBackRequest } from '../src/teachBack';
 import { PracticeCodeEditors, ToolReply } from './practiceCodeEditor';
 import { NotebookNavigation } from './notebookNavigation';
+import { bindCoursePicker } from './coursePicker';
 import type { CodeSnapshot, observedRun } from '../src/roomCode';
 import type {BrowserObservation} from '../src/browserLearning';
 import {BrowserCourseProgress, ERP_COURSE, browserProgressLabel, browserProgressNote, browserTaskLabel} from '../src/browserCourseProgress';
 import {BrowserQuestion,validBrowserQuestion,validBrowserAnswer,browserAnswerMessage} from '../src/browserQuestion';
 import {validDemonstration} from '../src/browserDemonstration';
+import {FreeCADRoom} from './freecadRoom';
 import {BrowserActionRelay} from './browserActions';
 import { SpeakerControl } from './audioControls';
 import { mediaIcon } from '../src/mediaIcons';
@@ -47,7 +49,7 @@ declare function acquireVsCodeApi(): {postMessage(message: unknown): void};
 const host = acquireVsCodeApi(), { RoomEvent } = LivekitClient;
 const browserActions=new BrowserActionRelay(message=>host.postMessage(message));
 // Spoken replies play only replies this page accepted and showed (see send()).
-const spokenReplies = (window as unknown as {installCoachAudio?: (api: typeof host) => {reply(audioId: string | null): void; listenForReply(): void} | undefined}).installCoachAudio?.(host);
+const spokenReplies = window.installCoachAudio?.(host);
 type Mode = 'tutor' | 'doubt_solver';
 const names = {tutor: 'Instructor', doubt_solver: 'Doubt Solver'};
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -65,22 +67,34 @@ function notebookTop() {
   const page = notebookPage();
   return page === document.scrollingElement || page === document.documentElement ? 0 : page.getBoundingClientRect().top;
 }
-function scrollToNotebookRow(row: Element, toolbarHeight: number) {
+const toolbar = document.querySelector<HTMLElement>('.notebook-toolbar');
+function scrollToNotebookRow(row: Element) {
   const page = notebookPage();
   page.scrollTop = Math.max(0, Math.min(page.scrollHeight - page.clientHeight,
-    page.scrollTop + row.getBoundingClientRect().top - notebookTop() - toolbarHeight));
+    page.scrollTop + row.getBoundingClientRect().top - Math.max(notebookTop(), toolbar?.getBoundingClientRect().bottom ?? 0)));
 }
-const navigationToolbar = document.querySelector<HTMLElement>('.notebook-tools');
+const compactToolbar = window.matchMedia?.('(max-width: 1120px)');
+const editingTools = toolbar?.querySelector<HTMLElement>('.notebook-tools');
+const compactTools = document.getElementById('compact-notebook-tools');
+if (editingTools && compactTools && compactToolbar) {
+  const home = document.createComment('Notebook tools');
+  editingTools.before(home);
+  const placeTools = () => {
+    if (compactToolbar.matches) compactTools.append(editingTools);
+    else home.after(editingTools);
+  };
+  compactToolbar.addEventListener('change', placeTools);
+  placeTools();
+}
+
+const navigationToolbar = document.querySelector<HTMLElement>('.notebook-jumps');
 function goToNotebookCell(id: string) {
   const cell = notebook.cells.find(cell => cell.id === id);
   const row = [...feed.querySelectorAll<HTMLElement>('[data-cell-id]')].find(row => row.dataset.cellId === id);
   if (!cell || !row) return;
   if (cell.collapsed) { cell.collapsed = false; updateConversationCard(cell, row); saveNotebook(); }
-  // Leaving the bottom reveals this control and can wrap a narrow toolbar.
-  // Include it before measuring so it cannot cover the entry after the jump.
-  latestButton.hidden = false;
   row.tabIndex = -1; row.focus({preventScroll:true});
-  scrollToNotebookRow(row, navigationToolbar?.parentElement?.offsetHeight ?? 0);
+  scrollToNotebookRow(row);
   updateLatest();
 }
 const navigation = navigationToolbar ? new NotebookNavigation(navigationToolbar, goToNotebookCell) : undefined;
@@ -99,6 +113,8 @@ function refreshNavigation() {
 }
 const messageBar = document.getElementById('message-bar');
 const selectionPage = document.getElementById('course-selection');
+const coursePicker = document.querySelector<HTMLElement>('.course-picker');
+const syncCoursePicker = coursePicker && bindCoursePicker(coursePicker);
 let selectionOpen = !!selectionPage;
 const heading = document.querySelector('.workspace-title h1');
 const initialTitle = heading?.textContent ?? '';
@@ -162,6 +178,7 @@ function showAgentActivity() {
   if (activity.textContent !== label) activity.textContent = label;
   activity.hidden = !label;
 }
+let freecad:FreeCADRoom|undefined;
 let browserCourse=false, browserSnapshot:BrowserObservation|null=null, browserSequence=0;
 let taskProgress:BrowserCourseProgress|undefined;
 function practicalLesson() {
@@ -281,7 +298,8 @@ function updateMediaControls() {
     mic.setAttribute('aria-describedby', 'media-control-status');
   }
   const message = byId('media-control-status');
-  if (message) { message.textContent = reason; message.hidden = !reason; }
+  // Not being connected is already in the header; the microphone keeps that reason only in its label.
+  if (message) { const shown = ready ? reason : ''; message.textContent = shown; message.hidden = !shown; }
 }
 const devices = new LearningDevices({
   current: () => ready && visible && !selectionOpen && mediaAllowed && room && agent ? {room, agent} : undefined,
@@ -386,8 +404,17 @@ const localRuntimeLabel = () => 'Course container';
 const workspaceMode = document.getElementById('workspace-mode') as HTMLFieldSetElement | null;
 const practicePanel = document.getElementById('workspace-practice');
 let workspaceBusy = false;
+let lastMenuControls = '';
 let practiceRequest = 0;
 function selectRoomTab() {
+  const inRoom = ready && !selectionOpen && !workspaceBusy && !sending && (!practicePanel || practicePanel.hidden);
+  const ask = !!inRoom && (practiceMode ? editors.aiEnabled : mode === 'tutor');
+  const practiceActions = !!inRoom && practiceMode && !!practice;
+  const state = JSON.stringify([ask,practiceActions]);
+  if (state !== lastMenuControls) {
+    lastMenuControls = state;
+    host.postMessage({type:'skillingControls', ask, practice:practiceActions});
+  }
   const current = practiceMode || practicePanel && !practicePanel.hidden ? 'practice' : mode;
   for (const tab of workspaceMode?.querySelectorAll<HTMLButtonElement>('[data-room]') ?? [])
     tab.setAttribute('aria-pressed', String(tab.dataset.room === current));
@@ -452,12 +479,15 @@ let pendingData: {request:number; finish:(reply:DataReply) => void} | undefined;
 type DataReply = {outcome?: DataOutcome; datasets?: string[]; error?: string; accessEnded?: boolean; quota?: boolean};
 const importedSets = new Map<string, CourseDataset>();
 let lessonCourses: Course[] = [], selectedLesson = '', preferredCourse = '', loadingLessons = !practiceMode, lessonLoadError = '';
+compactToolbar?.addEventListener('change', () => updateSelectionPage());
 function updateSelectionPage() {
   if (!selectionPage) return;
-  selectionPage.hidden = !selectionOpen;
+  const opening = selectionOpen && loadingLessons && !selectedLesson;
+  selectionPage.hidden = !selectionOpen || opening;
+  byId('lesson-loading').hidden = !opening;
   document.body.classList.toggle('selecting-course', selectionOpen);
   const history = byId('doubt-history');
-  const historyHost = document.querySelector(selectionOpen ? '#course-selection header' : '.workspace-actions');
+  const historyHost = document.querySelector(selectionOpen ? '#course-selection header' : compactToolbar?.matches ? '#compact-chat-history' : '.workspace-actions');
   if (history && historyHost && history.parentElement !== historyHost) historyHost.append(history);
   button('selection-back').hidden = !selectedLesson;
   button('choose-course').disabled = sending || workspaceBusy;
@@ -524,6 +554,7 @@ function selectChapter(chapterId:string) {
   } else begin(mode,chapterId);
 }
 function renderLessons() {
+  updateSelectionPage();
   refreshNavigation();
   const list = byId('lesson-list'), course = byId<HTMLSelectElement>('lesson-course');
   if (!list || !course) return;
@@ -535,10 +566,9 @@ function renderLessons() {
   if (search) search.disabled = loadingLessons;
   const unavailable = !!lessonLoadError && !lessonCourses.length;
   for (const field of [course, search]) {
-    if (!field) continue;
-    field.hidden = unavailable;
-    for (const label of field.labels ?? []) label.hidden = unavailable;
+    if (field) (field.closest<HTMLElement>('.chapter-filter') ?? field).hidden = unavailable;
   }
+  syncCoursePicker?.(selectionOpen && !unavailable);
   if (button('reload-lessons')) button('reload-lessons').hidden = !lessonLoadError || loadingLessons;
   showLessonPlaceholder();
   if (loadingLessons) { list.textContent = 'Loading your lessons…'; return; }
@@ -754,6 +784,7 @@ function addCell(kind: NotebookCell['kind'], text: string, packet?: Record<strin
   if (kind === 'message' && !packet?.action && !packet?.notebook_help)
     for (const turn of feed.querySelectorAll('.your-turn.is-open')) turn.classList.remove('is-open');
   const cell: NotebookCell = {id:'cell-' + Date.now().toString(36) + '-' + ++cellSequence, kind, text, ...(packet ? {packet} : {})};
+  if (packet?.session_summary) feed.querySelectorAll('.execution-followup, .recap-actions').forEach(el => el.remove());
   notebook.cells.push(cell); renderCell(cell); saveNotebook(); refreshNavigation();
   if (kind === 'board') refreshDiagramAlternatives();
   if (!practice && ready) { const selected = editors.selection(); observeCode(selected?.snapshot, selected?.run); }
@@ -778,17 +809,26 @@ function restoreNotebook(value: TutorNotebook) {
   editors.restore(notebook.drafts); editors.update(ready, attempt);
   feed.replaceChildren();
   for (const cell of notebook.cells) renderCell(cell);
-  const pending = unfinishedQuestion(notebook);
-  if (!practiceMode && mode === 'tutor' && typeof pending?.packet?.tutor_checkpoint_id === 'string')
-    editors.checkpoint(pending.packet.tutor_checkpoint_id);
-  if (!practiceMode && mode === 'tutor') {
+  const chapter = lessonCourses.flatMap(course => course.chapters).find(ch => ch.id === selectedLesson);
+  refreshSummary(chapter?.progress && chapter.progress.status !== 'unavailable' ? chapter.progress.topics : undefined);
+  const savedActions = document.getElementById('saved-task-actions');
+  savedActions?.replaceChildren();
+  if (savedActions && !practiceMode && mode === 'tutor') {
+    const pending = unfinishedQuestion(notebook);
+    if (typeof pending?.packet?.tutor_checkpoint_id === 'string' && !pending.packet.resume_unverified)
+      editors.checkpoint(pending.packet.tutor_checkpoint_id);
     const target = pending ?? [...notebook.cells].reverse().find(cell => cell.kind === 'board' || cell.kind === 'code');
     if (target && notebookResume(notebook)) {
-      const bar = document.createElement('div'), status = document.createElement('span'), resume = document.createElement('button');
+      const bar = document.createElement('div'), detail = document.createElement('small');
       bar.id = 'stopping-point'; bar.dataset.target = target.id;
-      resume.textContent = 'Return to stopping point'; resume.className = 'quiet';
+      const resume = document.createElement('button'), confirm = document.createElement('button');
+      resume.type = confirm.type = 'button';
+      resume.textContent = 'Return to stopping point';
       resume.onclick = () => goToNotebookCell(target.id);
-      bar.append(status, resume); feed.append(bar);
+      confirm.id = 'confirm-saved-task';
+      confirm.textContent = 'Ask Instructor to confirm';
+      confirm.onclick = () => { void sendLive('Please confirm my saved task before I submit an answer.', false, 'Please confirm my saved task.'); };
+      bar.append(detail, resume, confirm); savedActions.append(bar);
     }
   }
   refreshDiagramAlternatives();
@@ -848,7 +888,7 @@ function removeConversation(cells: NotebookCell[]) {
   }
   notebook.cells = notebook.cells.filter(cell => !ids.has(cell.id));
   for (const id of ids) { editors.removeCell(id); feed.querySelector(`[data-cell-id="${id}"]`)?.remove(); replyContexts.delete(id); }
-  refreshDiagramAlternatives();
+  removeCellFollowups(ids); refreshDiagramAlternatives();
   if (!practiceMode) { const selected = editors.selection(); observeCode(selected?.snapshot, selected?.run); }
   saveNotebook(true); controls(); updateLatest();
 }
@@ -949,7 +989,7 @@ function renderCell(cell: NotebookCell) {
     label.textContent = 'New doubt'; row.setAttribute('aria-label', 'New doubt'); row.append(label); feed.append(row);
     return;
   }
-  appendCard(cell.kind === 'note' ? 'Note · only you' : ['message','code'].includes(cell.kind) ? 'You' : cell.kind === 'diagram' ? names[mode] : 'Instructor', body => {
+  appendCard(cell.kind === 'note' ? 'private-note' : ['message','code'].includes(cell.kind) ? 'student' : 'assistant', body => {
     body.parentElement?.setAttribute('data-cell-id', cell.id);
     body.parentElement!.dataset.entryKind = cell.kind;
     if (cell.kind === 'note') {
@@ -984,36 +1024,42 @@ function renderCell(cell: NotebookCell) {
         title.textContent = 'First exercise'; prompt.textContent = starter.question;
         choices.className = 'starter-answers'; choices.setAttribute('role','group'); choices.setAttribute('aria-label',starter.question);
         const feedback = document.createElement('p'); feedback.setAttribute('role','status');
+        let edit: HTMLButtonElement | undefined;
         const showAnswer = () => {
           const answer = cell.packet?.starterAnswer;
           const complete = answer === starter.correct;
-          feedback.textContent = complete ? 'Exercise complete. ' + starter.feedback : typeof answer === 'number' ? starter.hint : '';
+          // A wrong choice is answered by its own misconception; the general hint covers any other.
+          feedback.textContent = complete ? 'Exercise complete. ' + starter.feedback
+            : typeof answer === 'number' ? starter.why?.[answer] || starter.hint : '';
           for (const [index, choice] of [...choices.querySelectorAll('button')].entries()) {
             choice.setAttribute('aria-pressed', String(index === answer));
             choice.disabled = complete;
           }
+          // Predict first: running the code is how the learner checks a prediction, not a way around making one.
+          if (edit) edit.hidden = typeof answer !== 'number';
         };
         starter.choices.forEach((label, index) => {
           const choice = document.createElement('button'); choice.type = 'button'; choice.textContent = label;
-          choice.onclick = () => { cell.packet!.starterAnswer = index; showAnswer(); saveNotebook(true); };
+          choice.onclick = () => { cell.packet!.starterAnswer = index; showAnswer(); saveNotebook(true); controls(); };
           choices.append(choice);
         });
         body.append(title, prompt);
         if (starter.source) {
           const code = document.createElement('pre'); code.textContent = starter.source; body.append(code);
         }
-        body.append(choices, feedback); showAnswer();
+        body.append(choices, feedback);
         if (starter.source) {
-          const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = 'Try in a code cell';
+          edit = document.createElement('button'); edit.type = 'button'; edit.className = 'starter-run'; edit.textContent = 'Run it to check';
           edit.onclick = () => {
             const existing = notebook.cells.find(item => item.kind === 'code' && item.packet?.starterExample === starter.courseId);
             const example = existing ?? addCell('code', starter.source!, {language:starter.language, starterExample:starter.courseId});
             const row = [...feed.querySelectorAll<HTMLElement>('[data-cell-id]')].find(item => item.dataset.cellId === example.id);
-            if (row) scrollToNotebookRow(row, toolbar?.offsetHeight ?? 0);
+            if (row) scrollToNotebookRow(row);
             row?.querySelector<HTMLElement>('.cm-content')?.focus();
           };
           body.append(edit);
         }
+        showAnswer();
       } else {
         body.innerHTML = renderBoard(cell.text);
         if (cell.packet?.session_summary) summaryActions(body, cell);
@@ -1030,7 +1076,7 @@ function renderCell(cell: NotebookCell) {
       remove.textContent = cell.kind === 'code' ? 'Delete code cell' : 'Delete note';
       remove.onclick = () => confirmRemoval(remove, remove.textContent + '? This removes its saved content from this notebook.', () => {
         editors.removeCell(cell.id); notebook.cells = notebook.cells.filter(item => item !== cell);
-        row.remove(); replyContexts.clear(); activeSkills.clear();
+        row.remove(); removeCellFollowups(new Set([cell.id])); replyContexts.clear(); activeSkills.clear();
         if (cell.kind === 'code') { const selected = editors.selection(); observeCode(selected?.snapshot, selected?.run); }
         saveNotebook(); controls(); updateLatest();
       });
@@ -1043,12 +1089,9 @@ const toolReplies = new Map<number, (reply: ToolReply) => void>();
 let toolCounter = 0;
 const debugReplies = new Map<number, (reply:NativeDebugReply) => void>();
 const editors = new PracticeCodeEditors({
-  executionFinished: (key, snapshot, run, error) => {
-    notebook.executionIssues = recordExecutionIssue(notebook.executionIssues ?? [], key, snapshot.snippet, run, error);
-    for (const cell of notebook.cells.filter(cell => cell.packet?.session_summary)) {
-      const body = feed.querySelector<HTMLElement>(`[data-cell-id="${cell.id}"] > div`);
-      if (body) { body.innerHTML = renderBoard(cell.text); summaryActions(body, cell); }
-    }
+  executionFinished: (key, snapshot, run, error, expected) => {
+    notebook.executionIssues = recordExecutionIssue(notebook.executionIssues ?? [], key, snapshot.snippet, run, error, expected);
+    refreshSummary();
     saveNotebook();
   },
   assistant: () => names[mode],
@@ -1081,6 +1124,7 @@ editors.follow(byId<HTMLInputElement>('follow-code').checked);
 function observeCode(snapshot?: CodeSnapshot, run?: ReturnType<typeof observedRun>, guidance?: string) {
   const live = room, dest = agent, id = attempt;
   if (!ready || !live || !dest) return;
+  if(freecad)return;
   if (mediaAllowed) {
     // Flutter rooms use the same Instructor but do not expose the extension-only observation RPC.
     byId('code-observer-status').textContent = `Use Ask ${names[mode]} to share a cell from this notebook.`;
@@ -1127,11 +1171,15 @@ function controls() {
   if (stoppingPoint) {
     const target = notebook.cells.find(cell => cell.id === stoppingPoint.dataset.target);
     if (!target || (target.packet?.is_question_prompt && unfinishedQuestion(notebook) !== target)) {
-      const restore = stoppingPoint.querySelector('#runtime-restore');
-      if (restore) toolbar?.after(restore);
       stoppingPoint.remove();
-    } else stoppingPoint.querySelector('span')!.textContent = !target.packet?.is_question_prompt ? ''
-      : typeof target.packet.student_answer === 'string' ? 'Your last answer is awaiting feedback.' : 'Your last “Your turn” is still waiting for your answer.';
+    } else {
+      const confirm = button('confirm-saved-task');
+      confirm.hidden = target.packet?.resume_unverified !== true;
+      confirm.disabled = !ready || sending;
+      stoppingPoint.querySelector('small')!.textContent = !confirm.hidden ? 'This saved task needs Instructor confirmation.'
+        : !target.packet?.is_question_prompt ? '' : typeof target.packet.student_answer === 'string'
+          ? 'Your last answer is awaiting feedback.' : 'Your last “Your turn” is still waiting for your answer.';
+    }
   }
   updateSelectionPage();
   document.body.classList.toggle('room-ready', ready);
@@ -1168,8 +1216,14 @@ function controls() {
     skip.title=next?'Skip to '+(next.lesson||next.name)+'. This does not mark the current chapter complete.':'You are at the last available chapter.';
   }
   if (messageBar) messageBar.hidden = choosing;
+  // A new learner's first screen asks for one thing: a prediction. Notebook tools and the runtime picker
+  // arrive with the first answer (or with any cell the learner already made).
+  const predicting = notebook.cells.some(cell => typeof cell.packet?.starterExercise === 'string' && typeof cell.packet.starterAnswer !== 'number')
+    && !notebook.cells.some(cell => cell.kind === 'code' || cell.kind === 'note');
   const notebookTools = document.querySelector<HTMLElement>('.notebook-tools');
-  if (notebookTools) notebookTools.hidden = choosing;
+  if (notebookTools) notebookTools.hidden = choosing || predicting;
+  const runtime = document.getElementById('course-runtime');
+  if (runtime) runtime.hidden = predicting;
   if (heading) {
     const lesson = course?.chapters[chapterIndex];
     heading.innerHTML = renderHeading(practiceMode ? practice?.title || (notebook.exerciseId && notebook.title) || initialTitle
@@ -1177,6 +1231,8 @@ function controls() {
   }
   byId('composer').hidden = choosing;
   for (const id of ['add-code', 'add-note', 'save-notebook', 'open-notebook']) if (button(id)) button(id).disabled = !documentKey;
+  const notes = button('course-notes');
+  if (notes) notes.disabled = !documentKey || notes.hasAttribute('data-unscoped');
   editors.tutorBusy = coaching;
   // Both learning modes own executable cells and share the active public notebook.
   editors.update(ready, attempt);
@@ -1286,17 +1342,49 @@ async function deliverNotebookMessage(message: LearnerMessage): Promise<boolean>
   controls();
   return ok;
 }
-const toolbar = document.querySelector<HTMLElement>('.notebook-toolbar');
 // On narrow screens the composer follows the feed. Its height is not chat history.
 function nearBottom() {
   const page = notebookPage();
   const bottom = page === document.scrollingElement || page === document.documentElement ? window.innerHeight : page.getBoundingClientRect().bottom;
   return feed.getBoundingClientRect().bottom <= bottom + 48;
 }
+const edges = document.getElementById('notebook-edges');
+if (edges && toolbar) {
+  const updateEdges = () => {
+    const page = notebookPage();
+    // Jump buttons earn their place once the notebook is longer than a screen and a half, not for a few pixels of overflow.
+    edges.hidden = !feed.getClientRects().length || page.scrollHeight <= page.clientHeight * 1.5;
+    if (page instanceof HTMLElement) page.style.scrollPaddingTop = toolbar.offsetHeight + 'px';
+  };
+  const observer = new ResizeObserver(updateEdges);
+  observer.observe(document.body);
+  observer.observe(feed);
+  observer.observe(toolbar);
+  window.addEventListener('resize', updateEdges);
+  button('notebook-top').onclick = () => {
+    const title = document.querySelector<HTMLElement>('.workspace-title h1');
+    (title?.getClientRects().length ? title : feed).focus({preventScroll:true});
+    notebookPage().scrollTop = 0;
+  };
+  button('notebook-bottom').onclick = () => {
+    field.focus({preventScroll:true});
+    const page = notebookPage();
+    page.scrollTop = page.scrollHeight;
+  };
+}
 function updateLatest() { latestButton.hidden = nearBottom(); }
-function appendCard(label: string, fill: (body: HTMLElement) => void, follow = nearBottom(), replaceRow?: HTMLElement) {
+function appendCard(author: 'student' | 'assistant' | 'private-note', fill: (body: HTMLElement) => void, follow = nearBottom(), replaceRow?: HTMLElement) {
   const row = document.createElement('article'), tag = document.createElement('small'), body = document.createElement('div');
-  tag.textContent = label;
+  if (author !== 'private-note') {
+    row.dataset.speaker = author;
+    tag.className = 'speaker-name';
+    tag.textContent = author === 'student' ? 'You' : names[mode];
+    const avatar = document.createElement('span');
+    avatar.className = 'speaker-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+    if (author === 'student') avatar.textContent = feed.dataset.learnerInitial || 'Y';
+    tag.prepend(avatar);
+  } else tag.textContent = 'Note · only you';
   row.append(tag, body);
   fill(body);
   if (replaceRow) replaceRow.replaceWith(row);
@@ -1304,7 +1392,7 @@ function appendCard(label: string, fill: (body: HTMLElement) => void, follow = n
   // A long answer opens at its beginning. Later packets leave a reader in place.
   if (follow) {
     // The sticky toolbar stays over the page top; open the card just below it.
-    scrollToNotebookRow(row, toolbar?.offsetHeight ?? 0);
+    scrollToNotebookRow(row);
   }
   updateLatest();
 }
@@ -1316,7 +1404,7 @@ button('latest').onclick = () => {
   const latest = [...notebook.cells].reverse().find(conversationCell);
   if (practice && latest) { latest.collapsed = false; updateConversationCard(latest); saveNotebook(); }
   const row = feed.lastElementChild;
-  if (row) scrollToNotebookRow(row, toolbar?.offsetHeight ?? 0);
+  if (row) scrollToNotebookRow(row);
   updateLatest();
 };
 if (button('clear-conversation')) button('clear-conversation').onclick = () => confirmRemoval(button('clear-conversation'), 'Delete all conversation messages? Your task, code and private notes will stay.', () => removeConversation(notebook.cells));
@@ -1325,13 +1413,19 @@ focusButton.before(focusHome);
 function focusView(active: boolean) {
   document.body.classList.toggle('focus-view', active);
   focusButton.textContent = active ? 'Exit focus view' : 'Focus view'; focusButton.setAttribute('aria-pressed', String(active));
-  if (active) document.querySelector('.workspace-actions')?.append(focusButton);
-  else focusHome.after(focusButton);
-  if (active) focusButton.focus();
-  else (focusButton.closest('details')?.querySelector<HTMLElement>('summary') ?? focusButton).focus();
+  placeFocusButton();
+  (focusButton.closest('details')?.querySelector<HTMLElement>('summary') ?? focusButton).focus();
 }
+function placeFocusButton() {
+  if (document.body.classList.contains('focus-view') && !compactToolbar?.matches) document.querySelector('.workspace-actions')?.append(focusButton);
+  else focusHome.after(focusButton);
+}
+compactToolbar?.addEventListener('change', placeFocusButton);
 focusButton.onclick = () => focusView(!document.body.classList.contains('focus-view'));
 function close(message: string) {
+  freecad?.close();freecad=undefined;
+  const cadStatus=document.getElementById('freecad-status');
+  if(cadStatus){cadStatus.hidden=true;cadStatus.textContent='';}
   pendingTutorRequests.clear(); retractedTutorRequests.clear();
   tutorTurn = lastTutorRequest = ''; tutorOutputPaused = false; tutorCancellation = Promise.resolve();
   interruption.reset();
@@ -1358,7 +1452,7 @@ function close(message: string) {
   button('end').disabled = true;
   button('tutor').textContent = practiceMode ? 'Retry Practice' : 'Retry ' + names[mode]; button('tutor').hidden = false;
   for (const key of Object.keys(names)) button(key).setAttribute('aria-pressed', 'false');
-  helpStatus(message); controls(); host.postMessage({type: 'leave'});
+  connectionStatus(message); controls(); host.postMessage({type: 'leave'});
   byId('code-observer-status').textContent = '';
   restoreNotebook(saved);
 }
@@ -1455,7 +1549,8 @@ function videoPacket(data: Record<string, unknown>) {
   }
   if (existing) return;
   const title = typeof data.title === 'string' && data.title ? data.title : 'Lesson video';
-  appendCard(title, body => {
+  appendCard('assistant', body => {
+    const heading = document.createElement('h3'); heading.textContent = title; body.before(heading);
     body.textContent = 'Checking the dhimantAI video catalog…';
     videos.set(id, {body, title, topic: typeof data.topic === 'string' ? data.topic : ''});
   });
@@ -1615,24 +1710,65 @@ function watchIdle(question: NotebookCell | undefined, restart = false) {
     if (openQuestion()?.packet?.tutor_checkpoint_id === id && !field.value.trim()) smallerStep(true);
   }, 95000);
 }
-/** After a lesson recap: the next accessible lesson, and a review of what to keep practising. */
-function nextLesson() {
-  for (const course of lessonCourses) {
-    const index = course.chapters.findIndex(chapter => chapter.id === selectedLesson);
-    if (index >= 0) return course.chapters.slice(index + 1).find(chapter => !chapter.locked && !chapter.expired);
+function latestSummary() {
+  return [...notebook.cells].reverse().find(cell => cell.packet?.session_summary);
+}
+function refreshSummary(topics?: TopicCoverage[]) {
+  const cell = latestSummary();
+  if (!cell?.packet) return;
+  if (topics) {
+    const weak = topics.filter(topic => topic.needs_review).map(topic => topic.title).join('; ');
+    cell.packet.work_on = weak;
+    cell.text = cell.text.replace(/\n\n\*\*Keep practising:\*\* [^\n]*/, '');
+    if (weak) cell.text = cell.text.replace(/\n\n(?=\*\*(?:Lesson completed|Session ended|Lesson completion))/, () => '\n\n**Keep practising:** ' + weak + '\n\n');
   }
+  const body = feed.querySelector<HTMLElement>(`[data-cell-id="${cell.id}"] > div`);
+  if (body) { body.innerHTML = renderBoard(cell.text); summaryActions(body, cell); }
+}
+function removeCellFollowups(ids: Set<string>) {
+  notebook.executionIssues = notebook.executionIssues?.filter(issue => !ids.has(issue.key.split(':')[0]));
+  refreshSummary();
 }
 function summaryActions(body: HTMLElement, cell: NotebookCell) {
-  const pending = executionFollowup(notebook.executionIssues ?? []);
+  if (cell !== latestSummary()) return;
+  const issues = notebook.executionIssues ?? [];
+  const pending = executionFollowup(issues);
   if (pending) {
     const note = document.createElement('div'); note.className = 'execution-followup';
-    note.setAttribute('role', 'note'); note.innerHTML = renderBoard(pending); body.append(note);
+    note.setAttribute('role', 'note'); note.innerHTML = renderBoard(pending);
+    note.querySelectorAll('ul:first-of-type > li').forEach((item, index) => {
+      const issue = issues[index], editor = issue && editors.elementForKey(issue.key);
+      if (!editor) { item.append(' (cell unavailable in this notebook)'); return; }
+      const link = document.createElement('a');
+      link.href = '#' + editor.id; link.textContent = issue.snippet;
+      link.setAttribute('aria-label', 'Go to ' + issue.snippet);
+      link.onclick = event => {
+        event.preventDefault();
+        const row = editor.closest<HTMLElement>('[data-cell-id]');
+        if (row?.dataset.cellId) goToNotebookCell(row.dataset.cellId);
+        for (let parent = editor.parentElement; parent; parent = parent.parentElement) {
+          if (parent instanceof HTMLDetailsElement) parent.open = true;
+        }
+        editor.tabIndex = -1; editor.focus({preventScroll:true}); scrollToNotebookRow(editor);
+      };
+      item.replaceChildren(link, ': ' + issue.detail);
+    });
+    body.append(note);
   }
-  const bar = document.createElement('div'); bar.className = 'lesson-actions';
-  const next = nextLesson(), weak = typeof cell.packet?.work_on === 'string' ? cell.packet.work_on : '';
+  const bar = document.createElement('div'); bar.className = 'lesson-actions recap-actions';
+  const chapters = lessonCourses.find(course => course.chapters.some(ch => ch.id === selectedLesson))?.chapters ?? [];
+  const index = chapters.findIndex(ch => ch.id === selectedLesson);
+  const next = index < 0 ? undefined : chapters[index + 1];
+  const weak = typeof cell.packet?.work_on === 'string' ? cell.packet.work_on.trim() : '';
   if (next && cell.packet?.lesson_completion === 'complete') {
-    const go = document.createElement('button'); go.type = 'button'; go.dataset.nextLesson = next.id;
-    go.textContent = 'Next lesson: ' + (next.lesson || next.name); go.onclick = () => begin('tutor', next.id); bar.append(go);
+    if (next.locked || next.expired) {
+      const access = document.createElement('span');
+      access.textContent = (next.lesson || next.name) + (next.expired ? ' · Access ended' : ' · Locked');
+      bar.append(access);
+    } else {
+      const go = document.createElement('button'); go.type = 'button'; go.dataset.nextLesson = next.id;
+      go.textContent = 'Next lesson: ' + (next.lesson || next.name); go.onclick = () => begin('tutor', next.id); bar.append(go);
+    }
   }
   if (cell.packet?.lesson_completion === 'partial') {
     const resume = document.createElement('button'); resume.type = 'button'; resume.textContent = 'Resume lesson';
@@ -1641,14 +1777,14 @@ function summaryActions(body: HTMLElement, cell: NotebookCell) {
   }
   if (weak) {
     const review = document.createElement('button'); review.type = 'button'; review.dataset.reviewWeak = ''; review.textContent = 'Review weak spots';
-    review.onclick = () => { void send('Let’s revisit what I should keep practising: ' + weak.slice(0, 600) + '\nStart with one short question to check my understanding before explaining.', false, 'Review weak spots'); };
+    review.onclick = () => { void send('Check the topics that still need review, one question at a time.', false, 'Review weak spots', 'reviewWeakSpots'); };
     bar.append(review);
   }
   if (bar.children.length) body.append(bar);
 }
 function renderTeaching(cell: NotebookCell, text = cell.text, replaceRow?: HTMLElement) {
   const packet = cell.packet ?? {}, section = packet.active_subtopic;
-  appendCard(packet.tutor_feedback ? names[mode] + ' feedback' : names[mode], body => {
+  appendCard('assistant', body => {
     body.parentElement?.setAttribute('data-cell-id', cell.id);
     body.parentElement!.dataset.entryKind = packet.tutor_feedback ? 'feedback' : packet.is_question_prompt ? 'question' : 'lesson';
     const {body:shown, turn} = splitYourTurn(text);
@@ -1718,25 +1854,26 @@ function renderTeaching(cell: NotebookCell, text = cell.text, replaceRow?: HTMLE
     heading.replaceWith(context, title);
   }, !replaceRow && !restoring && nearBottom(), replaceRow);
 }
-async function connect(grant: {url: string; token: string; chapterId?: string; media?: boolean; browserCourse?:boolean; lesson?: {subject: string; name: string};
+async function connect(grant: {url: string; token: string; chapterId?: string; media?: boolean; freecad?:boolean; browserCourse?:boolean; lesson?: {subject: string; name: string};
     browserProgress?:BrowserCourseProgress; doubtContext?: {chapter_id?: unknown; lesson_name?: unknown}}, id: number) {
+  freecad=grant.freecad ? new FreeCADRoom(attempt,message=>host.postMessage(message)) : undefined;
   mediaAllowed = grant.media === true;
   browserCourse=grant.browserCourse===true;browserSync=Promise.resolve();
   taskProgress=grant.browserProgress;showBrowserProgress();renderLessons();
   document.body.classList.toggle('browser-course',browserCourse);
   if(runtimePicker) {
-    runtimePicker.disabled=browserCourse;runtimePicker.options[0].textContent=browserCourse?'ERPNext browser':localRuntimeLabel();
+    runtimePicker.disabled=browserCourse || !!freecad;runtimePicker.options[0].textContent=freecad?'FreeCAD':browserCourse?'ERPNext browser':localRuntimeLabel();
     runtimePicker.querySelector('[value="terminal"]')!.textContent = 'Open course terminal';
     runtimePicker.querySelector('[value="setup"]')!.textContent = 'Set up / rebuild course';
   }
-  if(browserCourse)editors.follow(false);
+  if(browserCourse || freecad)editors.follow(false);
   doubtContext = {};
   for (const key of ['chapter_id', 'lesson_name'] as const) {
     const value = grant.doubtContext?.[key];
     if (typeof value === 'string' && value && value.length <= 300) doubtContext[key] = value;
   }
   byId<HTMLInputElement>('follow-code').disabled = mediaAllowed;
-  if (mediaAllowed) byId('code-observer-status').textContent = `Use Ask ${names[mode]} to share a cell from this notebook.`;
+  if (mediaAllowed && !freecad) byId('code-observer-status').textContent = `Use Ask ${names[mode]} to share a cell from this notebook.`;
   const live = new LivekitClient.Room({audioOutput: {deviceId: speaker?.deviceId}}); room = live;
   const current = () => room === live && id === attempt;
   const isAgent = (peer?: RemoteParticipant) => current() && !!peer?.isAgent && (!agent || peer.identity === agent);
@@ -1787,8 +1924,13 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
             if (row) renderTeaching(pending, pending.text, row);
           }
         }
-        if (data.verified !== true) {editors.checkpoint(''); status.textContent = 'Your saved task is here. Ask Instructor to confirm it before submitting an answer.';}
-        else if (data.needs_resubmission) editors.checkpoint(data.checkpoint_id);
+        const needsConfirmation = 'Your saved task needs confirmation. Open Notebook options and choose “Ask Instructor to confirm”.';
+        if (data.verified !== true) {
+          editors.checkpoint(''); status.textContent = needsConfirmation;
+        } else {
+          if (typeof pending.packet.student_answer !== 'string') editors.checkpoint(data.checkpoint_id);
+          if (status.textContent === needsConfirmation) status.textContent = 'Instructor confirmed your saved task.';
+        }
         saveNotebook(); controls();
       }
     } else if (data?.method === 'tutor_turn_started' && typeof data.tutor_turn_id === 'string') {
@@ -1857,7 +1999,7 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
         const covered = topics.filter(topic => topic.status === 'covered').length;
         chapter.progress = {status:covered === topics.length ? 'covered' : 'in_progress', covered, total:topics.length,
           topics, needs_review:topics.filter(topic => topic.needs_review).length};
-        renderLessons();
+        renderLessons(); refreshSummary(topics);
       }
       const content = '### Lesson progress\n\n' + items.filter((item: any) => typeof item.title === 'string').map((item: any) => '- '
         + (item.covered === true ? '✓ ~~' + item.title + '~~' : item.title) + ' — ' + (item.learning_status || item.status || '')).join('\n');
@@ -1870,8 +2012,11 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
     } else if (data?.method === 'tutor_session_summary') {
       resolveStepFailure(data);
       const currentChapter=lessonCourses.find(c=>c.name===data.subject)?.chapters.find(c=>c.id===selectedLesson&&c.name===data.chapter&&(c.lesson||c.name)===data.topic);
+      const weak = Array.isArray(data.topics_discussed)
+        ? data.topics_discussed.filter((topic: any) => topic?.status === 'Needs review').map((topic: any) => topic.title).filter((title: unknown) => typeof title === 'string').join('; ')
+        : typeof data.work_on === 'string' ? data.work_on.trim() : '';
       const cards = Array.isArray(data.recap_cards) ? data.recap_cards : [];
-      const recap = ['## Lesson recap', data.big_idea || data.remark || '', ...cards.map((card: any) => typeof card === 'string' ? card : [card.title, ...(Array.isArray(card.takeaways) ? card.takeaways.map((point: string) => '- ' + point) : [card.content || card.summary || card.key_takeaway || ''])].filter(Boolean).join('\n\n')), data.strength ? '**What went well:** ' + data.strength : '', data.work_on ? '**Keep practising:** ' + data.work_on : ''].filter(value => typeof value === 'string').join('\n\n');
+      const recap = ['## Lesson recap', data.big_idea || data.remark || '', ...cards.map((card: any) => typeof card === 'string' ? card : [card.title, ...(Array.isArray(card.takeaways) ? card.takeaways.map((point: string) => '- ' + point) : [card.content || card.summary || card.key_takeaway || ''])].filter(Boolean).join('\n\n')), data.strength ? '**What went well:** ' + data.strength : '', weak ? '**Keep practising:** ' + weak : ''].filter(value => typeof value === 'string').join('\n\n');
       const xp = lessonXp();
       const completion = lessonCompletion(data);
       const completionText = completion === 'complete' ? '**Lesson completed — teaching and required checks finished.**'
@@ -1882,7 +2027,7 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
         && Number.isInteger(progress.completed_count) && progress.completed_count >= 0 && progress.completed_count <= progress.total
         ? `\n\n${progress.completed_count}/${progress.total} lesson sections completed.` : '';
       addCell('recap', recap + '\n\n' + completionText + progressText + `\n\n**Lesson XP earned: ${xp} XP**`,
-        {session_summary:true, tutor_step_id:data.tutor_step_id, tutor_turn_id:data.tutor_turn_id, lesson_completion:completion, ...(typeof data.work_on === 'string' && data.work_on.trim() ? {work_on:data.work_on.slice(0, 600)} : {})});
+        {session_summary:true, tutor_step_id:data.tutor_step_id, tutor_turn_id:data.tutor_turn_id, lesson_completion:completion, work_on:weak});
       editors.checkpoint(''); struggles = 0; smallerStep(false);
       if(currentChapter&&data.is_complete===true&&data.partial_session===false&&data.summary_scope==='full'&&['ssh','cloud-cli'].includes(selectedRuntime)) {
         saveNotebook(true);host.postMessage({type:'finishLab',attempt,documentKey,chapterId:selectedLesson});
@@ -1901,6 +2046,10 @@ async function connect(grant: {url: string; token: string; chapterId?: string; m
     if (!retractedTutorRequests.has(turn) && (!tutorOutputPaused || turn) && typeof payload?.content === 'string')
       board(payload.content, payload.active_subtopic, payload);
     return '';
+  });
+  freecad?.bind(live,()=>agent,current,()=>ready,message=>{
+    const indicator=document.getElementById('freecad-status');
+    if(current() && indicator){indicator.hidden=false;if(indicator.textContent!==message)indicator.textContent=message;}
   });
   live.localParticipant.registerRpcMethod('demonstrate_browser',async data=>{
     if(!current()||!ready||!browserCourse||!browserSnapshot?.shift||data.callerIdentity!==agent
@@ -2021,6 +2170,13 @@ function connectedStatus(message: string) {
   status.textContent = message;
   const inline = byId('notebook-help-status');
   if (inline) inline.textContent = '';
+}
+/** Connection changes are reported in the header. The help row repeats them only beside a typed question
+ * (the learner is looking there) and otherwise keeps just a delivery issue about the learner's own message. */
+function connectionStatus(message: string) {
+  status.textContent = message;
+  const inline = byId('notebook-help-status');
+  if (inline && !deliveryNextStep) inline.textContent = field.value.trim() ? message : '';
 }
 function showDeliveryIssue(nextStep: string) {
   const inline = byId('notebook-help-status');
@@ -2183,6 +2339,12 @@ window.addEventListener('message', e => {
     if(!sending)begin(mode,selectedLesson,true);
     return;
   }
+  if(e.origin===window.location.origin && d?.attempt===attempt && d.type==='freecadResult') {
+    freecad?.receive(d.id,d.result);return;
+  }
+  if(e.origin===window.location.origin && d?.attempt===attempt && d.type==='freecadSetup') {
+    connectionStatus(d.message);return;
+  }
   if(d?.type==='browserObservation') {
     if(e.origin!==window.location.origin || d.attempt!==attempt || d.chapter!==selectedLesson)return;
     browserSnapshot=d.observation;
@@ -2235,6 +2397,12 @@ window.addEventListener('message', e => {
   // VS Code forwards host messages from its same-origin bootstrap frame.
   // The YouTube player is on the separate API origin and may only report playback above.
   if (e.origin !== window.location.origin) return;
+  if (d?.type === 'skillingAction') {
+    if (d.attempt !== attempt || !ready || selectionOpen || workspaceBusy || sending || practicePanel && !practicePanel.hidden) return;
+    if (d.action === 'ask' && (!practiceMode || editors.aiEnabled)) byId('message')?.focus();
+    if (practiceMode && (d.action === 'check' || d.action === 'grade')) editors.runPracticeTool(d.action === 'check' ? 'tests' : 'grade');
+    return;
+  }
   if (d?.type === 'browseCoursePractice') { browseCoursePractice(); return; }
   if (d?.type === 'workspaceError') {
     if (d.request !== undefined && (d.request !== practiceRequest || practicePanel?.hidden)) return;
@@ -2358,6 +2526,7 @@ window.addEventListener('message', e => {
     if (d.attempt !== undefined && d.attempt !== attempt) return;
     if (documentKey !== d.documentKey) composer.cancelCapture();
     clearTimeout(saveTimer); notebookConflict(false); pendingDoubt = '';
+    if (typeof d.learnerInitial === 'string') feed.dataset.learnerInitial = d.learnerInitial;
     documentKey = d.documentKey; saveSequence = 0; restoreNotebook(d.notebook);
     document.getElementById('runtime-restore')?.remove();
     savedTextDraft = notebook.textDraft;
@@ -2386,8 +2555,7 @@ window.addEventListener('message', e => {
     let bar = document.getElementById('runtime-restore');
     if (!bar) {
       bar = document.createElement('div'); bar.id = 'runtime-restore';
-      const resume = document.querySelector('#stopping-point > button');
-      if (resume) resume.before(bar); else toolbar?.after(bar);
+      feed.before(bar);
     }
     bar.replaceChildren(); bar.hidden = (!d.count && !notebook.drafts.some(draft=>draft.language==='python')) || !d.needsRestore
       || (selectedRuntime !== 'course' && !selectedRuntime.startsWith('machine:'));
@@ -2447,7 +2615,7 @@ window.addEventListener('message', e => {
     return;
   }
   if (d?.type === 'runtimeError') {status.textContent = d.message; return;}
-  if (d?.type === 'workstationState' && runtimePicker) {
+  if (d?.type === 'workstationState' && runtimePicker && !freecad) {
     const option = runtimePicker.querySelector<HTMLOptionElement>('[value="course"]');
     if (option) option.textContent = d.runtimeLabel || localRuntimeLabel() + ' · ' + d.label;
     if (typeof d.runtimeLabel === 'string' && selectedRuntime === 'course') editors.runtime = d.runtimeLabel;
@@ -2471,7 +2639,10 @@ window.addEventListener('message', e => {
     const returned = !visible && d.visible === true;
     visible = d.visible === true;
     // Coming back (for example from the catalog after a purchase) refreshes which lessons are open.
-    if (returned) { if (selectionPage && selectionOpen) loadCourseSelection(); else reloadLessons(); }
+    if (returned) {
+      if (selectionOpen && selectedLesson) loadCourseSelection();
+      else reloadLessons();
+    }
     if (!visible) stopDevices();
     controls();
     const selected = editors.selection(); observeCode(selected?.snapshot, selected?.run);
@@ -2479,6 +2650,7 @@ window.addEventListener('message', e => {
     return;
   }
   if (d?.type === 'signedOut') {
+    delete feed.dataset.learnerInitial;
     workspaceBusy = false; closePracticeList();
     byId('practice-questions')?.replaceChildren(); byId('practice-chapter')?.replaceChildren();
     if (selectionPage) selectionOpen = true;
@@ -2539,7 +2711,7 @@ window.addEventListener('message', e => {
   if (d.type === 'practiceToolResult' && typeof d.request === 'number') { toolReplies.get(d.request)?.(d); toolReplies.delete(d.request); }
   if (d.type === 'grant' && !room) {
     editors.aiEnabled = d.aiEnabled !== false;
-    editors.runtime = typeof d.codeRuntime === 'string' ? d.codeRuntime.slice(0, 200) : 'Local language tools';
+    editors.runtime = typeof d.codeRuntime === 'string' ? d.codeRuntime.slice(0, 200) : 'Course runtime';
     // A new course brings its own language for new code cells.
     const picker = document.getElementById('cell-language') as HTMLSelectElement | null;
     const courseLanguage = !!picker && typeof d.codeLanguage === 'string' && [...picker.options].some(option => option.value === d.codeLanguage);
@@ -2558,6 +2730,9 @@ window.addEventListener('message', e => {
     v.url = d.url; renderVideo(d.videoId, true);
   }
 });
+if (button('saved-practice')) button('saved-practice').onclick = () => {
+  saveNotebook(true); host.postMessage({type:'savedPracticeNotebooks'});
+};
 if (button('course-notes')) button('course-notes').onclick = () => {saveNotebook(true); host.postMessage({type:'courseNotes',documentKey});};
 button('tutor').onclick = () => {if(!sending)begin(mode, selectedLesson, browserObservationFailed);};
 if(button('previous-chapter'))button('previous-chapter').onclick=()=>{const prior=adjacentChapter(true);if(prior)selectChapter(prior.id);};
@@ -2664,7 +2839,7 @@ function doubtComposer() {
     nudge.textContent = 'Sharing what you tried helps Doubt Solver find the exact step that went wrong.';
     input.setAttribute('aria-describedby', nudge.id);
     tried.append(summary, label, input, nudge);
-    document.querySelector('#composer .composer-box')?.before(tried);
+    document.querySelector('#composer .composer-support')?.prepend(tried);
     const fresh = document.createElement('button'); fresh.type = 'button'; fresh.id = 'new-doubt'; fresh.className = 'quiet'; fresh.textContent = 'New Chat';
     fresh.title = 'Start a fresh conversation. This chat stays in Chat history.';
     fresh.onclick = newDoubt;
@@ -2740,14 +2915,20 @@ if (runtimePicker) runtimePicker.onchange = () => {
 };
 document.addEventListener('click', event => {
   for (const menu of document.querySelectorAll<HTMLDetailsElement>('.workspace-menu[open]')) {
-    if (!menu.contains(event.target as Node) || (event.target as Element).closest('button')) menu.open = false;
+    if (!menu.contains(event.target as Node)) { menu.open = false; continue; }
+    if (!(event.target as Element).closest('button') || menu.querySelector('.delete-confirmation :focus')) continue;
+    const returnFocus = menu.contains(document.activeElement);
+    menu.open = false;
+    if (returnFocus) menu.querySelector<HTMLElement>('summary')?.focus({preventScroll:true});
   }
 });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && document.body.classList.contains('focus-view')) focusView(false);
-  if (event.key === 'Escape') for (const menu of document.querySelectorAll<HTMLDetailsElement>('.workspace-menu[open]')) {
-    menu.open = false; menu.querySelector<HTMLElement>('summary')?.focus();
+  if (event.key !== 'Escape') return;
+  const menus = document.querySelectorAll<HTMLDetailsElement>('.workspace-menu[open]');
+  for (const menu of menus) {
+    menu.open = false; menu.querySelector<HTMLElement>('summary')?.focus({preventScroll:true});
   }
+  if (!menus.length && document.body.classList.contains('focus-view')) focusView(false);
 });
 // ---- Course data: preloaded samples and the learner's own files, asked about through the Coach ----
 /** Imported files by name until the extension has described them, so a question can still name them. */
@@ -2814,7 +2995,7 @@ function receiveCourseData(d: {state?: unknown; datasets?: unknown; message?: un
   controls();
 }
 function renderDataCell(cell: NotebookCell) {
-  appendCard(names[mode], body => {
+  appendCard('assistant', body => {
     body.parentElement?.setAttribute('data-cell-id', cell.id);
     renderDataBody(body, cell, text => host.postMessage({type:'dataCopy', attempt, text}));
     conversationControls(body, cell);

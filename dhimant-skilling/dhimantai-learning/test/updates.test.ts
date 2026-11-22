@@ -167,3 +167,35 @@ test('shutdown aborts owned requests and cannot publish a late release', async (
   await checking;
   assert.notEqual(updates.state.status, 'available');
 });
+
+test('checks the minimum editor version before downloading an incompatible VSIX', async () => {
+  const requests: string[] = [];
+  const updates = new ExtensionUpdates(() => 'staging', '0.13.0', () => {}, async input => {
+    requests.push(String(input)); return new Response(JSON.stringify({...release, minimumEditorVersion:'1.120.0'}));
+  }, '1.118.0');
+  await updates.check();
+  assert.equal(updates.state.status, 'incompatible');
+  assert.match(updates.state.message, /1\.120\.0/);
+  await updates.install(async () => assert.fail('incompatible extension installed'));
+  assert.equal(requests.length, 1);
+});
+
+test('extension progress uses streamed bytes only when the response size is known', async () => {
+  const {createHash} = await import('node:crypto');
+  const bytes = Buffer.from('1234'), sha256 = createHash('sha256').update(bytes).digest('hex');
+  for (const known of [true, false]) {
+    const percentages: number[] = [];
+    const updates = new ExtensionUpdates(() => 'staging', '0.13.0', state => {
+      if (state.progress !== undefined) percentages.push(state.progress);
+    }, async input => {
+      if (String(input).endsWith('.json')) return Response.json({...release, sha256});
+      return new Response(new ReadableStream({start(controller) {
+        controller.enqueue(bytes.subarray(0,1)); controller.enqueue(bytes.subarray(1)); controller.close();
+      }}), {headers:known ? {'content-length':'4'} : undefined});
+    });
+    await updates.check(); await updates.install(async () => {});
+    assert.equal(updates.state.status,'ready');
+    assert.deepEqual(percentages, known ? [25,100] : []);
+    updates.dispose();
+  }
+});

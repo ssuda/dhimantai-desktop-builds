@@ -35,7 +35,7 @@ test('a failed pending result does not prevent other results syncing or cause au
   const outbox = new CourseworkOutbox({keys:()=>[...data.keys()],get:<T>(k:string)=>data.get(k) as T,update:async(k,v)=>{if(v===undefined)data.delete(k);else data.set(k,v);}});
   for (const id of ['stale','current']) await assert.rejects(outbox.send('e','u',{kind:'exercise',id,result:exerciseResult(report,id,'a'.repeat(64),'unknown')!},async()=>{throw new Error('offline');}));
   let calls=0;
-  await assert.rejects(outbox.retry('e','u',async v=>{calls++;if(v.id==='stale')throw new Error('Assessment changed');}),/remain pending/);
+  await assert.rejects(outbox.retry('e','u',async v=>{calls++;if(v.id==='stale')throw new Error('Assessment changed');}),/1 result remains pending/);
   assert.equal(calls,2); assert.deepEqual(outbox.pending('e','u').map(v=>v.id),['stale']);
 });
 
@@ -76,4 +76,20 @@ test('course screen gates claiming, preserves historical grades, escapes text an
   html=courseGradeHtml('nonce',{...grade,eligible:true,certificate_id:'c'},[{id:'c',course_id:'python',course_title:'Python',recipient_name:'Learner',
     grade:'C',score:75,issued_at:'2026-11-10',revoked_at:null,policy_version:'coursework-v1'}],'',0);
   assert.match(html,/Grade C · 75\/100/); assert.ok(!html.includes('data-action="claim"'));
+});
+
+test('saved project receipt survives reopen and belongs to its request, learner and service', async () => {
+  const values = new Map<string,unknown>();
+  const state = {keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T,
+    update:async(key:string,value:unknown)=>{ if(value===undefined) values.delete(key); else values.set(key,value); }};
+  const queue = new CourseworkOutbox(state);
+  const project = {kind:'project' as const,id:'shelf',result:exerciseResult(report,'stable-id','a'.repeat(64),'reported')!};
+  await assert.rejects(queue.send('staging','learner',project,async()=>{throw new Error('Lost response');}));
+  assert.equal(queue.projectSync('staging','learner','stable-id'),'pending');
+  const restored = new CourseworkOutbox(state);
+  await restored.retry('staging','learner',async v=>assert.equal(v.result.request_id,'stable-id'));
+  assert.equal(restored.pending('staging','learner').length,0);
+  assert.equal(restored.projectSync('staging','learner','stable-id'),'recorded');
+  assert.equal(restored.projectSync('staging','other','stable-id'),'unconfirmed');
+  assert.equal(restored.projectSync('production','learner','stable-id'),'unconfirmed');
 });

@@ -1,0 +1,32 @@
+{
+  "id": "ferry-fares",
+  "version": 1,
+  "title": "Ferry fares",
+  "files": [
+    "README.md",
+    "fares.py"
+  ],
+  "architecture": {
+    "focusFile": "fares.py",
+    "prediction": "Using the starter, how many credits in total are charged for passengers aged 11, 12 and 13?",
+    "boundaryHint": "Choose one input for which the original behavior and the published fare disagree. Where should the expected price in your test come from?"
+  },
+  "steps": [
+    {
+      "id": "investigate",
+      "title": "Investigate a reported bug",
+      "goal": "A family disputed the fare for a child. The published fare is two credits for passengers aged twelve or younger and five credits for older passengers. fare(age) returns the fare for one passenger given their age in whole years.",
+      "opening": "Read the incident and inspect the original behavior.",
+      "task": "Read README.md and fares.py. Record your prediction, repair the bug and write a regression in test_regression.py.",
+      "files": [
+        "README.md",
+        "fares.py"
+      ],
+      "check": "debug:ferry-fares",
+      "expected": "The public behavior checks pass and your test catches the original failure.",
+      "hint": "Which passenger could distinguish the published policy from the behavior you observed?",
+      "reflection": "What behavior does your test protect?",
+      "evidencePrompt": "What changed between the failing and passing runs?"
+    }
+  ]
+}

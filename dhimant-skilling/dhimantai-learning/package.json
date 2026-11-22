@@ -2,7 +2,7 @@
   "name": "dhimantai-learning",
   "displayName": "dhimantAI Learning",
   "description": "Learn in VS Code with Course Catalog, Instructor, Doubt Solver, and coding practice. Write, debug, and test here; run projects and tests in the course container.",
-  "version": "0.39.60",
+  "version": "0.39.71",
   "publisher": "optficial",
   "enabledApiProposals": [
     "browser"
@@ -37,6 +37,9 @@
     "configurationDefaults": {
       "chat.disableAIFeatures": true,
       "editor.tabCompletion": "on",
+      "editor.minimap.enabled": false,
+      "js/ts.tsserver.useSyntaxServer": "never",
+      "typescript.tsserver.useSyntaxServer": "never",
       "terminal.integrated.defaultProfile.windows": "dhimantAI Course Container",
       "terminal.integrated.defaultProfile.osx": "dhimantAI Course Container",
       "terminal.integrated.defaultProfile.linux": "dhimantAI Course Container"
@@ -128,8 +131,14 @@
       },
       {
         "command": "dhimantai.openProjectCoach",
-        "title": "Open Project Coach",
+        "title": "Open Project Instructor",
         "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.discussProjectSelection",
+        "title": "Discuss Selected Lines with Instructor",
+        "category": "dhimantAI",
+        "enablement": "dhimantai.projectOpen && dhimantai.legacyCoachOpen && editorHasSelection && resourceScheme == file"
       },
       {
         "command": "dhimantai.pricing",
@@ -212,7 +221,7 @@
       },
       {
         "command": "dhimantai.courseCatalog",
-        "title": "Open Course Catalog",
+        "title": "Browse Courses",
         "category": "dhimantAI",
         "icon": "$(library)"
       },
@@ -346,6 +355,46 @@
         "command": "dhimantai.toggleAI",
         "title": "Toggle AI Assistance",
         "category": "dhimantAI"
+      },
+      {
+        "command": "dhimantai.skilling.resume",
+        "category": "dhimantAI",
+        "title": "Continue Learning"
+      },
+      {
+        "command": "dhimantai.skilling.ask",
+        "category": "dhimantAI",
+        "title": "Ask Instructor"
+      },
+      {
+        "command": "dhimantai.skilling.check",
+        "category": "dhimantAI",
+        "title": "Check Sample Tests"
+      },
+      {
+        "command": "dhimantai.skilling.grade",
+        "category": "dhimantAI",
+        "title": "Submit for Grading"
+      },
+      {
+        "command": "dhimantai.skilling.feedback",
+        "category": "dhimantAI",
+        "title": "Submit for Feedback"
+      },
+      {
+        "command": "dhimantai.skilling.project",
+        "category": "dhimantAI",
+        "title": "Open Project Instructor"
+      },
+      {
+        "command": "dhimantai.skilling.discuss",
+        "category": "dhimantAI",
+        "title": "Discuss Selected Lines"
+      },
+      {
+        "command": "dhimantai.skilling.course",
+        "category": "dhimantAI",
+        "title": "Course Grade & Certificate"
       }
     ],
     "menus": {
@@ -400,6 +449,16 @@
       ],
       "editor/title": [],
       "editor/context": [
+        {
+          "command": "dhimantai.openProjectCoach",
+          "when": "!dhimantai.projectOpen && resourceScheme == file && isWorkspaceTrusted",
+          "group": "dhimantai@1"
+        },
+        {
+          "command": "dhimantai.discussProjectSelection",
+          "when": "dhimantai.projectOpen && dhimantai.legacyCoachOpen && editorHasSelection && resourceScheme == file",
+          "group": "dhimantai@1"
+        },
         {
           "command": "dhimantai.suggestNextLine",
           "when": "notebookCellType == code",
@@ -774,6 +833,38 @@
         {
           "command": "dhimantai.practice.submit",
           "when": "dhimantai.practiceNotebook"
+        },
+        {
+          "command": "dhimantai.skilling.resume",
+          "when": "false"
+        },
+        {
+          "command": "dhimantai.skilling.ask",
+          "when": "false"
+        },
+        {
+          "command": "dhimantai.skilling.check",
+          "when": "false"
+        },
+        {
+          "command": "dhimantai.skilling.grade",
+          "when": "false"
+        },
+        {
+          "command": "dhimantai.skilling.feedback",
+          "when": "false"
+        },
+        {
+          "command": "dhimantai.skilling.project",
+          "when": "false"
+        },
+        {
+          "command": "dhimantai.skilling.discuss",
+          "when": "false"
+        },
+        {
+          "command": "dhimantai.skilling.course",
+          "when": "false"
         }
       ],
       "notebook/toolbar": [
@@ -796,6 +887,52 @@
           "command": "dhimantai.askCoach",
           "when": "notebookType == jupyter-notebook && !dhimantai.practiceNotebook",
           "group": "navigation"
+        }
+      ],
+      "dhimantai.skillingMenu": [
+        {
+          "command": "dhimantai.skilling.resume",
+          "group": "1_home@1",
+          "when": "dhimantai.canResume && !dhimantai.skilling.course && !dhimantai.skilling.project"
+        },
+        {
+          "command": "dhimantai.skilling.ask",
+          "group": "2_work@1",
+          "when": "dhimantai.skilling.ask"
+        },
+        {
+          "command": "dhimantai.skilling.project",
+          "group": "2_work@1",
+          "when": "dhimantai.skilling.project"
+        },
+        {
+          "command": "dhimantai.skilling.discuss",
+          "group": "2_work@2",
+          "when": "dhimantai.skilling.discuss && dhimantai.skilling.hasSelection"
+        },
+        {
+          "command": "dhimantai.skilling.check",
+          "group": "2_work@3",
+          "when": "dhimantai.skilling.check"
+        },
+        {
+          "command": "dhimantai.skilling.grade",
+          "group": "2_work@4",
+          "when": "dhimantai.skilling.grade"
+        },
+        {
+          "command": "dhimantai.skilling.feedback",
+          "group": "2_work@4",
+          "when": "dhimantai.skilling.feedback"
+        },
+        {
+          "command": "dhimantai.skilling.course",
+          "group": "3_course@1",
+          "when": "dhimantai.skilling.course"
+        },
+        {
+          "command": "dhimantai.courseCatalog",
+          "group": "4_browse@1"
         }
       ]
     },
@@ -879,10 +1016,17 @@
       }
     ],
     "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dhimantai-learning",
+          "title": "Learning",
+          "icon": "media/icon.svg"
+        }
+      ],
       "secondarySidebar": [
         {
           "id": "dhimantai-coach",
-          "title": "dhimantAI Coach",
+          "title": "Instructor",
           "icon": "media/icon.svg"
         }
       ]
@@ -891,18 +1035,21 @@
       "dhimantai-coach": [
         {
           "id": "dhimantai.coachView",
-          "name": "dhimantAI Coach",
+          "name": "Project Instructor",
           "type": "webview",
           "when": "dhimantai.nativeCoach && dhimantai.legacyCoachOpen && dhimantai.projectOpen"
         }
       ],
-      "explorer": [
+      "dhimantai-learning": [
         {
           "id": "dhimantai.learningNavigation",
-          "name": "Learn",
+          "type": "webview",
+          "name": "Learning",
           "when": "dhimantai.customDesktop",
           "visibility": "visible"
-        },
+        }
+      ],
+      "explorer": [
         {
           "id": "dhimantai.practice",
           "name": "dhimantAI Practice",
@@ -924,18 +1071,25 @@
         "view": "dhimantai.notebookSubmission",
         "contents": "Run All uses your selected VS Code kernel. Save your notebook on this computer.\n\nNo open dhimantAI page is needed. Code, outputs and run history are not stored on the dhimantAI server.\n\nReturn to your dhimantAI question and attach the file for live feedback when ready. Local output is not a verified assessment."
       }
+    ],
+    "submenus": [
+      {
+        "id": "dhimantai.skillingMenu",
+        "label": "Skilling"
+      }
     ]
   },
   "scripts": {
     "compile": "tsc -p . && tsc -p tsconfig.webview.json && node scripts/bundle-audio.mjs && node scripts/bundle-authoring.mjs",
     "watch": "node scripts/bundle-audio.mjs && node scripts/bundle-authoring.mjs && tsc -w -p .",
-    "test": "npm run compile && node --test out/test/*.test.js",
+    "test": "npm run compile && node scripts/test.mjs",
     "test:diagrams": "npm run compile && node --test out/test/diagramBlocks.test.js && node test/diagramBrowser.cjs",
     "test:signup": "npm run compile && node out/test/integration/runTest.js suiteSignup",
     "test:b2c": "npm run compile && node out/test/integration/runTest.js suiteB2c",
     "test:colab": "npm run compile && node out/test/integration/runTest.js suiteColab",
     "test:copilot": "npm run compile && node out/test/integration/runTest.js suiteCopilotPolicy",
-    "package": "npm run compile && npx --yes @vscode/vsce@3.2.1 package --no-dependencies --allow-missing-repository --baseContentUrl https://bitbucket.org/optficial/dhimantai/src/codex/question-bank-ux/dhimant-skilling/dhimantai-learning/",
+    "vscode:prepublish": "npm run compile && node scripts/bundle-extension.mjs",
+    "package": "npx --yes @vscode/vsce@3.2.1 package --no-dependencies --allow-missing-repository --baseContentUrl https://bitbucket.org/optficial/dhimantai/src/codex/question-bank-ux/dhimant-skilling/dhimantai-learning/",
     "test:courses": "npm run compile && node out/test/integration/runTest.js suiteCourseRuntimes",
     "test:vscode": "npm run compile && node out/test/integration/runTest.js suiteExternalProgramming",
     "test:coach-chat": "npm run compile && node out/test/integration/runTest.js suiteNotebookCoachHistory",
@@ -949,6 +1103,7 @@
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-java": "^6.0.2",
     "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-php": "6.0.2",
     "@codemirror/lang-python": "^6.2.1",
     "@codemirror/lang-rust": "^6.0.2",
     "@codemirror/language": "^6.13.1",
@@ -959,6 +1114,7 @@
     "@types/jsdom": "^21.1.7",
     "@types/markdown-it": "14.1.2",
     "@types/node": "^20.14.0",
+    "@types/pdfmake": "0.3.3",
     "@types/vscode": "~1.93.0",
     "@types/ws": "8.18.1",
     "@viz-js/viz": "3.31.0",
@@ -972,6 +1128,7 @@
     "markdown-it": "14.2.0",
     "mermaid": "12.3.0",
     "pdfjs-dist": "6.5.438",
+    "pdfmake": "0.3.15",
     "playwright-core": "1.65.0",
     "typescript": "~5.5.4",
     "ws": "8.18.3"

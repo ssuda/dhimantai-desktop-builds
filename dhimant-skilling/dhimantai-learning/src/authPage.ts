@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
+import { resolve } from 'node:path';
 import type { Auth, Session } from './auth';
 import { isLoginProvider } from './providerLogin';
 import { authPageHtml, AuthPageMode } from './authPageHtml';
@@ -29,6 +30,7 @@ class AuthPage {
   readonly result: Promise<Session | undefined>;
   private resolve!: (session: Session | undefined) => void;
   private readonly panel: vscode.WebviewPanel;
+  private readonly media = vscode.Uri.file(resolve(__dirname, '../../media/auth'));
   private readonly environment: EnvironmentName;
   private providerAttempt?: AbortController;
   private busy = false;
@@ -41,7 +43,7 @@ class AuthPage {
     this.mode = mode;
     this.result = new Promise(resolve => { this.resolve = resolve; });
     this.panel = vscode.window.createWebviewPanel('dhimantai.auth', '', vscode.ViewColumn.One,
-      { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true });
+      { enableScripts: true, localResourceRoots: [this.media], retainContextWhenHidden: true });
     const received = this.panel.webview.onDidReceiveMessage(message => this.handle(message));
     const config = vscode.workspace.onDidChangeConfiguration(event => {
       if (event.affectsConfiguration('dhimantai.environment') && this.environment !== currentEnvironment()) this.panel.dispose();
@@ -73,7 +75,9 @@ class AuthPage {
   private render(notice = '') {
     this.panel.title = this.mode === 'signUp' ? 'dhimantAI · Sign up'
       : this.mode === 'signIn' ? 'dhimantAI · Sign in' : 'dhimantAI · Reset password';
-    this.panel.webview.html = authPageHtml(this.mode, randomBytes(18).toString('base64'), this.environment, notice, this.course?.title);
+    const webview = this.panel.webview;
+    const assets = { root: webview.asWebviewUri(this.media).toString(), source: webview.cspSource };
+    webview.html = authPageHtml(this.mode, randomBytes(18).toString('base64'), this.environment, assets, notice, this.course?.title);
   }
 
   cancelProvider() { this.providerAttempt?.abort(new Error('Browser sign-in cancelled.')); }

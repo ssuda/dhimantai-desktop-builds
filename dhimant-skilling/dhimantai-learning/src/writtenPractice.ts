@@ -47,7 +47,7 @@ export function writtenHtml(task: WrittenPractice, draft: Draft, nonce: string, 
   const guide = practiceReviews[task.id];
   const labels = JSON.stringify(HELP_LEVELS.map(level => ({label: level.label, message: level.message}))).replace(/</g, '\\u003c');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Written practice</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}' ${cspSource}; script-src 'nonce-${nonce}'; media-src ${recordingRoot}; img-src ${recordingRoot}">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}' ${cspSource}; script-src 'nonce-${nonce}'; media-src ${recordingRoot}; img-src ${cspSource} ${recordingRoot}">
   ${media ? `<link rel="stylesheet" href="${media('audioControls.css')}"><script nonce="${nonce}" src="${media('dictation.js')}"></script>` : ''}
   <style nonce="${nonce}">${UI_TOKENS}body{max-width:1280px;margin:24px auto;padding:0 clamp(14px,3vw,36px);font: max(15px,var(--vscode-font-size,13px))/1.55 var(--vscode-font-family,sans-serif);color:var(--vscode-foreground);background:var(--vscode-editor-background)}
   h1{font-size:1.5em}pre{white-space:pre-wrap;font:inherit}code.figure{display:block;overflow-x:auto;white-space:pre;font-family:var(--vscode-editor-font-family,monospace)}.chart{display:block;max-width:100%;height:auto}.recording audio{max-width:100%;vertical-align:middle}label{display:block;margin-top:18px}textarea,input{box-sizing:border-box;width:100%;padding:10px;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,var(--vscode-panel-border));font:inherit}
@@ -56,7 +56,7 @@ export function writtenHtml(task: WrittenPractice, draft: Draft, nonce: string, 
   header h1{margin:4px 0 16px;font-size:clamp(21px,2.2vw,32px)}header p{margin:0}.written-workspace{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.2fr);align-items:start;gap:16px}
   .written-brief,.written-answer{min-width:0;padding:clamp(12px,2vw,24px);border:1px solid var(--dh-border);border-radius:var(--dh-radius);background:var(--dh-surface)}
   .written-brief summary{cursor:pointer;font-weight:650}#task{overflow-wrap:anywhere}#task:last-child{margin-bottom:0}.written-answer>label:first-child{font-weight:650;margin-top:0}input,textarea,button{border-radius:6px}
-  @media(max-width:839px){.written-workspace{grid-template-columns:1fr}}.written-workspace:has(.written-brief:not([open])){grid-template-columns:1fr}</style></head><body>
+  @media(max-width:839px){.written-workspace{grid-template-columns:1fr}}.written-workspace:has(.written-brief:not([open])){grid-template-columns:1fr}</style>${media ? `<link rel="stylesheet" href="${media('conversation.css')}">` : ''}</head><body class="written-practice">
   <header>${canGoBack ? '<button id="back-course" class="secondary" type="button">← Back to course</button>' : ''}<p class="muted">${escape(task.course)} · Written practice</p><h1>${escape(task.title || task.course)}</h1></header>
   <main class="written-workspace"><details class="written-brief" open><summary>Exercise instructions</summary>
   ${assessmentForTask[task.id] ? '<button type="button" id="start-assessment">Start assessment</button>' : ''}
@@ -68,13 +68,13 @@ export function writtenHtml(task: WrittenPractice, draft: Draft, nonce: string, 
     <pre id="transcript"></pre><pre id="original"></pre><pre id="guide"></pre>
     <p class="muted">Your first response is saved on this computer. Use the work field for a later retry.</p></section>` : ''}
   <label for="assistance">Help used</label><input id="assistance" maxlength="900" value="${escape(draft.assistance)}" placeholder="Documentation, Instructor, AI or peer help; write none if unaided">
-  <label for="message">Question for Practice Instructor (optional)</label><input id="message" maxlength="600">${microphoneControl}${dictationStatus}
-  <div class="ladder"><button type="button" id="attach" class="secondary">Attach photo or PDF</button><button type="button" id="detach" class="secondary" hidden>Remove</button><span id="attached" class="muted">A screenshot, a diagram or handwritten working. Up to 4 files, 2 MB each.</span></div>
-  <button type="button" id="review">Submit for feedback</button>
   <div class="ladder"><span>Stuck?</span><button type="button" id="hint" class="secondary"></button><span id="help-steps" class="muted"></span></div>
   <p id="help-note" class="muted" hidden></p>
+  <label for="message">Question for Instructor (optional)</label><input id="message" maxlength="600">${microphoneControl}${dictationStatus}
+  <div class="ladder"><button type="button" id="attach" class="secondary">Attach photo or PDF</button><button type="button" id="detach" class="secondary" hidden>Remove</button><span id="attached" class="muted">A screenshot, a diagram or handwritten working. Up to 4 files, 2 MB each.</span></div>
+  <button type="button" id="review">Submit for feedback</button>
   <p class="muted">Your draft stays on this computer. Feedback is guidance, not a verified grade or mastery award. You can start any other course without completing this task.</p>
-  <p id="status" role="status"></p><pre id="feedback" aria-live="polite"></pre></section></main>
+  <p id="status" role="status"></p><div class="written-feedback" hidden><strong class="speaker-name"><span class="speaker-avatar" aria-hidden="true"></span>Instructor</strong><pre id="feedback" aria-live="polite"></pre></div></section></main>
   <script nonce="${nonce}">
   const host=acquireVsCodeApi(), answer=document.getElementById('answer'), assistance=document.getElementById('assistance'), message=document.getElementById('message'), status=document.getElementById('status');
   const dictation=window.installDictation?.(host,message);
@@ -109,14 +109,19 @@ export function writtenHtml(task: WrittenPractice, draft: Draft, nonce: string, 
   [answer,assistance].forEach(el=>el.addEventListener('input',()=>{clearTimeout(saveTimer);saveTimer=setTimeout(save,250);}));
   for(const mode of ['hint','review']) document.getElementById(mode).onclick=()=>{
     if(busy)return;
-    if(mode==='review'&&(!answer.value.trim()||!assistance.value.trim())){status.textContent='Include your work and help used before submitting.';return;}
+    if(mode==='review'&&(!answer.value.trim()||!assistance.value.trim())){const missing=answer.value.trim()?assistance:answer;status.textContent=missing===answer?'Write your answer before submitting.':'Describe any help you used, or enter “None”.';missing.focus();return;}
     dictation?.setScope('');save();busy=true;document.getElementById('hint').disabled=document.getElementById('review').disabled=true;
     status.textContent=mode==='review'?'Reviewing this submitted version…':'Preparing a hint…';
     host.postMessage({type:'feedback',mode,...data(),message:mode==='hint'&&!message.value.trim()?levels[help.next-1].message:message.value,helpLevel:mode==='hint'?help.next:undefined});
   };
   document.getElementById('attach').onclick=()=>{if(!busy)host.postMessage({type:'attach'});};
   document.getElementById('detach').onclick=()=>{if(!busy)host.postMessage({type:'detach'});};
-  addEventListener('message',({data:reply})=>{
+  addEventListener('message',({data:reply,origin})=>{
+    if(reply.type==='skillingAction' && origin===window.location.origin) {
+      if(reply.action==='ask')message.focus();
+      if(reply.action==='feedback')document.getElementById('review').click();
+      return;
+    }
     if(reply.type==='firstCapture'){showCapture(reply);return;}
     if(reply.type==='attached'){document.getElementById('attached').textContent=reply.error||(reply.names.length?'Attached: '+reply.names.join(', '):'A screenshot, a diagram or handwritten working. Up to 4 files, 2 MB each.');document.getElementById('detach').hidden=!reply.names.length;return;}
     if(reply.type==='saved'){if(!busy)status.textContent='Draft saved on this computer.';return;}
@@ -126,6 +131,7 @@ export function writtenHtml(task: WrittenPractice, draft: Draft, nonce: string, 
     busy=false;dictation?.setScope('written');document.getElementById('hint').disabled=document.getElementById('review').disabled=false;
     if(reply.error){status.textContent=reply.error;return;}
     usedTutor=true;save();
+    document.querySelector('.written-feedback').hidden=false;
     document.getElementById('feedback').textContent=reply.feedback+'\\n\\n'+reply.next_step;
     status.textContent='Feedback on the version you submitted. No grade or completion was awarded.';
   });

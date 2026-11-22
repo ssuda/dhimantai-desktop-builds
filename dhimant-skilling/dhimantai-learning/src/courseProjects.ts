@@ -25,12 +25,15 @@ export function registerCourseProjects(context: vscode.ExtensionContext, auth: A
         {id:'micro', label:'Micro project', detail:'Practise one concept with normal and boundary cases.'},
         {id:'minor', label:'Minor project', detail:'Combine concepts with integration tests and failure handling.'},
         {id:'major', label:'Final capstone project', detail:'Build, test, demonstrate and hand off an end-to-end application.'},
-      ].map(level => ({...level, unlocked: !!pathway.milestones.find(m => m.id === level.id)?.unlocked,
-        description: pathway.milestones.find(m => m.id === level.id)?.unlocked ? 'Ready to start' : 'Prerequisites required'}));
+      ].map(level => {
+        const milestone = pathway.milestones.find(m => m.id === level.id);
+        return {...level, unlocked: !!milestone?.unlocked, reason: milestone?.lock_reason,
+          description: milestone?.unlocked ? 'Ready to start' : 'Locked', detail: milestone?.lock_reason || level.detail};
+      });
       const level = await vscode.window.showQuickPick(levels, {title:`Projects · ${course_titles?.[course] ?? pathway.profile.title}`});
       if (!level || !await current()) return;
       if (!level.unlocked) {
-        const action = await vscode.window.showInformationMessage('Complete the prerequisite milestones in your course roadmap before starting this project.', 'Open roadmap');
+        const action = await vscode.window.showInformationMessage(level.reason || 'Check your course roadmap for the required lessons and milestones.', 'Open roadmap');
         if (action && await current()) await vscode.commands.executeCommand('dhimantai.courseGrade', course);
         return;
       }

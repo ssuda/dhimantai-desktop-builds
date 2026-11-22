@@ -24,6 +24,11 @@ import traceback
 from lab_scenarios import prepared_setup
 from sql_runtime import PostgresRuntimeError
 
+in_container = any(Path(marker).is_file() for marker in ('/run/.containerenv', '/.dockerenv'))
+ssh_worker = sys.argv[1:] == ['--ssh-runtime'] and bool(os.environ.get('SSH_CONNECTION'))
+if sys.platform != 'linux' or not (in_container or ssh_worker):
+    raise SystemExit('Host execution is disabled. Use the course container or a remote runtime.')
+
 # Keep the transport on private descriptors before redirecting learner stdout/stderr.
 transport = os.fdopen(os.dup(1), 'w', buffering=1)
 control = os.fdopen(os.dup(0), 'r')

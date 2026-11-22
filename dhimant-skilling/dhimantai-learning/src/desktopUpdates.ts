@@ -8,9 +8,10 @@ const MAX_INSTALLER = 1024 * 1024 * 1024;
 const VERSION = /^(\d+)\.(\d+)\.(\d+)(?:-preview\.(\d+))?$/;
 export interface DesktopTarget { version: string; environment: string; platform: string; arch: string }
 export interface DesktopArtifact { version: string; githubUrl: string; bytes: number; sha256: string }
+class DesktopCompatibilityError extends Error {}
 export interface DesktopUpdateState {
-  status: 'unchecked' | 'checking' | 'current' | 'available' | 'downloading' | 'ready' | 'unavailable';
-  installed: string; available?: string; progress?: number; message: string;
+  status: 'unchecked' | 'checking' | 'current' | 'available' | 'downloading' | 'ready' | 'unavailable' | 'incompatible';
+  installed: string; available?: string; progress?: number; retry?: boolean; message: string;
 }
 
 export function newerDesktopVersion(available: string, installed: string): boolean {
@@ -28,12 +29,17 @@ export function newerDesktopVersion(available: string, installed: string): boole
 export function desktopArtifact(data: unknown, target: DesktopTarget): DesktopArtifact | undefined {
   const manifest = data as any;
   if (manifest?.schemaVersion !== 2 || manifest.distribution !== 'dhimantai-desktop'
-      || manifest.environment !== target.environment || !Array.isArray(manifest.artifacts)) {
-    throw new Error('No desktop release is published for this installation’s channel.');
+      || !Array.isArray(manifest.artifacts)) {
+    throw new Error('Invalid desktop release information.');
+  }
+  if (manifest.environment !== target.environment) {
+    throw new DesktopCompatibilityError(`This release is for a different service. This desktop uses the ${target.environment} channel.`);
   }
   const matches = manifest.artifacts.filter((item: any) => item.platform === target.platform && item.arch === target.arch
     && item.channel === (target.version.includes('-preview.') ? 'preview' : 'stable'));
-  if (matches.length !== 1) throw new Error('No desktop release is published for this computer.');
+  if (!matches.length) throw new DesktopCompatibilityError(
+    `No compatible ${target.version.includes('-preview.') ? 'preview' : 'stable'} installer is published for ${target.platform} (${target.arch}).`);
+  if (matches.length > 1) throw new Error('The release lists multiple installers for this computer.');
   const item = matches[0];
   if (typeof item.version !== 'string' || !VERSION.test(item.version)) throw new Error('Invalid desktop release version.');
   if (!newerDesktopVersion(item.version, target.version)) return undefined;
@@ -123,7 +129,7 @@ export class DesktopUpdates {
         this.set({ status: ready ? 'ready' : 'available', installed: this.target.version, available: this.release.version,
           message: ready ? 'Installer verified and ready. Open it when you finish your lesson.' : `Desktop ${this.release.version} is available.` });
       } catch (error) {
-        this.set({ status: 'unavailable', installed: this.target.version,
+        this.set({ status: error instanceof DesktopCompatibilityError ? 'incompatible' : 'unavailable', installed: this.target.version,
           message: error instanceof Error ? error.message : 'Could not check desktop updates.' });
       }
     });
@@ -132,7 +138,7 @@ export class DesktopUpdates {
     return this.run(async () => {
       const release = this.release, destination = this.path;
       if (this.state.status !== 'available' || !release || !destination) return;
-      this.set({ ...this.state, status: 'downloading', progress: 0, message: 'Downloading desktop update…' });
+      this.set({ ...this.state, status: 'downloading', retry: false, progress: 0, message: 'Downloading desktop update…' });
       let temporary: string | undefined;
       try {
         await mkdir(this.directory, { recursive: true });
@@ -179,7 +185,7 @@ export class DesktopUpdates {
           message: 'Installer verified and ready. Open it when you finish your lesson.' });
       } catch {
         // Do not expose signed GitHub redirect URLs or raw network diagnostics.
-        this.set({ status: 'available', installed: this.target.version, available: release.version,
+        this.set({ status: 'available', retry: true, installed: this.target.version, available: release.version,
           message: 'The installer could not be downloaded and verified. Retry the download; nothing was installed.' });
       } finally { if (temporary) await rm(temporary, { recursive: true, force: true }).catch(() => {}); }
     });
@@ -188,7 +194,7 @@ export class DesktopUpdates {
     if (this.state.status !== 'ready' || !this.release || !this.path || this.disposed) return undefined;
     // Revalidate cached bytes immediately before handing off to the operating system.
     if (await verifiedFile(this.path, this.release)) return this.path;
-    this.set({ status: 'available', installed: this.target.version, available: this.release.version,
+    this.set({ status: 'available', retry: true, installed: this.target.version, available: this.release.version,
       message: 'The saved installer changed. Download and verify it again.' });
     return undefined;
   }

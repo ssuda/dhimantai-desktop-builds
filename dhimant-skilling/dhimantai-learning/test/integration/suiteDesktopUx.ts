@@ -1,6 +1,7 @@
 // New-learner journey audit in the real desktop window: launch → catalog → account → first lesson,
-// in Light Modern, Dark Modern and High Contrast. Screenshots, step timings and axe WCAG 2.2 AA
+// in dhimantAI Light, Dark Modern and High Contrast. Screenshots, step timings and axe WCAG 2.2 AA
 // results for every learning webview are written to DHIMANTAI_UX_OUT.
+import {learningFrame, learningPanel} from './learningFrame';
 import * as assert from 'node:assert/strict';
 import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
@@ -10,7 +11,7 @@ import type {Auth} from '../../src/auth';
 
 const out = process.env.DHIMANTAI_UX_OUT || join(require('node:os').tmpdir(), 'dhimantai-desktop-ux');
 const axeSource = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
-const themes = ['Light Modern', 'Dark Modern', 'Default High Contrast'];
+const themes = ['dhimantAI Light', 'Dark Modern', 'Default High Contrast'];
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 /** Content frames of the visible extension webviews (the workbench itself is upstream VS Code). */
@@ -55,6 +56,24 @@ async function invisibleActions(page: Page) {
   return found;
 }
 
+/** Controls a learner can see and use in the lesson: what competes with the one thing the screen asks for. */
+async function lessonControls(page: Page) {
+  for (const frame of await webviewFrames(page)) {
+    try {
+      const found = await frame.evaluate(() => {
+        if (!document.querySelector('.starter-answers')) return null;
+        return [...document.querySelectorAll<HTMLElement>('button,select,a[href],summary,input:not([type=hidden]),textarea')]
+          .filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !(e as HTMLButtonElement).disabled; })
+          .filter(e => !e.closest('details:not([open])') || e.tagName === 'SUMMARY' && e.parentElement?.matches('details:not([open])') && !e.parentElement.parentElement?.closest('details:not([open])'))
+          .filter(e => !e.closest('[hidden]'))
+          .map(e => (e.getAttribute('aria-label') || (e as HTMLSelectElement).selectedOptions?.[0]?.textContent || e.textContent || (e as HTMLTextAreaElement).placeholder || e.tagName).trim().replace(/\s+/g, ' ').slice(0, 40));
+      });
+      if (found) return found;
+    } catch { /* frame navigated */ }
+  }
+  return [];
+}
+
 async function visibleText(page: Page) {
   const texts = [];
   for (const frame of await webviewFrames(page)) {
@@ -77,37 +96,48 @@ export async function run() {
   const browser = await chromium.connectOverCDP('http://127.0.0.1:' + process.env.DHIMANTAI_CDP_PORT);
   const page = browser.contexts()[0].pages().find(p => p.url().includes('workbench'))!;
   page.setDefaultTimeout(20000);
-  const view = page.frameLocator('iframe.webview:visible').last().frameLocator('#active-frame');
   const steps: any[] = [];
   const started = Date.now();
   let actions = 0;
-  const step = async (name: string, theme = 'Light Modern') => {
+  const step = async (name: string, theme = vscode.workspace.getConfiguration('workbench').get('colorTheme', themes[0])) => {
     await pause(1200);
     const file = `${String(steps.length).padStart(2, '0')}-${name}-${theme.split(' ')[0].toLowerCase()}.png`;
     await page.screenshot({path: join(out, file)});
     steps.push({name, theme, file, seconds: Math.round((Date.now() - started) / 100) / 10, actions,
-      title: await page.title(), invisibleActions: await invisibleActions(page), text: await visibleText(page), axe: await audit(page)});
+      title: await page.title(), lessonControls: await lessonControls(page), invisibleActions: await invisibleActions(page), text: await visibleText(page), axe: await audit(page)});
     writeFileSync(join(out, 'journey.json'), JSON.stringify(steps, null, 2));
+  };
+  const inspectExplore = async (theme: string) => {
+    const panel = await learningPanel(page, '#open-guide');
+    await panel.getByRole('button',{name:'Explore',exact:true}).click();
+    await step('explore', theme);
+    await panel.getByRole('button',{name:'Home',exact:true}).click();
   };
   const act = async (fn: () => Promise<unknown>) => { actions++; await fn(); };
   try {
     await step('launch');
-    // One navigation: the Learning sidebar, named like the lesson tabs and profile menu.
+    // The Learning sidebar and catalogue use the same lesson names.
     await vscode.commands.executeCommand('dhimantai.learningNavigation.focus');
-    const navigation = page.locator('.pane:has(.pane-header[aria-label*="Learn"]) .monaco-list-row .label-name');
+    const sidebar = await learningFrame(page,'nav[aria-label="Learning destinations"]');
+    const navigation = sidebar.locator('.nav-row:visible');
     await navigation.first().waitFor();
-    assert.deepEqual(await navigation.allInnerTexts(), ['Courses', 'My courses', 'Instructor', 'Doubt Solver', 'My certificates', 'Git & GitHub']);
+    assert.deepEqual(await navigation.allInnerTexts(), ['Courses', 'Practice', 'Instructor', 'Doubt Solver']);
     await vscode.commands.executeCommand('dhimantai.courseCatalog');
     await step('catalog');
-    assert.equal(await view.locator('header.top nav[aria-label="Learning"]').count(), 0, 'the catalog header does not repeat the sidebar');
+    await inspectExplore(themes[0]);
+    let view = await learningPanel(page, '#open-guide');
+    const catalogNav = view.getByRole('navigation', {name:'Learning', exact:true});
+    assert.deepEqual(await catalogNav.getByRole('button').allTextContents(), ['Home', 'Explore']);
+    assert.equal(await view.getByRole('heading', {name:'Choose your first lesson'}).count(),1);
     assert.equal(await view.locator('header.top').getByRole('button', {name: 'Sign in', exact: true}).count(), 1);
-    await act(() => view.getByRole('button', {name: 'Start Data Science with Python', exact: true}).click());
+    await act(() => view.locator('.home-feature [data-home-course="data-science-python"]').getByRole('button', {name: 'Start chapter 1', exact: true}).click());
     await step('account');
+    view = await learningPanel(page,'#name');
     await act(() => view.locator('#name').fill('New Learner'));
     await act(() => view.locator('#email').fill('ux@example.test'));
     await act(() => view.locator('#password').fill('local-fixture-learner'));
     await act(() => view.locator('#confirmation').fill('local-fixture-learner'));
-    await act(() => view.getByRole('button', {name: 'Create account', exact: true}).click());
+    await act(() => view.getByRole('button', {name: 'Create account', exact: true}).press('Enter'));
     await pause(4000);
     await step('after-signup');
     await pause(6000);
@@ -117,14 +147,32 @@ export async function run() {
       await step('first-lesson', theme);
       await vscode.commands.executeCommand('dhimantai.courseCatalog');
       await step('catalog', theme);
+      await inspectExplore(theme);
       await vscode.commands.executeCommand('workbench.action.previousEditor');
     }
     await vscode.workspace.getConfiguration('workbench').update('colorTheme', themes[0], vscode.ConfigurationTarget.Global);
+    // The learning loop itself: predict, get feedback on that exact answer, then check by running.
+    const lesson = steps.find(s => s.name === 'first-lesson')!;
+    view = await learningPanel(page,'.starter-answers');
+    const answers = view.getByRole('group', {name: /pandas sales table/});
+    assert.equal(await view.getByRole('button', {name: 'Run it to check'}).count(), 0, 'running waits for a prediction');
+    await act(() => answers.getByRole('button', {name: '3', exact: true}).click());
+    await view.getByRole('status').filter({hasText: 'how many rows'}).waitFor();
+    const firstFeedback = Math.round((Date.now() - started) / 100) / 10;
+    await step('wrong-answer');
+    await view.getByRole('button', {name: 'Run it to check'}).waitFor();
+    await act(() => answers.getByRole('button', {name: '10', exact: true}).click());
+    await view.getByRole('status').filter({hasText: 'Exercise complete.'}).waitFor();
+    await step('exercise-complete');
     const total = steps.reduce((sum, s) => sum + s.axe.reduce((n: number, a: any) => n + (a.violations?.length ?? 0), 0), 0);
     writeFileSync(process.env.DHIMANTAI_TEST_RESULTS!, JSON.stringify({out, steps: steps.map(s => ({name: s.name, theme: s.theme, seconds: s.seconds, actions: s.actions,
-      invisibleActions: s.invisibleActions, violations: s.axe.flatMap((a: any) => a.violations ?? []).map((v: any) => `${v.id}×${v.count}`)})), totalViolationRules: total}, null, 2));
+      invisibleActions: s.invisibleActions, violations: s.axe.flatMap((a: any) => a.violations ?? []).map((v: any) => `${v.id}×${v.count}`)})), totalViolationRules: total,
+      firstLessonControls: lesson.lessonControls, firstFeedbackSeconds: firstFeedback, firstFeedbackActions: steps.find(s => s.name === 'wrong-answer')!.actions}, null, 2));
     assert.ok(steps.length > 0);
     assert.deepEqual(steps.flatMap(s => s.invisibleActions.map((a: string) => `${s.theme}: ${a}`)), [], 'every learning action has a visible fill or border');
     assert.equal(total, 0, 'no axe WCAG 2.2 AA violations');
+    // Ratchet: 25 controls before the first answer in 0.39.60, 17 now. The goal is 8; the remaining ones are the mode tabs,
+    // the coaching language and the composer, which wait on product decisions rather than layout.
+    assert.ok(lesson.lessonControls.length <= 17, `the first lesson asks for one thing (${lesson.lessonControls.length} controls: ${lesson.lessonControls.join(' | ')})`);
   } finally { await browser.close(); }
 }

@@ -12,7 +12,9 @@ Copilot is optional and disabled by default. The custom desktop permits it only 
 
 Provider/authentication/API configuration is retained for an optional compatible Copilot Chat installation. The pinned VSCodium preview does not bundle that extension; installing and signing into Copilot is separate, and live Copilot responses have not been validated here. No automatic extension download, sign-in, or model request is introduced. Stock VS Code receives the disabled default but no forced course override.
 
-Light Modern is the whole editor's default theme. Learning panels inherit the editor theme; there is no separate extension appearance setting or palette. Users can still select a different editor theme.
+The native window carries the dhimantAI book and wordmark. New profiles use **dhimantAI Light**, with a navy header and activity rail, orange selection accents and a light reading surface. The learning panels follow the chosen editor theme. Existing profiles can select **dhimantAI Light** in Color Theme.
+
+**Skilling** follows the active tab. In a lesson it focuses Instructor, in Practice it offers the checks and submissions supported by that exercise, and in a project it can discuss selected lines. Written challenges use Submit for Feedback. Course Grade & Certificate opens the current course. Learning pages show Skilling and basic Edit actions. Opening a source file or notebook also shows File and View. The desktop omits the general-purpose Go, Selection, Run, Terminal and Help menus. Closing the last tab shows Browse Courses and, for learners with recorded course progress, Continue Learning.
 
 `lock.json` pins VSCodium, Code OSS, Electron and Node. `customize.py` applies narrow source changes and fails when upstream context changes. `build.py` produces a macOS DMG, Windows user setup EXE, or Linux tarball and Debian package on native x64/ARM64 runners. Pushing the exported build repository to `main` builds the four supported targets sequentially; it neither publishes releases nor updates a running service.
 

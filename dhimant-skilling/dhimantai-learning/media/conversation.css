@@ -1,0 +1,212 @@
+/* Speaker colours belong to the learning conversation, including written Practice feedback. */
+body {
+  --student-ink: #9b420c;
+  --student-button: #b4520d;
+  --student-on-button: white;
+  --student-line: #c66b2c;
+  --assistant-ink: #176478;
+  --assistant-on-button: white;
+  --assistant-line: #217d8e;
+  --paper: var(--vscode-editor-background);
+  --student-wash: color-mix(in srgb, #ef9b49 14%, var(--paper));
+  --assistant-wash: color-mix(in srgb, var(--assistant-line) 7%, var(--paper));
+  --assistant-rule: color-mix(in srgb, var(--assistant-line) 29%, var(--paper));
+  --assistant-mark: color-mix(in srgb, var(--assistant-line) 14%, var(--paper));
+  --student-rule: color-mix(in srgb, var(--student-line) 50%, var(--paper));
+  --avatar-size: 36px;
+  --avatar-space: calc(var(--avatar-size) + 12px);
+}
+body:is(.vscode-dark, .vscode-high-contrast) {
+  --student-ink: #ffb57d;
+  --student-button: #f4a467;
+  --student-on-button: #311b0c;
+  --student-line: #e59b65;
+  --assistant-ink: #8dd8e1;
+  --assistant-on-button: #102429;
+  --assistant-line: #56b4c4;
+}
+body[data-notebook-mode] {
+  --room-page: color-mix(in srgb, #718ba7 8%, var(--paper));
+}
+.room-tabs button[aria-pressed="true"] {
+  color: var(--assistant-on-button);
+  background: var(--assistant-ink);
+}
+#feed article[data-speaker] {
+  position: relative;
+  margin-block: 16px;
+  font-size: max(16px, var(--vscode-font-size, 13px));
+  line-height: 1.65;
+}
+#feed article[data-speaker="assistant"] {
+  margin-inline: var(--avatar-space) 0;
+  container-type: inline-size;
+  padding: 16px clamp(16px, 2vw, 26px) 20px;
+  border: 1px solid var(--assistant-rule);
+  border-inline-start: 4px solid var(--assistant-line);
+  border-radius: 5px 14px 14px 14px;
+  background: var(--assistant-wash);
+}
+#feed article[data-speaker="student"] {
+  border: 1px solid var(--student-rule);
+  background: var(--student-wash);
+}
+#feed article[data-entry-kind="message"] {
+  width: fit-content;
+  min-width: 0;
+  max-width: min(68ch, calc(100% - var(--avatar-space)));
+  margin-inline: auto var(--avatar-space);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+#feed [data-entry-kind="message"] :is(.learner-message, .conversation-preview) {
+  padding: 8px 16px;
+  border: 1px solid var(--student-rule);
+  border-radius: 14px 5px 14px 14px;
+  background: var(--student-wash);
+}
+#feed .speaker-name, .written-feedback .speaker-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--assistant-ink);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+#feed [data-speaker="student"] .speaker-name { color: var(--student-ink); }
+.speaker-avatar {
+  box-sizing: border-box;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  border: 1px solid var(--assistant-rule);
+  border-radius: 50%;
+  background: #f2f9fc url("./dhimantai-avatar.png") center / 83% no-repeat;
+}
+#feed .speaker-avatar {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: calc(100% + 12px);
+}
+#feed [data-speaker="student"] .speaker-avatar {
+  inset-inline: calc(100% + 12px) auto;
+  border-color: transparent;
+  background: var(--student-button);
+  color: var(--student-on-button);
+  font-size: 16px;
+}
+#feed [data-entry-kind="message"] .conversation-header { flex-direction: row-reverse; margin-bottom: 3px; }
+#feed .cell-actions { gap: 4px; }
+#feed .cell-actions button {
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 1.4;
+}
+@media (hover: hover) {
+  #feed article:not(:hover, :focus-within, .is-collapsed) .cell-actions { opacity: .72; }
+}
+#feed .cell-actions button:is(:hover, :focus-visible) {
+  color: var(--vscode-foreground);
+  border-color: var(--dh-border);
+  background: var(--paper);
+}
+#feed article[data-speaker].is-collapsed { padding-block: 6px; }
+#feed [data-speaker="assistant"] :is(h1, h2, h3) { margin-block: .9em .35em; line-height: 1.25; }
+#feed [data-speaker="assistant"] :is(h1, h2) { font-size: 1.4em; }
+#feed [data-speaker="assistant"] h3 { font-size: 1.18em; }
+#feed [data-speaker="assistant"] :is(h1, h2, h3):first-child { margin-block-start: .35em; }
+#feed [data-speaker="assistant"] p { margin-block: .6em; }
+#feed [data-speaker="assistant"] :is(p, ul, ol) { max-width: 74ch; }
+#feed [data-speaker="assistant"] table { margin-block: .85em; font-size: .95em; }
+#feed [data-speaker="assistant"] :is(th, td) { padding: 5px 10px; border-color: var(--assistant-rule); overflow-wrap: normal; }
+#feed [data-speaker="assistant"] th { background: var(--assistant-mark); color: var(--assistant-ink); text-align: start; }
+#feed [data-speaker="assistant"] :is(p, li, th, td, h1, h2, h3) code {
+  padding: .08em .32em;
+  border-radius: 4px;
+  background: var(--assistant-mark);
+  color: var(--assistant-ink);
+}
+#feed [data-speaker="assistant"] pre:not(.practice-output) {
+  padding: 12px 16px;
+  border: 1px solid var(--assistant-rule);
+  border-radius: 8px;
+  background: var(--paper);
+}
+/* Code editors use the available work area, including the side-by-side exercise layout. */
+#feed article[data-entry-kind="code"], #feed article[data-speaker]:has(.exercise-workspace) { margin-inline: 0; }
+#feed :is([data-entry-kind="code"], article:has(.exercise-workspace)) .speaker-avatar { position: static; }
+
+#learning-document #feed { padding-bottom: 10px; }
+@media (min-width: 900px) {
+  #feed [data-speaker="assistant"] :is(p, ul, ol) { max-width: none; }
+  #learning-document #composer { padding-inline-start: var(--avatar-space); }
+}
+#message-bar .composer-support { display: block; margin-bottom: 8px; }
+#message-bar .composer-quick-actions { gap: 6px 8px; margin: 0; }
+#message-bar .more-asks { margin-inline-start: 0; }
+#message-bar .composer-box {
+  border: 1px solid var(--student-line);
+  background: var(--vscode-input-background);
+}
+#message-bar .composer-box:focus-within {
+  border-color: var(--student-button);
+  box-shadow: 0 0 0 1px var(--student-button);
+}
+#learning-workspace #message-bar .composer-input textarea:focus-visible { outline: 0; }
+#message-bar textarea { font-size: max(16px, var(--vscode-font-size, 13px)); }
+#message-bar #practice-help, #feed [data-reply], .written-practice #hint {
+  color: var(--student-ink);
+  background: var(--paper);
+  border: 1px solid var(--student-line);
+  border-radius: 7px;
+}
+#message-bar [data-lesson-action="continueLesson"], #message-bar .composer-submit, #feed .answer-hint, .written-practice #review {
+  border: 1px solid var(--student-button);
+  color: var(--student-on-button);
+  background: var(--student-button);
+}
+#message-bar [data-lesson-action="continueLesson"] { border-radius: 7px; }
+#message-bar :is(#practice-help, [data-lesson-action="continueLesson"], .composer-submit):hover:not(:disabled),
+#feed [data-reply]:hover:not(:disabled), .written-practice :is(#hint, #review):hover:not(:disabled) {
+  color: var(--student-on-button);
+  background: var(--student-ink);
+}
+#message-bar .composer-submit:disabled { background: var(--student-wash); color: var(--student-ink); border-color: var(--student-rule); }
+.written-practice :is(#answer, #message) { border-color: var(--student-line); }
+.written-feedback {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--assistant-rule);
+  border-inline-start: 4px solid var(--assistant-line);
+  border-radius: 8px;
+  background: var(--assistant-wash);
+}
+.written-feedback #feedback:not(:empty) {
+  max-width: 74ch;
+  padding: 0;
+  margin: 8px 0 0;
+  border: 0;
+  background: transparent;
+  font-size: max(16px, var(--vscode-font-size, 13px));
+  line-height: 1.65;
+}
+@media (max-width: 560px) {
+  body { --avatar-size: 26px; --avatar-space: 0px; }
+  #feed .speaker-avatar { position: static; }
+  #feed [data-speaker="student"] .speaker-name { flex-direction: row-reverse; }
+  #feed article[data-entry-kind="message"] { max-width: 94%; }
+}
+@media (forced-colors: active) {
+  #message-bar .composer-box:focus-within { outline: 2px solid Highlight; }
+  .speaker-avatar { border: 1px solid CanvasText; }
+  #feed .cell-actions { opacity: 1 !important; }
+}

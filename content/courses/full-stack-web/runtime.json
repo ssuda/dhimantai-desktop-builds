@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "courses": {
+    "react-nextjs-typescript": {
+      "images": {
+        "web-lab": {
+          "base": "course",
+          "dockerfile": "runtime/Dockerfile",
+          "files": {
+            "public/.dockerignore": "labs/.dockerignore",
+            "public/README.md": "labs/README.md",
+            "public/api/README.md": "labs/api/README.md",
+            "public/api/alembic.ini": "labs/api/alembic.ini",
+            "public/api/app.py": "labs/api/app.py",
+            "public/api/migrations/env.py": "labs/api/migrations/env.py",
+            "public/api/migrations/versions/001_tickets.py": "labs/api/migrations/versions/001_tickets.py",
+            "public/api/mint_token.py": "labs/api/mint_token.py",
+            "public/api/requirements.txt": "labs/api/requirements.txt",
+            "public/api/test_api.py": "labs/api/test_api.py",
+            "public/node/cache.mjs": "labs/node/cache.mjs",
+            "public/node/package.json": "labs/node/package.json",
+            "public/node/server.mjs": "labs/node/server.mjs",
+            "public/node/services.test.mjs": "labs/node/services.test.mjs",
+            "public/ops/Caddyfile": "labs/ops/Caddyfile",
+            "public/ops/Dockerfile.api": "labs/ops/Dockerfile.api",
+            "public/ops/Dockerfile.web": "labs/ops/Dockerfile.web",
+            "public/ops/README.md": "labs/ops/README.md",
+            "public/ops/ci.example.yaml": "labs/ops/ci.example.yaml",
+            "public/ops/compose.yaml": "labs/ops/compose.yaml",
+            "public/ops/release_gate.py": "labs/ops/release_gate.py",
+            "public/ops/test_release_gate.py": "labs/ops/test_release_gate.py",
+            "public/web/app/api/tickets/route.ts": "labs/web/app/api/tickets/route.ts",
+            "public/web/app/components/Desk.tsx": "labs/web/app/components/Desk.tsx",
+            "public/web/app/layout.tsx": "labs/web/app/layout.tsx",
+            "public/web/app/page.tsx": "labs/web/app/page.tsx",
+            "public/web/app/style.css": "labs/web/app/style.css",
+            "public/web/lib/contracts.ts": "labs/web/lib/contracts.ts",
+            "public/web/next.config.ts": "labs/web/next.config.ts",
+            "public/web/package-lock.json": "labs/web/package-lock.json",
+            "public/web/package.json": "labs/web/package.json",
+            "public/web/playwright.config.ts": "labs/web/playwright.config.ts",
+            "public/web/tests/contracts.test.ts": "labs/web/tests/contracts.test.ts",
+            "public/web/tests/desk.spec.ts": "labs/web/tests/desk.spec.ts",
+            "public/web/tsconfig.json": "labs/web/tsconfig.json",
+            "public/web/vitest.config.ts": "labs/web/vitest.config.ts"
+          }
+        }
+      },
+      "default": "web-lab"
+    },
+    "nodejs-production-services": {
+      "images": {
+        "web-lab": {
+          "base": "course",
+          "dockerfile": "runtime/Dockerfile",
+          "files": {
+            "public/.dockerignore": "labs/.dockerignore",
+            "public/README.md": "labs/README.md",
+            "public/api/README.md": "labs/api/README.md",
+            "public/api/alembic.ini": "labs/api/alembic.ini",
+            "public/api/app.py": "labs/api/app.py",
+            "public/api/migrations/env.py": "labs/api/migrations/env.py",
+            "public/api/migrations/versions/001_tickets.py": "labs/api/migrations/versions/001_tickets.py",
+            "public/api/mint_token.py": "labs/api/mint_token.py",
+            "public/api/requirements.txt": "labs/api/requirements.txt",
+            "public/api/test_api.py": "labs/api/test_api.py",
+            "public/node/cache.mjs": "labs/node/cache.mjs",
+            "public/node/package.json": "labs/node/package.json",
+            "public/node/server.mjs": "labs/node/server.mjs",
+            "public/node/services.test.mjs": "labs/node/services.test.mjs",
+            "public/ops/Caddyfile": "labs/ops/Caddyfile",
+            "public/ops/Dockerfile.api": "labs/ops/Dockerfile.api",
+            "public/ops/Dockerfile.web": "labs/ops/Dockerfile.web",
+            "public/ops/README.md": "labs/ops/README.md",
+            "public/ops/ci.example.yaml": "labs/ops/ci.example.yaml",
+            "public/ops/compose.yaml": "labs/ops/compose.yaml",
+            "public/ops/release_gate.py": "labs/ops/release_gate.py",
+            "public/ops/test_release_gate.py": "labs/ops/test_release_gate.py",
+            "public/web/app/api/tickets/route.ts": "labs/web/app/api/tickets/route.ts",
+            "public/web/app/components/Desk.tsx": "labs/web/app/components/Desk.tsx",
+            "public/web/app/layout.tsx": "labs/web/app/layout.tsx",
+            "public/web/app/page.tsx": "labs/web/app/page.tsx",
+            "public/web/app/style.css": "labs/web/app/style.css",
+            "public/web/lib/contracts.ts": "labs/web/lib/contracts.ts",
+            "public/web/next.config.ts": "labs/web/next.config.ts",
+            "public/web/package-lock.json": "labs/web/package-lock.json",
+            "public/web/package.json": "labs/web/package.json",
+            "public/web/playwright.config.ts": "labs/web/playwright.config.ts",
+            "public/web/tests/contracts.test.ts": "labs/web/tests/contracts.test.ts",
+            "public/web/tests/desk.spec.ts": "labs/web/tests/desk.spec.ts",
+            "public/web/tsconfig.json": "labs/web/tsconfig.json",
+            "public/web/vitest.config.ts": "labs/web/vitest.config.ts"
+          }
+        }
+      },
+      "default": "web-lab"
+    },
+    "full-stack-cloud-delivery": {
+      "images": {
+        "web-lab": {
+          "base": "course",
+          "dockerfile": "runtime/Dockerfile",
+          "files": {
+            "public/.dockerignore": "labs/.dockerignore",
+            "public/README.md": "labs/README.md",
+            "public/api/README.md": "labs/api/README.md",
+            "public/api/alembic.ini": "labs/api/alembic.ini",
+            "public/api/app.py": "labs/api/app.py",
+            "public/api/migrations/env.py": "labs/api/migrations/env.py",
+            "public/api/migrations/versions/001_tickets.py": "labs/api/migrations/versions/001_tickets.py",
+            "public/api/mint_token.py": "labs/api/mint_token.py",
+            "public/api/requirements.txt": "labs/api/requirements.txt",
+            "public/api/test_api.py": "labs/api/test_api.py",
+            "public/node/cache.mjs": "labs/node/cache.mjs",
+            "public/node/package.json": "labs/node/package.json",
+            "public/node/server.mjs": "labs/node/server.mjs",
+            "public/node/services.test.mjs": "labs/node/services.test.mjs",
+            "public/ops/Caddyfile": "labs/ops/Caddyfile",
+            "public/ops/Dockerfile.api": "labs/ops/Dockerfile.api",
+            "public/ops/Dockerfile.web": "labs/ops/Dockerfile.web",
+            "public/ops/README.md": "labs/ops/README.md",
+            "public/ops/ci.example.yaml": "labs/ops/ci.example.yaml",
+            "public/ops/compose.yaml": "labs/ops/compose.yaml",
+            "public/ops/release_gate.py": "labs/ops/release_gate.py",
+            "public/ops/test_release_gate.py": "labs/ops/test_release_gate.py",
+            "public/web/app/api/tickets/route.ts": "labs/web/app/api/tickets/route.ts",
+            "public/web/app/components/Desk.tsx": "labs/web/app/components/Desk.tsx",
+            "public/web/app/layout.tsx": "labs/web/app/layout.tsx",
+            "public/web/app/page.tsx": "labs/web/app/page.tsx",
+            "public/web/app/style.css": "labs/web/app/style.css",
+            "public/web/lib/contracts.ts": "labs/web/lib/contracts.ts",
+            "public/web/next.config.ts": "labs/web/next.config.ts",
+            "public/web/package-lock.json": "labs/web/package-lock.json",
+            "public/web/package.json": "labs/web/package.json",
+            "public/web/playwright.config.ts": "labs/web/playwright.config.ts",
+            "public/web/tests/contracts.test.ts": "labs/web/tests/contracts.test.ts",
+            "public/web/tests/desk.spec.ts": "labs/web/tests/desk.spec.ts",
+            "public/web/tsconfig.json": "labs/web/tsconfig.json",
+            "public/web/vitest.config.ts": "labs/web/vitest.config.ts"
+          }
+        }
+      },
+      "default": "web-lab"
+    },
+    "laravel-react-mysql": {
+      "configuration": {
+        "recipe": {
+          "language": "python",
+          "labs": true
+        },
+        "compute": {
+          "default": {
+            "nodes": 1,
+            "gpusPerNode": 0,
+            "totalGpus": 0,
+            "note": "The PHP application and MySQL run locally on CPU."
+          },
+          "labs": {}
+        },
+        "ports": [
+          {
+            "port": 8000,
+            "protocol": "tcp"
+          }
+        ],
+        "editor_extensions": [
+          {
+            "id": "vscode.typescript-language-features",
+            "builtin": true
+          },
+          {
+            "id": "optficial.equipment-desk-languages",
+            "version": "1.0.0",
+            "sha256": "06f8cb30b1e6958c8599f98d628800ed1d23e01c498be31a8be243b0b58178c5",
+            "min_desktop": "1.106.0",
+            "platform": "universal"
+          }
+        ]
+      },
+      "default": "equipment-desk",
+      "images": {
+        "equipment-desk": {
+          "base": "course",
+          "dockerfile": "runtime/Dockerfile.laravel",
+          "files": {
+            "public/artisan": "equipment-desk/artisan",
+            "public/app/Http/Controllers/LoanController.php": "equipment-desk/app/Http/Controllers/LoanController.php",
+            "public/app/Models/Item.php": "equipment-desk/app/Models/Item.php",
+            "public/bootstrap/app.php": "equipment-desk/bootstrap/app.php",
+            "public/bootstrap/providers.php": "equipment-desk/bootstrap/providers.php",
+            "public/composer.json": "equipment-desk/composer.json",
+            "public/composer.lock": "equipment-desk/composer.lock",
+            "public/database/migrations/2026_01_01_000000_create_equipment_tables.php": "equipment-desk/database/migrations/2026_01_01_000000_create_equipment_tables.php",
+            "public/package.json": "equipment-desk/package.json",
+            "public/package-lock.json": "equipment-desk/package-lock.json",
+            "public/public/index.php": "equipment-desk/public/index.php",
+            "public/resources/js/Desk.jsx": "equipment-desk/resources/js/Desk.jsx",
+            "public/resources/views/desk.blade.php": "equipment-desk/resources/views/desk.blade.php",
+            "public/routes/web.php": "equipment-desk/routes/web.php",
+            "public/setup_lab.py": "equipment-desk/setup_lab.py",
+            "public/tests/check_checkout.py": "equipment-desk/tests/check_checkout.py",
+            "public/README.md": "equipment-desk/README.md",
+            "public/tests/check_ui.cjs": "equipment-desk/tests/check_ui.cjs",
+            "public/.gitignore": "equipment-desk/.gitignore"
+          }
+        }
+      }
+    }
+  }
+}

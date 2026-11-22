@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import * as assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
+import {ApiError} from '../src/api';
 import {bindLearningWorkspace} from '../webview/learningWorkspace';
 import {courseSuggestions, lessonsCovered, resumeTopic} from '../src/catalogDiscovery';
 import {certificateStatus, loadCertificateCourses} from '../src/certificateDashboard';
@@ -30,7 +31,7 @@ test('suggestions and resume topics use observed progress and never invent compl
 
 test('catalog combines filters and search, preserves state within its owner, and excludes unknown completion', () => {
   let state:any;
-  const markup=`<input id="search"><select id="filter-category"><option value="">All</option><option>Programming</option></select><select id="filter-level"><option value="">All</option><option>Beginner</option></select><select id="filter-status"><option value="">All</option><option value="enrolled">My courses</option><option value="covered">Covered</option></select><div id="results"><section><article class="course" data-course="python" data-category="Programming" data-level="Beginner" data-enrolled="true" data-covered="true"><h3>Python lists</h3></article><article class="course" data-course="java" data-category="Programming" data-level="Beginner" data-enrolled="true" data-covered="false"><h3>Java lists</h3></article><article class="course" data-project="demo"><h3>Demo lists</h3></article></section></div><p id="empty" hidden></p><p id="result-count"></p>`;
+  const markup=`<button id="open-guide"></button><dialog id="course-guide"></dialog><input id="search"><select id="filter-category"><option value="">All</option><option>Programming</option></select><select id="filter-level"><option value="">All</option><option>Beginner</option></select><select id="filter-status"><option value="">All</option><option value="enrolled">My courses</option><option value="covered">Covered</option></select><div id="results"><section><article class="course" data-course="python" data-category="Programming" data-level="Beginner" data-enrolled="true" data-covered="true"><h3>Python lists</h3></article><article class="course" data-course="java" data-category="Programming" data-level="Beginner" data-enrolled="true" data-covered="false"><h3>Java lists</h3></article><article class="course" data-project="demo"><h3>Demo lists</h3></article></section></div><p id="empty" hidden></p><p id="result-count"></p>`;
   const open=(scope:string)=>{const dom=new JSDOM(markup,{runScripts:'outside-only'});const w=dom.window;
     (w as any).acquireVsCodeApi=()=>({getState:()=>state,setState:(s:any)=>{state=s;},postMessage:()=>{}});
     w.eval(`(${catalogClient.toString()})(${JSON.stringify(scope)},'')`);return {dom,w,doc:w.document};};
@@ -62,13 +63,59 @@ test('certificate dashboard distinguishes unknown, revoked, eligible and earned 
   dom.window.close();
 });
 
+test('certificate library explains grading once and filters actionable issues independently of progress', () => {
+  const practice = {...grade(), passed_count:0, required_count:37, blockers:[],
+    policy:{...grade().policy, version:'coursework-v1', project_weight:60, exercise_weight:40, pass_percent:60, mastery_percent:70}};
+  const missing = {...practice, required_count:0, blockers:['Required course exercises have not been published yet.']};
+  const courses = [
+    {id:'build-an-llm', title:'LLM', grade:missing},
+    {id:'build-ai-agents', title:'Agents', grade:practice},
+    {id:'unavailable', title:'Offline', error:'Refresh to try again.'},
+  ];
+  const html = courseGradeHtml('nonce', undefined, [], '', 0, false, true, undefined, 'alice', courses);
+  const dom = new JSDOM(html, {runScripts:'outside-only'});
+  const w = dom.window, doc = w.document;
+  const messages: {type:string; id:string}[] = [];
+  (w as any).acquireVsCodeApi = () => ({getState:() => undefined, setState:() => {}, postMessage:(m:any) => messages.push(m)});
+  w.eval(doc.querySelector('script')!.textContent!);
+  const cards = [...doc.querySelectorAll<HTMLElement>('.certificate-course')];
+  const [llm, agents, offline] = cards;
+  assert.deepEqual([...doc.querySelectorAll('.certificate-guidance li strong')].map(el => el.textContent),
+    ['Learn', 'Pass the required work', 'Claim it']);
+  assert.equal(doc.querySelectorAll('.grading-guide').length, 1);
+  assert.match(doc.querySelector('.grading-guide')!.textContent!, /70% mastery/);
+  assert.ok(cards.every(card => !card.textContent!.includes('70% mastery')));
+  assert.match(llm.textContent!, /Not set yet\s+No required activities published/);
+  assert.match(llm.querySelector('.course-attention')!.textContent!, /have not been published/);
+  assert.equal(llm.querySelector('progress'), null);
+  assert.equal(agents.querySelector('progress')!.getAttribute('aria-label'), '0 of 37 required activities passed');
+  assert.match(agents.textContent!, /0 of 37/);
+  assert.equal(agents.querySelector('.course-attention'), null);
+  assert.notEqual(llm.dataset.courseHue, agents.dataset.courseHue);
+  assert.equal(offline.querySelector('.activity-progress'), null);
+  assert.match(offline.querySelector('.course-attention')!.textContent!, /Refresh/);
+  const filter = (value:string) => doc.querySelector<HTMLButtonElement>(`[data-filter="${value}"]`)!.click();
+  filter('unavailable');
+  assert.deepEqual(cards.filter(card => !card.hidden), [llm, offline]);
+  filter('progress');
+  assert.deepEqual(cards.filter(card => !card.hidden), [llm, agents]);
+  agents.querySelector<HTMLButtonElement>('[data-action="courseRequirements"]')!.click();
+  assert.equal(messages.at(-1)?.type, 'courseRequirements');
+  assert.equal(messages.at(-1)?.id, 'build-ai-agents');
+  assert.doesNotMatch(courseGradeHtml('nonce', missing, [], '', 0), /0\/0 required/);
+  dom.window.close();
+});
+
 test('certificate grade loading bounds concurrency, tolerates failures and stops obsolete loads', async () => {
   let current=0,max=0,calls=0,active=true;
   const rows=await loadCertificateCourses(Array.from({length:11},(_,i)=>course(String(i))),async id=>{
     calls++;current++;max=Math.max(max,current);await new Promise(r=>setTimeout(r,1));current--;
-    if(id==='1')throw new Error('Offline');return grade();
+    if(id==='1')throw new Error('Offline');
+    if(id==='2')throw new ApiError(404, 'This course has no assigned lessons.');
+    return grade();
   });
   assert.equal(calls,11);assert.equal(max,4);assert.equal(rows[1].grade,undefined);assert.match(rows[1].error!,/Refresh/);
+  assert.equal(rows[2].error, 'This course has no assigned lessons.');
   calls=0;await loadCertificateCourses(Array.from({length:12},(_,i)=>course(String(i))),async()=>{calls++;active=false;return grade();},()=>active);
   assert.equal(calls,1);
 });

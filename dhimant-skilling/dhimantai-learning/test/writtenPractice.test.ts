@@ -17,7 +17,7 @@ test('written Practice escapes content, submits explicit evidence and never offe
   dom.window.eval(dom.window.document.querySelector('script')!.textContent!);
   assert.equal(dom.window.document.querySelectorAll('script').length,1);
   assert.match(dom.window.document.body.textContent!,/without completing this task/);
-  assert.deepEqual([...dom.window.document.querySelectorAll('button')].map(b=>b.id),['audio-microphone','attach','detach','review','hint']);
+  assert.deepEqual([...dom.window.document.querySelectorAll('button')].map(b=>b.id),['hint','audio-microphone','attach','detach','review']);
   (dom.window.document.querySelector('#attach') as HTMLButtonElement).click();
   assert.equal(sent.pop().type,'attach');
   dom.window.dispatchEvent(new dom.window.MessageEvent('message',{data:{type:'attached',names:['plan.jpg'],error:''}}));

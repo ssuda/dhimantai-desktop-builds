@@ -1,3 +1,5 @@
+import { gitProjects } from './gitPractice';
+import { debugProjects } from './architectureMemory';
 import type { Course } from './api';
 import { desktopProjectEnabled } from './desktopFeatures';
 
@@ -7,7 +9,7 @@ const bundledProjects = [
     id: 'shelf-reading',
     level: 'Micro',
     title: 'Read a codebase · shelf',
-    description: 'Explore a small Python book catalog with Coach. Follow its command line, data and tests before proposing a change.',
+    description: 'Explore a small Python book catalog with the Instructor. Follow its command line, data and tests before proposing a change.',
     difficulty: 'Beginner',
     estimatedTime: '1–2 hours',
     outcomes: [
@@ -20,7 +22,7 @@ const bundledProjects = [
     id: 'rich-reading',
     level: 'Minor',
     title: 'Read a codebase · Rich',
-    description: 'Navigate the real Rich Python library with Coach, tracing how text and tables become terminal output.',
+    description: 'Navigate the real Rich Python library with the Instructor, tracing how text and tables become terminal output.',
     difficulty: 'Intermediate',
     estimatedTime: '3–5 hours',
     outcomes: [
@@ -55,12 +57,44 @@ const bundledProjects = [
       'Make and explain a focused fix in a Git commit.',
     ],
   },
+  {
+    id: 'market-checkout', level: 'Micro', title: 'Checkout previews',
+    description: 'Trace an unexpected receipt, separate pricing from storage, and verify the repair with the Instructor.',
+    difficulty: 'Beginner', estimatedTime: '20–30 minutes',
+    outcomes: ['Trace a side effect.', 'Test a decision independently of storage.'],
+  },
+  {
+    id: 'field-dispatch', level: 'Micro', title: 'Field service dispatch',
+    description: 'Investigate a dispatch report independently. Record your diagnosis, repair the service and check its behavior.',
+    difficulty: 'Intermediate', estimatedTime: '20–30 minutes',
+    outcomes: ['Locate the cause of a customer report.', 'Verify a repair against the service contract.'],
+  },
+  ...[
+    {id:'parcel-pickup', title:'Parcel pickup', description:'Investigate a collection report and verify your repair.'},
+    {id:'museum-entry', title:'Museum entry', description:'Investigate a visitor’s ticket report across two sales channels.'},
+    {id:'workshop-enrolment', title:'Workshop enrolment', description:'Investigate a group booking report and verify both entry points.'},
+  ].map(project => ({...project, level:'Micro', difficulty:'Intermediate', estimatedTime:'20–30 minutes',
+    outcomes:['Identify the cause of a reported behavior.', 'Verify a repair against the public contract.']})),
+  ...Object.entries(debugProjects).map(([id, project]) => ({
+    id, title:project.title, description:project.description, level:'Micro', difficulty:'Intermediate', estimatedTime:'20–30 minutes',
+    outcomes:['Locate the bug and repair the reported behavior.', 'Write a test that catches the original failure.'],
+  })),
+  ...Object.entries(gitProjects).map(([id,title]) => ({id,title, level:'Micro', difficulty:'Intermediate', estimatedTime:'20–30 minutes',
+    description:id === 'festival-desk' ? 'Prepare the volunteer desk changes for review.' : 'Integrate changes from two orchard teams.',
+    outcomes:['Work on a branch and make focused commits.', 'Resolve a merge conflict while preserving both changes.']})),
 ] as const;
 
 export const CATALOG_PROJECTS = bundledProjects.filter(project => desktopProjectEnabled(project.id));
 
-/** Companion courses for the four bundled Python projects. */
+/** Companion courses for bundled projects. */
 export const PROJECT_COURSES: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(Object.keys(gitProjects).map(id => [id, 'python'])),
+  ...Object.fromEntries(Object.keys(debugProjects).map(id => [id, 'python'])),
+  'market-checkout': 'python',
+  'field-dispatch': 'python',
+  'parcel-pickup': 'python',
+  'museum-entry': 'python',
+  'workshop-enrolment': 'python',
   'shelf': 'python',
   'course-agent': 'build-ai-agents',
   'shelf-reading': 'engineering-code-reading',
@@ -75,7 +109,7 @@ export function projectCourseChoices(projectId: string, courses: readonly Course
     if (!access) return [];
     const companion = access.course_id === PROJECT_COURSES[projectId];
     return [{label: course.name, companion, description: companion ? 'Companion course' : undefined,
-      detail: course.chapters.some(ch => ch.locked) ? 'Project Coach included with active chapter access' : 'Project Coach included'}];
+      detail: course.chapters.some(ch => ch.locked) ? 'Project Instructor included with active chapter access' : 'Project Instructor included'}];
   }).sort((a, b) => Number(b.companion) - Number(a.companion));
 }
 

@@ -1,3 +1,5 @@
+import {registerBuildStudio} from './buildStudio';
+import { registerSkillingMenu } from './skillingMenu';
 import { registerProjectPreview } from './skillingActions';
 import { registerCourseProjects } from './courseProjects';
 import { SkillingReviewView } from './skillingReview';
@@ -63,7 +65,6 @@ export async function activate(context: vscode.ExtensionContext) {
       update: (key,value) => settings.update(key,value,vscode.ConfigurationTarget.Global),
     });
   }
-  registerLearningNavigation(context);
   registerGitHub(context);
   context.subscriptions.push(vscode.commands.registerCommand('dhimantai.searchCommands', () =>
     vscode.commands.executeCommand('workbench.action.quickOpen', '>dhimantAI ')));
@@ -112,12 +113,14 @@ export async function activate(context: vscode.ExtensionContext) {
   const browserCourses = new BrowserCourses(context, auth, envName, output,browserLearning,env);
   context.subscriptions.push(new AuthoringStudio(context, auth, envName, env));
   context.subscriptions.push(browserCourses);
-  stopCourses = async () => { await browserCourses.shutdown(); await courses.stopAll(); };
-  const coursework = new CourseworkOutbox(context.globalState);
+  const studio=registerBuildStudio(context,auth,envName,env);
+  stopCourses = async () => { await studio.stop(); await browserCourses.shutdown(); await courses.stopAll(); };
+  const coursework = new CourseworkOutbox(context.globalState, recordsChanged);
   const learningRoom = registerLearningRoom(context, envName, env, auth, courses, copilotPolicy,browserLearning);
+  const sidebar = registerLearningNavigation(context, auth, envName, env, learningRoom.activeLesson);
   const courseGrades = new CourseGradeView(context,auth, envName, env, coursework);
   context.subscriptions.push(courseGrades,registerProjectPreview(courses),new SkillingReviewView(auth,envName,env));
-  context.subscriptions.push(learningRoom, registerCapstone(context), registerCourseProjects(context, auth, envName, env));
+  context.subscriptions.push(studio, learningRoom, registerCapstone(context), registerCourseProjects(context, auth, envName, env));
   registerCourseKernel(courses,context,auth);
   context.subscriptions.push(vscode.commands.registerCommand('dhimantai.courseDockerfile', () =>
     courses.openDockerfile().catch(e => vscode.window.showErrorMessage(e.message))));
@@ -145,8 +148,9 @@ export async function activate(context: vscode.ExtensionContext) {
   );
   const study = await registerStudyReader(context, auth, envName, env, copilotPolicy);
   context.subscriptions.push(study);
-  const catalog = new CourseCatalog(auth, envName, env, () => practice.refresh(), learningRoom.hasNotebook, study.companions, projectResults, projectMedia,
-    (environment, account) => Object.values(context.globalState.get<Record<string, {explained?: boolean}>>(verifiedKey(environment, account)) ?? {}).filter(task => task.explained === true).length, context.globalState);
+  const catalog = new CourseCatalog(auth, envName, env, () => { practice.refresh(); sidebar?.refresh(); }, learningRoom.hasNotebook, study.companions, projectResults, projectMedia,
+    (environment, account) => Object.values(context.globalState.get<Record<string, {explained?: boolean}>>(verifiedKey(environment, account)) ?? {}).filter(task => task.explained === true).length,
+    context.globalState, (environment, account) => courses.preparedCourses(environment, account));
   context.subscriptions.push(browserCourses.onDidVerify(() => { void catalog.refresh(); }));
   context.subscriptions.push(projectChanges, projectChanges.event(() => { practice.refresh(); void catalog.refresh(); }),
     vscode.window.onDidChangeWindowState(state => { if (state.focused) practice.refresh(); }),
@@ -182,7 +186,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.commands.registerCommand('dhimantai.pricing', () => catalog.open(undefined,true)));
   const installed = context.extension.packageJSON.version as string;
   let appControls: DesktopAppControls | undefined;
-  const updates = new ExtensionUpdates(envName, installed, () => appControls?.refresh());
+  const updates = new ExtensionUpdates(envName, installed, () => appControls?.refresh(), fetch, vscode.version);
   const installPackage = async (bytes: Buffer, version: string) => {
     const directory = await mkdtemp(join(tmpdir(), 'dhimantai-update-'));
     try {
@@ -206,7 +210,7 @@ export async function activate(context: vscode.ExtensionContext) {
       const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).map(tab => ({ dirty: tab.isDirty,
         webview: tab.input instanceof vscode.TabInputWebview ? tab.input.viewType : undefined }));
       const installedNow = (updates.state as { status: string }).status === 'ready';
-      if (desktop && !testing && installedNow && quietStart(Date.now() - activatedAt, tabs)) {
+      if (desktop && !testing && !appControls?.isOpen && installedNow && quietStart(Date.now() - activatedAt, tabs)) {
         await vscode.commands.executeCommand('workbench.action.reloadWindow');
       }
       return;
@@ -229,9 +233,9 @@ export async function activate(context: vscode.ExtensionContext) {
     const scopedAuth = new Auth(context.secrets, () => environment, () => backend);
     const api = new Api(scopedAuth, () => backend, owner);
     await coursework.send(environment,owner,{kind:'project',id:curriculum.id,result},v => api.courseworkResult(v.kind,v.id,v.result));
-    recordsChanged();
-  });
+  }, coursework);
   context.subscriptions.push(projectCoach);
+  if (desktop) registerSkillingMenu(context, auth, envName, learningRoom, courses, projectCoach, browserCourses);
   // Notebook teaching stays inside its notebook. Projects reuse the Coach in the right sidebar.
   context.subscriptions.push(vscode.commands.registerCommand('dhimantai.hideCoach', async () => {
     await projectCoach.hide();
@@ -240,7 +244,11 @@ export async function activate(context: vscode.ExtensionContext) {
         await vscode.window.tabGroups.close(tab, true);
   }));
   await vscode.commands.executeCommand('dhimantai.hideCoach');
-  void projectCoach.restore();
+  const restoringProject = projectCoach.restore();
+  const welcome = async () => {
+    await restoringProject;
+    return catalog.welcome(context.globalState);
+  };
   const service = (name: EnvironmentName) => testEnvironment ?? ENVIRONMENTS[name];
   context.subscriptions.push(registerNextLine(context.secrets, service, task));
   // Practice lives in one real notebook: help, sample tests and Instructor replies are cells and toolbar actions.
@@ -290,7 +298,7 @@ export async function activate(context: vscode.ExtensionContext) {
   status.tooltip = 'Open Course Catalog, Instructor, and Doubt Solver.';
   status.show();
   if (desktop) {
-    appControls = new DesktopAppControls(context, auth, envName, updates, checkUpdates, installUpdate, testing, status);
+    appControls = new DesktopAppControls(context, auth, envName, updates, checkUpdates, installUpdate, testing, status, catalog);
     context.subscriptions.push(appControls);
   }
 
@@ -362,7 +370,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (!learningRoom.browsePractice()) return vscode.commands.executeCommand('dhimantai.practice.focus');
     }),
     command('dhimantai.courseCatalog', 'Loading course catalog', (course?:string) => catalog.open(typeof course==='string'?course:undefined)),
-    vscode.commands.registerCommand('dhimantai.desktopWelcome', () => vscode.env.appName === 'dhimantAI' ? catalog.welcome(context.globalState) : undefined),
+    vscode.commands.registerCommand('dhimantai.desktopWelcome', () => vscode.env.appName === 'dhimantAI' ? welcome() : undefined),
     vscode.commands.registerCommand('dhimantai.openPracticeQuestion', node =>
       practice.openQuestion(node).catch(error => vscode.window.showErrorMessage(error.message))),
     command('dhimantai.generateExercise', 'Generating exercise', async node => {
@@ -456,7 +464,6 @@ export async function activate(context: vscode.ExtensionContext) {
       void openLegacyExercise(folder, envName).catch(error => vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)));
     } catch { /* A normal workspace opens the catalog welcome once. */ }
   }
-  const welcome = () => catalog.welcome(context.globalState);
   if (!restoringExercise && (!testing || process.env.DHIMANTAI_TEST_WELCOME === '1')) {
     void welcome().catch(error => output.appendLine(`Course Catalog welcome: ${error instanceof Error ? error.message : String(error)}`));
   }

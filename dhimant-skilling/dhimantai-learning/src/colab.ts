@@ -43,11 +43,9 @@ export async function ensureColab() {
 export async function chooseColabKernel(doc: vscode.NotebookDocument, accelerator: 'tpu' | 'gpu' | 'any' = 'tpu') {
   if (doc.isClosed) return;
   void vscode.window.showInformationMessage(
-    `Select Another Kernel → Colab → New Colab Server, sign in with Google, choose ${accelerator === 'any' ? 'CPU, GPU or TPU' : accelerator.toUpperCase()}, then select Python 3 (ipykernel). If the picker shows only DhimantAI Course and Practice, use Back to return to kernel sources. If Colab is missing, enable or update Google Colab and Microsoft Jupyter in Extensions and reload the app. Availability and usage depend on your Colab account.`
+    `Choose New Colab Server, sign in with Google, choose ${accelerator === 'any' ? 'CPU, GPU or TPU' : accelerator.toUpperCase()}, then select Python 3 (ipykernel). If the notebook opens the full kernel picker, choose Select Another Kernel → Colab. If Colab is missing, enable or update Google Colab and Microsoft Jupyter in Extensions and reload the app. Availability and usage depend on your Colab account.`
   );
-  // Use the supported VS Code picker; Colab does not expose a public command to
-  // allocate a TPU. Never silently select Auto Connect (which may use a CPU).
-  return openNotebookKernelPicker(doc);
+  return openNotebookKernelPicker(doc, 'colab');
 }
 
 export async function useColabForNotebook(doc = vscode.window.activeNotebookEditor?.notebook) {

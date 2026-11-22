@@ -1,3 +1,4 @@
+import { architectureCase } from './architectureMemory';
 import { execFile } from 'node:child_process';
 import { appendFile, mkdir, readFile, realpath } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -13,7 +14,7 @@ const capstoneFiles = ['README.md', 'CAPSTONE.md', 'ISSUE.md', 'check.py', 'book
 
 /** Check both new and reopened destinations without resetting or overwriting learner work. */
 export async function validateProjectWorkspace(media: string, id: string, root: string): Promise<void> {
-  if (!['shelf', 'course-agent', 'shelf-reading', 'rich-reading'].includes(id)) throw new Error('Unknown course project.');
+  if (!['shelf', 'course-agent', 'shelf-reading', 'rich-reading'].includes(id) && !architectureCase(id)) throw new Error('Unknown course project.');
   // A missing working directory also makes Git fail with ENOENT; report the folder, not a missing Git installation.
   await requireProjectFolder(root);
   try {

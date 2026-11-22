@@ -1,0 +1,45 @@
+{
+  "id": "orchard-deliveries",
+  "version": 1,
+  "title": "Orchard deliveries",
+  "files": [
+    "README.md",
+    "packing.json",
+    "pickup.json"
+  ],
+  "gitPractice": {
+    "base": "9f91ec1d01253837051a4dc97d579e6af8ea3deb",
+    "team": "1092a617b778bc2e38fc98f28fa5f4ac246b5f0f",
+    "policy": "packing.json",
+    "local": {
+      "minimum": 3,
+      "maximum": 10
+    },
+    "combined": {
+      "minimum": 3,
+      "maximum": 12
+    },
+    "other": "pickup.json",
+    "otherValue": {
+      "shed": "West"
+    }
+  },
+  "steps": [
+    {
+      "id": "integrate",
+      "title": "Prepare the change for review",
+      "goal": "Small orders now start at three crates. Separately, drivers will pick up at the West shed. The packing team has revised the maximum order size.",
+      "opening": "Read the team brief in README.md.",
+      "task": "Small orders now start at three crates. Separately, drivers will pick up at the West shed. The packing team has revised the maximum order size. Work on your own branch from main. Keep each request in its own focused commit with a subject that describes the change. After both commits, merge team/operations into your branch. Reconcile the overlapping changes and finish with a clean working tree. Leave main at the starting point.",
+      "files": [
+        "README.md",
+        "packing.json",
+        "pickup.json"
+      ],
+      "check": "git:orchard-deliveries",
+      "expected": "The branch contains focused commits and a merge that preserves both changes.",
+      "hint": "Compare your current branch and its starting point with main.",
+      "reflection": "What would a reviewer learn from each commit?"
+    }
+  ]
+}

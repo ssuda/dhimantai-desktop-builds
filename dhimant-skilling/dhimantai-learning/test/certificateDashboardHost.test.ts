@@ -29,7 +29,7 @@ const flush=async()=>{for(let i=0;i<8;i++)await new Promise(done=>setTimeout(don
 
 test('certificate library uses actual grades, validates navigation and copies only loaded active credentials',async()=>{
   const f=fixture();await f.view.open('__certificates__');
-  assert.match(f.panel.webview.html,/Eligible \(1\)/);assert.match(f.panel.webview.html,/alice credential/);
+  assert.match(f.panel.webview.html,/Eligible to claim <strong>1<\/strong>/);assert.match(f.panel.webview.html,/alice credential/);
   await f.view.handle({type:'copy',id:'other-credential'});assert.equal(f.copies.length,0);
   await f.view.handle({type:'copy',id:'alice-credential'});assert.equal(f.copies[0],'https://api.example/course-projects/certificates/alice-credential/verify');
   assert.match(f.panel.webview.html,/Verification link copied/);
@@ -49,5 +49,5 @@ test('late certificate requirements cannot repopulate a replaced account',async(
 test('unavailable gradebooks retain earned certificates and do not claim false eligibility',async()=>{
   const f=fixture();f.fail();await f.view.open('__certificates__');
   assert.match(f.panel.webview.html,/alice credential/);assert.match(f.panel.webview.html,/Status unavailable/);
-  assert.match(f.panel.webview.html,/Eligible \(0\)/);assert.match(f.panel.webview.html,/Requirements could not be loaded/);
+  assert.match(f.panel.webview.html,/Eligible to claim <strong>0<\/strong>/);assert.match(f.panel.webview.html,/Requirements could not be loaded/);
 });

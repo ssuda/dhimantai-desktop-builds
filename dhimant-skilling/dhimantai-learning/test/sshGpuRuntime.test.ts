@@ -7,7 +7,7 @@ import {resolve} from 'node:path';
 import {runInNewContext} from 'node:vm';
 import {gpuLabRequirement} from '../src/sshRuntimeConfig';
 
-async function fixture(nodes=1,gpusPerNode=2) {
+async function fixture(nodes=1,gpusPerNode=2, destination='remote') {
   const media=resolve(__dirname,'../../media/course'),filename=resolve(__dirname,'../src/sshGpuRuntime.js');
   const nativeRequire=createRequire(filename),exports:any={},calls:string[]=[],writes:any[]=[];
   let verified={nodes,gpus:nodes*gpusPerNode},disposed=0,machine='one';
@@ -16,7 +16,8 @@ async function fixture(nodes=1,gpusPerNode=2) {
   const vscode={window:{withProgress:async(_:any,fn:any)=>fn({report:()=>{}},{onCancellationRequested:()=>({dispose:()=>{}})})},ProgressLocation:{Notification:1}};
   class SshConnection {
     async initialize(){}
-    async exec(_:any,command:string){calls.push(command);return / 'prepare' '-'$/.test(command)?'DHIMANTAI_RESULT '+JSON.stringify(record()):
+    async exec(_:any,command:string){calls.push(command);if(command.includes('then echo host;')) return destination;
+      return / 'prepare' '-'$/.test(command)?'DHIMANTAI_RESULT '+JSON.stringify(record()):
       / 'verify' '-'$/.test(command)?'DHIMANTAI_RESULT '+JSON.stringify(verified):'';}
     dispose(){disposed++;}
   }
@@ -51,4 +52,12 @@ test('two SSH aliases of the same machine do not count as a two-machine cluster'
   const f=await fixture(2,1);
   await assert.rejects(f.runtime.connect([{host:'alias-a'},{host:'alias-b'}]),/different physical machine/);
   assert.equal(f.disposed(),1);assert.equal(f.calls.filter(c=>/ 'verify'/.test(c)).length,0);
+});
+
+test('an SSH alias reaching the desktop stops before machine setup or learner execution',async()=>{
+  const f=await fixture(1,1,'host');
+  await assert.rejects(f.runtime.connect([{host:'gpu-alias'}]),/separate from this computer/);
+  assert.equal(f.calls.length,1);
+  assert.throws(()=>f.runtime.run('python',''),/Connect the selected/);
+  assert.equal(f.disposed(),1);
 });

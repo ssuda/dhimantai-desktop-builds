@@ -112,7 +112,8 @@ def bundle_extension(app_resources, vsix, configs):
     (destination / 'desktop-client.json').write_text(json.dumps(client))
     metadata['contributes'].setdefault('configurationDefaults', {}).update({
         'workbench.startupEditor': 'none', 'dhimantai.autoUpdate': True,
-        'workbench.colorTheme': 'Light Modern',
+        'workbench.colorTheme': 'dhimantAI Light',
+        'window.commandCenter': False, 'workbench.layoutControl.enabled': False,
         'workbench.activityBar.location': 'default',
         'workbench.activityBar.compact': True,
         'dhimantai.environment': 'production' if 'production' in client else 'staging'})

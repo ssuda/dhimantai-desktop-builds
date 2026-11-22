@@ -8,6 +8,14 @@ export interface LearnerMessage {
   readonly attachments: readonly File[];
 }
 
+export function bindInstructorComposer(host: {postMessage(value: unknown): void}, form: HTMLFormElement,
+    deliver: (message: LearnerMessage) => unknown) {
+  const playback = window.installCoachAudio?.(host);
+  const field = form.querySelector<HTMLTextAreaElement>('.composer-input textarea')!;
+  const dictation = window.installDictation?.(host, field, () => playback?.listenForReply());
+  return {...bindComposer(form, deliver), playback, dictation};
+}
+
 export function bindComposer(form: HTMLFormElement, deliver: (message: LearnerMessage) => unknown,
     options: {changed?: () => void; report?: (message: string) => void; stopResponse?: () => boolean} = {}) {
   const field = form.querySelector<HTMLTextAreaElement>('.composer-input textarea')!;

@@ -1,8 +1,10 @@
+import { isGitProject } from './gitPractice';
+import { architectureCase } from './architectureMemory';
 import * as vscode from 'vscode';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { restoreEmptyCapstone } from './capstoneRepo';
-import { createProject, createReadingProject, createShelfProject } from './projectCore';
+import { createGitProject, createProject, createReadingProject, createShelfProject } from './projectCore';
 import { projectWorkspace } from './projectWorkspace';
 import { projectSetupError, validateProjectWorkspace } from './projectSetup';
 import { CATALOG_PROJECTS } from './catalogProjects';
@@ -49,7 +51,9 @@ export function registerCapstone(context: vscode.ExtensionContext) {
         return;
       }
       // Each project is built in a private sibling folder and moved into place only when complete.
-      if (project.id === 'course-agent') await createProject(vscode.Uri.joinPath(context.extensionUri, 'media', 'projects', 'course-agent').fsPath, destination);
+      if (isGitProject(project.id)) await createGitProject(media,project.id,destination);
+      else if (project.id === 'course-agent' || architectureCase(project.id))
+        await createProject(join(media, 'projects', project.id), destination);
       else if (project.id === 'shelf-reading' || project.id === 'rich-reading') await createReadingProject(media, project.id, destination);
       else await createShelfProject(media, destination);
       await validateProjectWorkspace(media, project.id, destination);

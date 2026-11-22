@@ -93,7 +93,6 @@ export async function run(): Promise<void> {
     });
     // Visible inline help and run-context continuity are exercised by suiteNotebookCoachHistory.
     await check('generate a separate notebook from Explorer for its question', async () => {
-      await cfg.update('courseContainers', false, vscode.ConfigurationTarget.Global);
       const [course] = await practice.getChildren();
       const [chapter] = await practice.getChildren(course);
       const nodes = await practice.getChildren(chapter);

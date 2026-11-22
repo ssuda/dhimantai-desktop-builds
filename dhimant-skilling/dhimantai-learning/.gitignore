@@ -15,3 +15,7 @@ media/fonts/
 
 media/course/labs/
 media/course/runner.cjs
+
+/media/build-studio/
+
+media/course-extensions/

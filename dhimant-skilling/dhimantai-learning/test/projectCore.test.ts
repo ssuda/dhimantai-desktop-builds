@@ -44,7 +44,8 @@ test('original Shelf capstones open without migration and share custom tests plu
     await assert.rejects(readFile(join(folder, '.dhimantai-project.json')), {code: 'ENOENT'});
     const plan = await loadProjectCurriculum(join(extension, 'media'), 'shelf');
     for (const step of plan.steps) assert.ok(checkArguments(step).length);
-    assert.deepEqual(checkArguments(plan.steps.at(-1)!), ['check.py']);
+    assert.deepEqual(checkArguments(plan.steps.at(-1)!).slice(-2), ['final', git('rev-parse','start')]);
+    for (const step of plan.steps) assert.equal(step.checkpointCheck, 'shelf-evidence:' + step.id);
     const baseline = await projectSnapshot(folder, plan, plan.steps[0].files);
     assert.equal(baseline.git?.branch, 'main');
     assert.equal(baseline.git?.head, git('rev-parse', 'HEAD'));

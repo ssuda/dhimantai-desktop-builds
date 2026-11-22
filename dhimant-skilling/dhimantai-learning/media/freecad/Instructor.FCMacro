@@ -1,0 +1,148 @@
+"""FreeCAD GUI-thread bridge for the mounting-plate lesson."""
+import base64
+import hmac
+import json
+import os
+from pathlib import Path
+import tempfile
+import time
+
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtCore, QtGui, QtNetwork, QtWidgets
+
+exercise = Path(os.environ.pop("DHIMANT_CAD_EXERCISE")).resolve()
+pipe = os.environ.pop("DHIMANT_CAD_PIPE")
+key = os.environ.pop("DHIMANT_CAD_KEY")
+
+
+def open_exercise():
+    doc = next((d for d in App.listDocuments().values()
+                if d.FileName and Path(d.FileName).resolve() == exercise), None)
+    if doc is None:
+        doc = App.openDocument(str(exercise))
+        Gui.activeDocument().activeView().viewAxonometric()
+        Gui.activeDocument().activeView().fitAll()
+    Gui.setActiveDocument(doc.Name)
+    # The Start tab can cover a document that FreeCAD still calls active.
+    # Explicitly raise the exercise tab only on lesson entry/resume.
+    area = Gui.getMainWindow().findChild(QtWidgets.QMdiArea)
+    for window in area.subWindowList():
+        if window.widget().inherits("Gui::View3DInventor") and window.windowTitle().startswith(doc.Label + " : "):
+            area.setActiveSubWindow(window)
+            break
+
+
+def viewport(view):
+    # Render only the active exercise's 3D scene. FreeCAD can render it even
+    # when the Instructor notebook covers the FreeCAD window.
+    with tempfile.TemporaryDirectory() as directory:
+        image_file = str(Path(directory) / "view.png")
+        view.saveImage(image_file, 512, 384, "Current")
+        picture = QtGui.QImage(image_file)
+    if picture.isNull():
+        raise ValueError("Cannot render the exercise")
+    for width in (512, 384, 256, 160):
+        data = QtCore.QByteArray()
+        buffer = QtCore.QBuffer(data)
+        buffer.open(QtCore.QIODevice.WriteOnly)
+        ok = picture.scaledToWidth(width, QtCore.Qt.SmoothTransformation).save(buffer, "JPEG", 68)
+        buffer.close()
+        if ok and 0 < len(data) <= 9000:
+            return base64.b64encode(bytes(data)).decode("ascii")
+    raise ValueError("Cannot encode the exercise")
+
+
+def handle(action):
+    if action == "resume":
+        open_exercise()
+    doc = App.ActiveDocument
+    if not doc or not doc.FileName or Path(doc.FileName).resolve() != exercise:
+        return {"status": "inactive"}
+    area = Gui.getMainWindow().findChild(QtWidgets.QMdiArea)
+    tab = area.currentSubWindow() if area else None
+    if not tab or not tab.widget().inherits("Gui::View3DInventor"):
+        return {"status": "inactive"}
+    bore, plate = doc.getObject("Bore"), doc.getObject("Plate")
+    if not bore or bore.TypeId != "Part::Cylinder" or not plate or plate.TypeId != "Part::Cut" or plate.Tool != bore:
+        return {"status": "changed"}
+    gui = Gui.activeDocument()
+    view = gui.activeView()
+    if action in ("resume", "top_view", "isometric_view", "demonstrate_radius", "select_bore"):
+        Gui.getMainWindow().raise_()
+        Gui.getMainWindow().activateWindow()
+    if action in ("top_view", "isometric_view"):
+        (view.viewTop if action == "top_view" else view.viewAxonometric)()
+        view.fitAll()
+    elif action == "select_bore":
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(bore)
+    elif action == "demonstrate_radius":
+        if gui.getInEdit() or Gui.Control.activeDialog():
+            return {"status": "editing"}
+        # An absolute value makes uncertain delivery idempotent; leave saving
+        # and the separate 4 mm design target to the student.
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(bore)
+        if bore.Radius.Value != 6.0:
+            doc.openTransaction("Instructor demonstration: 6 mm bore radius")
+            try:
+                bore.Radius = 6.0
+                doc.recompute()
+                doc.commitTransaction()
+            except Exception:
+                doc.abortTransaction()
+                raise
+    elif action not in ("resume", "state", "observe"):
+        return {"status": "invalid"}
+    result = {"status": "ready", "radius": round(bore.Radius.Value, 4),
+              "validSolid": not plate.Shape.isNull() and len(plate.Shape.Solids) == 1 and plate.Shape.isValid(),
+              "selected": [o.Name for o in Gui.Selection.getSelection() if o.Name in ("Plate", "Stock", "Bore")]}
+    if action == "state":
+        result.update(pid=os.getpid(), title=Gui.getMainWindow().windowTitle())
+    if action == "observe":
+        result["jpeg"] = viewport(view)
+    return result
+
+
+class LessonServer:
+    def __init__(self):
+        self.server = QtNetwork.QLocalServer(Gui.getMainWindow())
+        self.server.setSocketOptions(QtNetwork.QLocalServer.UserAccessOption)
+        self.server.newConnection.connect(self.accept)
+
+    def accept(self):
+        while self.server.hasPendingConnections():
+            socket = self.server.nextPendingConnection()
+            socket.setReadBufferSize(1025)
+            socket.readyRead.connect(lambda sock=socket: self.read(sock))
+            socket.disconnected.connect(socket.deleteLater)
+            timer = QtCore.QTimer(socket)
+            timer.setSingleShot(True)
+            timer.timeout.connect(socket.abort)
+            timer.start(5000)
+            if socket.bytesAvailable():
+                self.read(socket)
+
+    def read(self, socket):
+        if not socket.canReadLine():
+            if socket.bytesAvailable() > 1024:
+                socket.abort()
+            return
+        try:
+            request = json.loads(bytes(socket.readLine(1024)))
+            if not hmac.compare_digest(request["key"], key) or time.time()*1000 > request["expires"]:
+                result = {"status": "expired"}
+            else:
+                result = handle(request["action"])
+        except Exception as error:
+            App.Console.PrintError("Instructor exercise: " + str(error) + "\n")
+            result = {"status": "failed"}
+        socket.write((json.dumps(result) + "\n").encode())
+        socket.disconnectFromServer()
+
+
+# Keep the QObject callbacks alive after FreeCAD returns from macro execution.
+bridge = LessonServer()
+if bridge.server.listen(pipe):
+    Gui._dhimant_plate_bridge = bridge

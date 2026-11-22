@@ -1,8 +1,10 @@
+import { checkGitPractice, isGitProject } from './gitPractice';
+import { architectureCase, isDebugProject } from './architectureMemory';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
-import { ProjectCurriculum, ProjectCheckpoint, ProjectRun, loadProjectCurriculum, projectSnapshot, runProjectCheck } from './projectCore';
+import { ProjectCurriculum, ProjectCheckpoint, ProjectRun, ProjectSnapshot, checkDigest, loadProjectCurriculum, projectFiles, projectSnapshot, runProjectCheck } from './projectCore';
 import { desktopProjectEnabled } from './desktopFeatures';
 
 export interface SubmissionGit {
@@ -10,6 +12,7 @@ export interface SubmissionGit {
 }
 export interface ProjectSubmission {
   id: string; at: string; digest: string; curriculumVersion: number;
+  gitFingerprint?: string;
   outcome: 'completed' | 'needs_work'; runs: ProjectRun[]; git: SubmissionGit;
   assistance: {coachTurns: number; otherHelp: ProjectCheckpoint['externalHelp']};
   note: string; evidence: 'local_checks' | 'reading_checks_and_self_report';
@@ -55,11 +58,15 @@ export async function submissionGit(root: string): Promise<SubmissionGit> {
   } catch { return {available: false, head: '', branch: '', dirty: false, subject: ''}; }
 }
 
-export function projectResultStatus(record: SavedProject, digest?: string, available = true): string {
+export function projectResultStatus(record: SavedProject, digest?: string, available = true, snapshot?: Pick<ProjectSnapshot,'git'|'gitFingerprint'>): string {
   if (!available) return 'Project folder unavailable';
   const last = record.submissions.at(-1);
   if (!last) return 'In progress';
-  if (digest && digest !== last.digest) return 'Changed since submission · submit again';
+  const git = snapshot?.git;
+  const changedGit = record.projectId === 'shelf' && git && (last.gitFingerprint
+    ? last.gitFingerprint !== snapshot.gitFingerprint : git.state !== 'available' || git.branch !== last.git.branch ||
+      git.head !== last.git.head || !last.git.dirty && git.changed_files.length > 0);
+  if (changedGit || digest && digest !== last.digest) return 'Changed since submission · submit again';
   if (last.outcome === 'needs_work') return 'Needs work · final check did not pass';
   return last.evidence === 'reading_checks_and_self_report'
     ? 'Completed locally · reading self-report' : 'Completed locally · final checks passed';
@@ -97,7 +104,7 @@ export class ProjectResults {
         if (!(await stat(record.root)).isDirectory()) throw new Error('Project folder unavailable');
         const curriculum = await loadProjectCurriculum(media, record.projectId, record.root);
         const snapshot = await projectSnapshot(record.root, curriculum, [], new Map());
-        return {...record, status: projectResultStatus(record, snapshot.digest)};
+        return {...record, status: projectResultStatus(record, snapshot.digest, true, snapshot)};
       } catch { return {...record, status: projectResultStatus(record, undefined, false)}; }
     }));
   }
@@ -107,27 +114,34 @@ export class ProjectResults {
 export function finalProjectSteps(curriculum: ProjectCurriculum) {
   if (curriculum.mode === 'reading') return curriculum.steps.filter((step, index, all) => all.findIndex(s => s.check === step.check) === index);
   const final = curriculum.steps.at(-1);
-  if (!final || !['all', 'final:agent', 'shelf:capstone'].includes(final.check)) throw new Error('This project has no final checker.');
+  const architecture = final?.check === 'architecture:' + curriculum.id && architectureCase(curriculum.id);
+  const debug = final?.check === 'debug:' + curriculum.id && isDebugProject(curriculum.id);
+  const git = final?.check === 'git:' + curriculum.id && isGitProject(curriculum.id) && curriculum.gitPractice;
+  if (!final || !git && !debug && !architecture && !['all', 'final:agent', 'shelf:capstone'].includes(final.check)) throw new Error('This project has no final checker.');
   return [{...final, check: final.check === 'all' ? 'final:agent' : final.check}];
 }
 
 export async function submitProject(root: string, curriculum: ProjectCurriculum,
     assistance: ProjectSubmission['assistance'], note: string, signal: AbortSignal,
-    engine: Parameters<typeof runProjectCheck>[4],
+    engine: Parameters<typeof runProjectCheck>[4] | undefined,
     runCheck: typeof runProjectCheck = runProjectCheck): Promise<ProjectSubmission> {
   if (curriculum.mode === 'reading' && !note.trim()) throw new Error('Add your reading evidence in the checkpoint note before submitting.');
   const snapshot = await projectSnapshot(root, curriculum, [], new Map()), git = await submissionGit(root);
+  const files = isDebugProject(curriculum.id) ? await projectFiles(root, curriculum) : undefined;
   const runs: ProjectRun[] = [];
   for (const step of finalProjectSteps(curriculum)) {
     if (signal.aborted) throw new Error('Submission cancelled. No completion recorded.');
-    const run = await runCheck(root, step, snapshot.digest, signal, engine);
+    if (!curriculum.gitPractice && !engine) throw new Error('Set up the project container before submitting this project.');
+    const run = curriculum.gitPractice ? await checkGitPractice(root,curriculum.gitPractice,step,snapshot.digest,signal)
+      : await runCheck(root,step,checkDigest(snapshot,step),signal,engine!,files,snapshot.gitRevision);
     runs.push(run);
     if (run.status !== 'passed') break;
   }
   const after = await projectSnapshot(root, curriculum, [], new Map()), afterGit = await submissionGit(root);
-  if (signal.aborted || after.digest !== snapshot.digest || JSON.stringify(afterGit) !== JSON.stringify(git))
+  if (signal.aborted || after.digest !== snapshot.digest || after.gitFingerprint !== snapshot.gitFingerprint || JSON.stringify(afterGit) !== JSON.stringify(git))
     throw new Error('Project files or Git state changed during submission. Submit the saved version again.');
   return {id: randomUUID(), at: new Date().toISOString(), digest: snapshot.digest, curriculumVersion: curriculum.version,
+    ...(curriculum.id === 'shelf' ? {gitFingerprint:snapshot.gitFingerprint} : {}),
     outcome: runs.length > 0 && runs.every(run => run.status === 'passed') ? 'completed' : 'needs_work', runs, git,
     assistance, note: note.slice(0, 1000), evidence: curriculum.mode === 'reading' ? 'reading_checks_and_self_report' : 'local_checks'};
 }

@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { CourseEngine } from './courseEngine';
 import { courseDebug, courseDebugPort } from './courseDebug';
 import { nativePlan } from './nativeRun';
-import { programEnvironment, Toolchains, typescript } from './localRunner';
+import { programEnvironment, assertInCourseContainer, Toolchains, typescript } from './localRunner';
 import { entryFile } from './learning';
 import { run } from './podman';
 import { CodeSnapshot, validCellInputs } from './roomCode';
@@ -146,6 +146,7 @@ export class NotebookDebugger implements vscode.Disposable {
     }
   }
   async start(snapshot: CodeSnapshot, engine: CourseEngine | undefined, tools: Toolchains, current: () => Promise<boolean>) {
+    if (!engine) assertInCourseContainer();
     if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before debugging code.');
     if (this.launching || this.owned?.session) throw new Error('Stop this notebook’s current debug session first.');
     if (!validCellInputs(snapshot)) throw new Error('Invalid notebook arguments or files.');

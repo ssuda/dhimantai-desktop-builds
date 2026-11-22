@@ -7,10 +7,11 @@ import {AppServer} from './types';
 /** The desktop's proposed integrated-browser API (vscode.proposed.browser.d.ts), used only when enabled. */
 interface BrowserTab { readonly url: string; startCDPSession(): Thenable<BrowserCDPSession>; close(): Thenable<void> }
 interface BrowserCDPSession { readonly onDidReceiveMessage: vscode.Event<unknown>; sendMessage(message: unknown): Thenable<void>; close(): Thenable<void> }
-type BrowserWindow = {openBrowserTab?: (url: string, options?: {viewColumn?: vscode.ViewColumn; preserveFocus?: boolean}) => Thenable<BrowserTab>};
+type BrowserWindow = {readonly activeBrowserTab?: BrowserTab; readonly onDidChangeActiveBrowserTab?: vscode.Event<BrowserTab | undefined>; openBrowserTab?: (url: string, options?: {viewColumn?: vscode.ViewColumn; preserveFocus?: boolean}) => Thenable<BrowserTab>};
 
-export interface InjectedTab { client: CdpClient; sessionId: string; transport?: CdpTransport; dispose(): Promise<void>; close?(): Promise<void> }
+export interface InjectedTab { readonly active?: boolean; client: CdpClient; sessionId: string; transport?: CdpTransport; dispose(): Promise<void>; close?(): Promise<void> }
 export interface TabRequest {
+  onFocusChange?: () => void;
   url: string; home: string; media: string; adapter: string; learner?: string;
   /** learner, bridge and token from the loopback Instructor bridge; omitted for authoring replay (adapter only). */
   bridge?: URLSearchParams;
@@ -41,6 +42,9 @@ export async function openInjectedTab(request: TabRequest): Promise<InjectedTab 
       session: request.bridge && request.learner ? {'dhimantai-erpnext-learner': request.learner, 'dhimantai-erpnext-instructor': JSON.stringify({
         origin: 'http://127.0.0.1:' + request.bridge.get('bridge'), token: request.bridge.get('token'), learner: request.learner})} : {}});
   } catch (error) { client.dispose(); await session.close(); await tab.close(); throw error; }
-  return {client, sessionId, transport, async dispose() { client.dispose(); await session.close(); },
-    async close() {client.dispose(); await session.close(); await tab.close();}};
+  const window = vscode.window as unknown as BrowserWindow;
+  const focus = request.onFocusChange && window.onDidChangeActiveBrowserTab?.(request.onFocusChange);
+  const dispose = async () => { focus?.dispose(); client.dispose(); await session.close(); };
+  return {client, sessionId, transport, get active() { return window.activeBrowserTab === tab; }, dispose,
+    async close() { await dispose(); await tab.close(); }};
 }

@@ -18,7 +18,11 @@ async function fixture() {
   const calls:string[] = [], executed:string[] = [], tokens:any[] = [];
   let pick = 'Check the selected kernel', probe = true, probeRuns = 0, probeError = 'no GPU';
   let outputs:any[] = [{items:[{mime:'application/x.notebook.stream.stdout',data:Buffer.from('remote result\n')}]}];
+  let session = '';
   const kernel:any = {language:'python',status:'idle',executeCode:async function*(code:string, token:any) {
+    if (code.startsWith('print(globals().get("_dhimantai_verified_session"')) {
+      yield {items:[{mime:'application/vnd.code.notebook.stdout',data:Buffer.from(session)}]};return;
+    }
     executed.push(code);tokens.push(token);for (const output of outputs) yield output;
   }};
   let currentKernel:any = kernel;
@@ -41,6 +45,7 @@ async function fixture() {
     },commands:{executeCommand:async(id:string)=>{
       calls.push(id);
       if (id === 'notebook.cell.execute') {
+        session = /_dhimantai_verified_session = "([^"]+)"/.exec(prepared[1].value)?.[1] ?? '';
         probeRuns++;cell.outputs=[{items:[{data:Buffer.from(probe?'DHIMANTAI_GPU_READY':probeError)}]}];
         for(const changed of changes) changed({notebook:doc,cellChanges:[{cell,executionSummary:{success:probe}}]});
       }
@@ -54,7 +59,7 @@ async function fixture() {
     }}
       :id==='./notebookKernelPicker'?{openNotebookKernelPicker:async()=>pick}:nativeRequire(id))});
   const runtime=new exports.GpuNotebookRuntime(root,'staging|student|lesson');
-  return {runtime,exports,vscode,doc,kernel,calls,executed,tokens,changes,modules,prepared:()=>prepared,initialMetadata:()=>initialMetadata,
+  return {runtime,exports,vscode,doc,kernel,calls,executed,tokens,changes,modules,restartKernel:()=>{session='';},prepared:()=>prepared,initialMetadata:()=>initialMetadata,
     probeRuns:()=>probeRuns,outputs:(next:any[])=>{outputs=next;},pick:(next:string)=>{pick=next;},probe:(value:boolean)=>{probe=value;},
     probeError:(value:string)=>{probe=false;probeError=value;},
     changeKernel:()=>{currentKernel={...kernel};},close:async()=>{runtime.dispose();await rm(root,{recursive:true,force:true});}};
@@ -95,17 +100,21 @@ test('Colab setup retains GPU identity and explains provider recovery before har
 test('Colab probe stops the wrong runtime before querying GPUs and still enforces hardware requirements',async()=>{
   const f=await fixture();try {
     const probe=f.exports.gpuProbe('colab',{minComputeCapability:8,minVramMiB:6000,nodes:1,gpusPerNode:1});
-    const run=(colab:boolean,report:string)=>spawnSync('python3',['-c',`import os, platform, subprocess
+    const run=(colab:boolean,report:string,source=probe)=>spawnSync('python3',['-c',`import os, platform, subprocess
 os.environ.pop('CUDA_VISIBLE_DEVICES', None)
 os.environ.pop('COLAB_RELEASE_TAG', None)
 ${colab ? "os.environ['COLAB_RELEASE_TAG'] = 'test'" : ''}
 platform.system = lambda: 'Linux'
+os.path.isfile = lambda path: False
 def gpu_report(*args, **kwargs):
     print('GPU_QUERIED')
     return ${JSON.stringify(report)}
 subprocess.check_output = gpu_report
-exec(${JSON.stringify(probe)})
+exec(${JSON.stringify(source)})
 `],{encoding:'utf8'});
+    const host=run(false,'NVIDIA L4, 8.9, 23034', f.exports.gpuProbe('jupyter', undefined, ['.']));
+    assert.equal(host.status,1);assert.match(host.stdout,/desktop host/);
+    assert.doesNotMatch(host.stdout,/GPU_QUERIED|DHIMANTAI_GPU_READY/);
     const podman=run(false,'NVIDIA L4, 8.9, 23034');
     assert.equal(podman.status,1);assert.doesNotMatch(podman.stdout,/GPU_QUERIED|DHIMANTAI_GPU_READY/);
     assert.match(podman.stderr,/Use Colab Kernel.*GPU availability has not been checked/);
@@ -215,4 +224,13 @@ test('reselecting a connected managed provider preserves its workspace and clean
       assert.equal(f.runtime.lifetime,timer);
     }finally{clearTimeout(timer);}
   }finally{f.runtime.ssh=undefined;f.runtime.cloud=undefined;await f.close();}
+});
+
+test('a restarted kernel cannot receive a learner cell until remote verification succeeds again',async()=>{
+  const f=await fixture();try {
+    await f.runtime.connect('jupyter');
+    f.restartKernel();
+    await assert.rejects(f.runtime.run('python','learner_source'),/session changed/);
+    assert.deepEqual(f.executed,[]);
+  }finally{await f.close();}
 });

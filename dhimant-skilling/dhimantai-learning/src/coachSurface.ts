@@ -11,6 +11,7 @@ export class CoachSurface implements vscode.WebviewViewProvider, vscode.Disposab
   private listener?: vscode.Disposable;
   private readonly registration?: vscode.Disposable;
   private readonly ready: Thenable<unknown>;
+  private visibilityChange = 0;
 
   constructor(private readonly media: vscode.Uri, private readonly usePodman: (doc: vscode.NotebookDocument) => Promise<void>) {
     // VS Code 1.106 introduced secondarySidebar. Keep the adjacent editor on older hosts.
@@ -54,11 +55,13 @@ export class CoachSurface implements vscode.WebviewViewProvider, vscode.Disposab
   }
 
   async show(preserveFocus: boolean) {
+    const change = ++this.visibilityChange;
     await this.ready;
-    // Instructor owns the full learning interaction inside its notebook.
+    if (change !== this.visibilityChange) return;
     const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    if (active instanceof vscode.TabInputWebview && active.viewType.includes('dhimantai.learningRoom')) return;
+    if (active instanceof vscode.TabInputWebview && !active.viewType.endsWith('dhimantai.coach')) return;
     await vscode.commands.executeCommand('setContext', 'dhimantai.legacyCoachOpen', true);
+    if (change !== this.visibilityChange) return;
     if (preserveFocus && this.visible) return;
     if (this.view) return this.view.show(preserveFocus);
     if (this.native) {
@@ -66,7 +69,7 @@ export class CoachSurface implements vscode.WebviewViewProvider, vscode.Disposab
       return;
     }
     if (this.tab) return this.tab.reveal(this.tab.viewColumn, preserveFocus);
-    this.tab = vscode.window.createWebviewPanel('dhimantai.coach', 'dhimantAI Coach',
+    this.tab = vscode.window.createWebviewPanel('dhimantai.coach', 'Project Instructor',
       { viewColumn: vscode.ViewColumn.Two, preserveFocus },
       { enableScripts: true, localResourceRoots: [this.media], retainContextWhenHidden: true });
     this.tab.onDidChangeViewState(({webviewPanel}) => {
@@ -78,8 +81,7 @@ export class CoachSurface implements vscode.WebviewViewProvider, vscode.Disposab
   }
 
   async hide() {
-    // Remove only the Coach view; closing the whole secondary sidebar would hide other extensions' views.
-    if (this.view?.visible) await vscode.commands.executeCommand('dhimantai.coachView.removeView').then(undefined, () => {});
+    ++this.visibilityChange;
     this.tab?.dispose();
     await vscode.commands.executeCommand('setContext', 'dhimantai.legacyCoachOpen', false);
   }

@@ -17,7 +17,11 @@ export interface CourseGrade {
   certificate_id?: string;
   course_id: string; course_title: string; score: number | null; grade: string | null; eligible: boolean;
   passed_count: number; required_count: number; exercise_score: number | null; project_score: number | null;
-  policy: {description: string; scope: string}; blockers: string[];
+  policy: {
+    description: string; scope: string; version?: string;
+    project_weight?: number; exercise_weight?: number; pass_percent?: number; mastery_percent?: number;
+  };
+  blockers: string[];
   topics: {topic: string; score: number; independent: number; required_independent: number; ready: boolean}[];
   requirements: {kind: 'exercise' | 'project'; id: string; title: string; score: number | null; passed: boolean; gradable: boolean}[];
 }
@@ -42,7 +46,11 @@ interface State {keys(): readonly string[]; get<T>(key: string): T | undefined; 
 export interface PendingCoursework {kind: 'exercise' | 'project'; id: string; result: CourseworkResult}
 /** Durable per-attempt keys prevent concurrent windows overwriting each other's pending result. No background retry loop. */
 export class CourseworkOutbox {
-  constructor(private readonly state: State) {}
+  constructor(private readonly state: State, private readonly changed: () => void = () => {}) {}
+  projectSync(environment: string, account: string, request: string) {
+    if (this.state.get('courseworkReceipt:v1:' + environment + ':' + account + ':' + request)) return 'recorded';
+    return this.state.get(this.prefix(environment, account) + request) ? 'pending' : 'unconfirmed';
+  }
   private prefix(environment: string, account: string) { return `courseworkPending:v1:${environment}:${account}:`; }
   pending(environment: string, account: string) {
     return this.state.keys().filter(k => k.startsWith(this.prefix(environment, account)))
@@ -51,15 +59,22 @@ export class CourseworkOutbox {
   async send(environment: string, account: string, value: PendingCoursework, post: (value: PendingCoursework) => Promise<unknown>) {
     const key = this.prefix(environment, account) + value.result.request_id;
     await this.state.update(key, value);
+    this.changed();
     await post(value);
+    if (value.kind === 'project')
+      await this.state.update('courseworkReceipt:v1:' + environment + ':' + account + ':' + value.result.request_id, true);
     await this.state.update(key, undefined);
+    this.changed();
   }
   async retry(environment: string, account: string, post: (value: PendingCoursework) => Promise<unknown>) {
     const errors: string[] = [];
-    for (const value of this.pending(environment, account).slice(0, 20)) {
+    for (const value of this.pending(environment, account)) {
       try { await this.send(environment, account, value, post); }
       catch (error) { errors.push(error instanceof Error ? error.message : 'Result could not be synced.'); }
     }
-    if (errors.length) throw new Error(`${errors.length} result(s) remain pending. ${errors[0]}`);
+    if (errors.length) {
+      const remaining = this.pending(environment, account).length;
+      throw new Error(`${remaining} result${remaining === 1 ? ' remains' : 's remain'} pending. ${errors[0]}`);
+    }
   }
 }

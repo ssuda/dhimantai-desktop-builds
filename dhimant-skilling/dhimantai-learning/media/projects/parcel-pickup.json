@@ -1,0 +1,32 @@
+{
+  "id": "parcel-pickup",
+  "version": 1,
+  "title": "Parcel pickup",
+  "files": [
+    "README.md",
+    "locker.py"
+  ],
+  "architecture": {
+    "prediction": "After two lookups and one collection, how many records does the starter add?",
+    "focusFile": "locker.py",
+    "boundaryHint": "Which operation needs storage, and which part can decide the counter with just the parcel details?"
+  },
+  "steps": [
+    {
+      "id": "investigate",
+      "title": "Investigate and repair",
+      "goal": "A customer saw two collection records before leaving the building. A counter lookup should work even when the log is unavailable. Collection adds one counter name and preserves earlier records. Oversized parcels use freight and other parcels use their zone. Keep both public entry points. The counter policy may change when a depot is added.",
+      "opening": "Inspect the original behavior before changing it.",
+      "task": "Investigate the report in README.md. Read locker.py. Record your prediction before editing, then repair the service and verify the result.",
+      "files": [
+        "README.md",
+        "locker.py"
+      ],
+      "check": "architecture:parcel-pickup",
+      "expected": "Both entry points follow the published contract across its boundary cases.",
+      "hint": "Follow the lookup through to the value it returns. What else happened along the way?",
+      "reflection": "How did you verify the change?",
+      "evidencePrompt": "What did you observe before and after your repair?"
+    }
+  ]
+}

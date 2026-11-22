@@ -1,0 +1,32 @@
+{
+  "id": "field-dispatch",
+  "version": 1,
+  "title": "Field service dispatch",
+  "files": [
+    "README.md",
+    "dispatch.py"
+  ],
+  "architecture": {
+    "prediction": "After three estimates and one assignment, how many entries does the starter add?",
+    "focusFile": "dispatch.py",
+    "boundaryHint": "Which decision needs only the ticket details? Follow both callers and decide which one should change the board."
+  },
+  "steps": [
+    {
+      "id": "investigate",
+      "title": "Investigate and repair",
+      "goal": "A dispatcher needs to compare estimates before assigning a crew. Urgent tickets go to the rapid crew. Other tickets over 20 km go to the regional crew and the rest go to the local crew. An estimate must work when the board is unavailable. Only a confirmed assignment adds one crew name to the board. Keep the published methods and results. Operations revises its routing policy each season.",
+      "opening": "Inspect the original behavior before changing it.",
+      "task": "Investigate the dispatcher report in README.md. Read dispatch.py. Record your prediction about the original program before editing. Then repair it and run the behavior check.",
+      "files": [
+        "README.md",
+        "dispatch.py"
+      ],
+      "check": "architecture:field-dispatch",
+      "expected": "Both entry points preserve the documented result. A preview leaves no record and confirmation writes once.",
+      "hint": "Trace an estimate through the desk. Where does a change become visible to someone else?",
+      "reflection": "How did you verify the change?",
+      "evidencePrompt": "What did you observe before and after your repair?"
+    }
+  ]
+}

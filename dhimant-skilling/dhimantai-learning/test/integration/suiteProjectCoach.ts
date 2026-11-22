@@ -55,12 +55,28 @@ export async function run() {
     await new Promise(resolve => setTimeout(resolve, 200));
     const image = await cdp.send('Page.captureScreenshot', {format:'png'}); writeFileSync(join(out,name+'.png'), Buffer.from(image.data,'base64')); };
   try {
+    await vscode.commands.executeCommand('dhimantai.openLearningRoom');
+    await until(() => cdp.webview(`async d => {
+      const picker = d.getElementById('coaching-language');
+      if (!picker || !picker.onchange) return null;
+      const saved = new Promise(resolve => {
+        const ack = e => {
+          if (e.data?.type === 'coachingLanguage' && e.data.language === 'te-IN') {
+            d.defaultView.removeEventListener('message', ack); resolve(true);
+          }
+        };
+        d.defaultView.addEventListener('message', ack);
+        d.defaultView.setTimeout(() => { d.defaultView.removeEventListener('message', ack); resolve(false); }, 1000);
+      });
+      picker.value = 'te-IN'; picker.dispatchEvent(new d.defaultView.Event('change')); return saved;
+    }`), Boolean, 'Telugu coaching preference saved');
     Api.prototype.notebookCoach = async (path, body: any) => {
+      if (body.project_context.observation) return {guidance:'', prompt:'', line:null};
       assert.equal(path, '/notebook-coach/project?course=Build%20AI%20Agents%20with%20Python'); requests.push(body);
       return {guidance: body.project_context.project_id === 'rich-reading'
         ? 'You are in **Console.print**. Follow `_collect_renderables` to see how the inputs become renderables, then find `render_str` for the string path.'
         : 'Trace the **tool observation** from tools.py into the next model request.\n\n' +
-          Array.from({length: 10}, (_, i) => `Observation ${i + 1}: Follow the returned data into the next request. Explain what changed before choosing the next action.`).join('\n\n'), prompt: '', line: null};
+          Array.from({length: 10}, (_, i) => `Observation ${i + 1}: Follow the returned data into the next request. Explain what changed before choosing the next action.`).join('\n\n'), prompt: '', line: body.project_context.files[0].start_line};
     };
     await vscode.commands.executeCommand('dhimantai.openProjectCoach');
     // Activation also restores Coach asynchronously. Wait for its initial render/account refresh to settle.
@@ -70,6 +86,13 @@ export async function run() {
       stable = value?.title === 'Course Research Agent' && !value.checkDisabled && current === previous ? stable + 1 : 0;
       previous = current; return stable >= 5;
     }, 'project right panel ready');
+    const firstTask = await ui(`d => ({file:d.querySelector('#task button')?.textContent,
+      visible:d.getElementById('task').checkVisibility(), checkpoint:d.getElementById('checkpointDetails').open,
+      brief:d.getElementById('fullTask').open})`);
+    assert.deepEqual(firstTask, {file:'README.md',visible:true,checkpoint:false,brief:false});
+    await ui(`d => { const link = [...d.querySelectorAll('#task button')].find(b => b.textContent === 'data/documents.json'); link.click(); return true; }`);
+    await until(async () => vscode.window.activeTextEditor?.document.fileName, name => name?.endsWith('data/documents.json'), 'task link opens the fixture');
+    await shot('00-project-instructor');
     await click('check');
     await until(visible, value => value?.check === 'Current files · passed', 'real Python setup checks');
     assert.match((await visible()).progress, /0\/10 marked complete/, 'passing checks do not claim completion');
@@ -93,6 +116,10 @@ export async function run() {
       assert.match(failure.output, /FAILED/);
       assert.ok(failure.output.length <= 4000);
       if (index === 3) assert.match((await visible()).check, /output truncated/);
+      await click('checkLocation');
+      await until(async () => vscode.window.activeTextEditor, editor => editor &&
+        failure.location === 'course_agent/' + file + ':' + (editor.selection.active.line + 1) &&
+        editor.document.fileName.endsWith('/course_agent/' + file), 'failure opens at its reported line');
       await shot('qa-milestone-' + (index + 1));
       results.push({step:'qa-milestone-' + (index + 1) + '-failure-summary', pass:true});
     }
@@ -100,15 +127,30 @@ export async function run() {
     await until(visible, value => value?.step === '1' && value.goal.includes('deterministic search'), 'search milestone');
     await click('check');
     await until(visible, value => value?.check === 'Current files · failed', 'unfinished starter fails honestly');
+    const searchFile = vscode.Uri.file(join(root, 'course_agent/search.py'));
+    const searchEditor = await vscode.window.showTextDocument(searchFile);
+    searchEditor.selection = new vscode.Selection(4, 0, 6, 0);
+    await vscode.commands.executeCommand('dhimantai.discussProjectSelection');
+    await until(() => ui(`d => ({selected:d.getElementById('selectionContext').textContent, focus:d.activeElement.id})`),
+      v => v?.selected.includes('course_agent/search.py:5–6') && v.focus === 'message', 'discuss selected lines in the existing composer');
     await ask('Help me understand how these files connect.');
     await until(visible, value => value?.messages.includes('tool observation') && !value.composerDisabled, 'first Coach reply');
+    assert.equal(requests[0].coaching_language, 'te-IN');
+    assert.equal(requests[0].source, [searchEditor.document.lineAt(4).text, searchEditor.document.lineAt(5).text].join('\n'));
+    assert.match(requests[0].question, /Selected lines: course_agent\/search.py:5–6/);
+    const beforeDiscussion = searchEditor.document.getText();
+    await ui(`d => { d.querySelector('.instructor-sources button').click(); return true; }`);
+    await until(async () => vscode.window.activeTextEditor, e => e?.document.uri.fsPath === searchFile.fsPath &&
+      e.selection.isEmpty && e.selection.active.line === 4, 'Instructor citation opens the discussed line');
+    assert.equal(searchEditor.document.getText(), beforeDiscussion, 'discussing and following references does not edit the source');
     assert.ok(requests[0].project_context.files.length > 1);
     assert.ok(requests[0].project_context.files.some((file: any) => file.path === 'README.md'));
     assert.ok(requests[0].project_context.structure.files.includes('data/documents.json'));
     assert.equal(requests[0].project_context.check.status, 'failed');
     // Exercise the real Chromium recorder and PCM conversion without opening a hardware microphone.
     const question = 'What should I inspect next?';
-    Api.prototype.dictate = async pcm => {
+    Api.prototype.dictate = async (pcm, language) => {
+      assert.equal(language, undefined, 'Project Coach requests spoken-language detection');
       const bytes = Buffer.from(pcm, 'base64');
       assert.ok(bytes.length > 0 && bytes.length <= 960000 && bytes.some(byte => byte !== 0));
       return {text: question};
@@ -117,6 +159,7 @@ export async function run() {
     Api.prototype.audioGrant = async (path, text, query) => {
       assert.equal(path, '/notebook-coach/project');
       assert.equal(new URLSearchParams(query).get('course'), 'Build AI Agents with Python');
+      assert.equal(new URLSearchParams(query).get('language'), 'te-IN');
       speech.push(text);
       throw new Error('Test playback service unavailable');
     };
@@ -179,7 +222,7 @@ export async function run() {
     await until(visible, value => value?.check.startsWith('Earlier files'), 'stale check label');
     await ui(`d => {d.getElementById('note').value='Next: trace tied search scores.'; d.getElementById('externalHelp').value='reported'; return true;}`);
     await click('checkpoint');
-    await until(visible, value => value?.saved.includes('2 Coach help turns'), 'checkpoint assistance count');
+    await until(visible, value => value?.saved.includes('2 Instructor help turns'), 'checkpoint assistance count');
     await vscode.commands.executeCommand('dhimantai.hideCoach');
     await vscode.commands.executeCommand('dhimantai.openProjectCoach');
     await until(visible, value => value?.step === '1' && value.note === 'Next: trace tied search scores.', 'resume checkpoint');
@@ -214,7 +257,8 @@ export async function run() {
     await shot('03-resumed-checkpoint'); results.push({step:'resume-stale-evidence-ai-off', pass:true});
     await vscode.workspace.getConfiguration('dhimantai').update('aiAssistance', true, vscode.ConfigurationTarget.Global);
     let delayed: ((reply: any) => void) | undefined;
-    Api.prototype.notebookCoach = async (_path, body) => {
+    Api.prototype.notebookCoach = async (_path, body: any) => {
+      if (body.project_context.observation) return {guidance:'', prompt:'', line:null};
       requests.push(body); return new Promise(resolve => { delayed = resolve; });
     };
     await until(visible, value => !value?.composerDisabled, 'AI on');
@@ -226,6 +270,7 @@ export async function run() {
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal((await visible()).messages, '');
     Api.prototype.notebookCoach = async (_path, body: any) => {
+      if (body.project_context.observation) return {guidance:'', prompt:'', line:null};
       requests.push(body); return {guidance: 'Fresh conversation', prompt: '', line: null};
     };
     await ask('Start from this question.');
@@ -276,6 +321,7 @@ export async function run() {
     assert.equal(submissions.length, 2, 'independent export never sends a submission');
     results.push({step:'teacher-submission-retry-status-and-independent-handoff',pass:true});
     Api.prototype.notebookCoach = async (path, body: any) => {
+      if (body.project_context.observation) return {guidance:'', prompt:'', line:null};
       assert.equal(path, '/notebook-coach/project?course=Build%20AI%20Agents%20with%20Python');
       requests.push(body);
       return {guidance: body.project_context.project_id === 'shelf-reading'
@@ -399,6 +445,25 @@ export async function run() {
     const shelfRoot = join(dirname(root), 'shelf-capstone');
     await vscode.commands.executeCommand('dhimantai.openProjectCoach', shelfRoot);
     await until(visible, value => value?.title === 'Shelf Capstone · fix a repository bug', 'Shelf capstone panel');
+    if (vscode.env.appName === 'dhimantAI') {
+      const layout = () => cdp.evaluate(`({
+        files: !!document.querySelector('.explorer-folders-view')?.checkVisibility(),
+        learn: !!document.querySelector('.pane-header[aria-label*="Learn"]')?.checkVisibility(),
+        coach: !!document.querySelector('.part.auxiliarybar')?.checkVisibility()
+      })`);
+      const readme = vscode.window.activeTextEditor!.document;
+      await until(layout, s => s.files && s.coach, 'project files and Coach');
+      await vscode.commands.executeCommand('dhimantai.courseCatalog');
+      await until(layout, s => s.learn && !s.files && !s.coach, 'catalog with only learning navigation');
+      await vscode.window.showTextDocument(readme);
+      await until(layout, s => s.files && s.coach, 'restored project panels');
+      await vscode.commands.executeCommand('workbench.action.navigateBack');
+      await until(layout, s => s.learn && !s.files && !s.coach, 'catalog reached through Back');
+      await vscode.commands.executeCommand('workbench.action.navigateForward');
+      await until(layout, s => s.files && s.coach, 'project reached through Forward');
+      await until(visible, value => value?.title === 'Shelf Capstone · fix a repository bug', 'returned Shelf Coach');
+      results.push({step:'shelf-catalog-back-and-forward', pass:true});
+    }
     assert.equal((await visible()).messages, '', 'capstone has its own conversation');
     assert.equal(await ui(`d => d.getElementById('step').options.length`), 7);
     await click('check');
@@ -434,6 +499,38 @@ export async function run() {
     assert.match(await ui(`d => d.getElementById('output').textContent`), /checks passed/);
     assert.equal((await visible()).handoffHidden, true, 'capstone does not use the agent teacher-handoff endpoint');
     await shot('06-shelf-capstone'); results.push({step:'shelf-capstone-context-git-regression-and-checker', pass:true});
+    const automatic: any[] = [];
+    Api.prototype.notebookCoach = async (_path, body: any) => {
+      automatic.push(body);
+      if (body.project_context.observation === 'git')
+        return {guidance:'Your regression test is staged. What behavior will the next commit document?',prompt:'',line:null};
+      if (body.project_context.observation === 'check')
+        return {guidance:'Compare the current checker output with the behavior the issue describes.',prompt:'',line:null};
+      return {guidance:'Look at the boundary case in tests/test_regression.py:6. Which input would test the opposite outcome?', prompt:'', line:6};
+    };
+    const regression = await vscode.window.showTextDocument(vscode.Uri.file(custom));
+    const regressionEdit = new vscode.WorkspaceEdit();
+    regressionEdit.insert(regression.document.uri, regression.document.lineAt(regression.document.lineCount - 1).range.end, '\n# Compare one boundary case.\n');
+    await ui(`d => { d.getElementById('message').value='My draft question'; return true; }`);
+    assert.ok(await vscode.workspace.applyEdit(regressionEdit));
+    assert.ok(await regression.document.save());
+    const savedSource = regression.document.getText();
+    await until(visible, v => v?.messages.includes('Which input would test the opposite outcome?'), 'unsolicited review after a student saves');
+    assert.equal(automatic[0].project_context.observation, 'saved');
+    assert.equal(automatic[0].project_context.selected_file, 'tests/test_regression.py');
+    assert.equal(automatic[0].message, '');
+    assert.ok(automatic[0].project_context.observation_line > 0);
+    assert.ok(await ui(`d => {const rect=d.querySelector('#conversation article:last-child').getBoundingClientRect(), pane=d.getElementById('projectContent').getBoundingClientRect(); return rect.top < pane.bottom && rect.bottom > pane.top;}`), 'the new observation is visible beside the editor');
+    assert.equal((await visible()).draft, 'My draft question');
+    assert.equal(regression.document.getText(), savedSource);
+    await shot('07-instructor-on-save'); results.push({step:'instructor-guides-after-save-without-a-question', pass:true});
+    execFileSync('git', ['add', '--', 'tests/test_regression.py'], {cwd:shelfRoot});
+    await until(visible, v => v?.messages.includes('Your regression test is staged.'), 'unsolicited guidance after staging a change');
+    assert.ok(automatic.at(-1).project_context.git.changed_files.some((f:any) => f.path === 'tests/test_regression.py' && f.status === 'A '));
+    await click('check');
+    await until(visible, v => v?.messages.includes('Compare the current checker output'), 'unsolicited guidance after a check');
+    assert.equal(automatic.at(-1).project_context.check.status, 'failed');
+    results.push({step:'instructor-guides-after-index-and-check-changes',pass:true});
   } catch (error) {
     results.push({step:'failure', error:String(error), visible:await visible(), output:await ui(`d => d.getElementById('output').textContent`)}); await shot('failure'); throw error;
   } finally {

@@ -1,3 +1,4 @@
+import { courseAction, type SkillingTarget } from './skillingMenu';
 import { starterExercises } from './starterExercises';
 import { CourseNotes } from './courseNotes';
 import { CourseNote, readCourseNotes, writeCourseNote } from './courseNoteStore';
@@ -29,8 +30,10 @@ import { cellLanguages } from './roomCode';
 import { practiceContext, generatedPractice, supplementalPractice, SupplementalExercise, practiceDocument, savedPractice, PracticeNotebook } from './practiceNotebook';
 import type { Course, GeneratedExercise } from './api';
 import { Api, ApiError } from './api';
+import {openFreeCAD} from './freecadLesson';
+import {cadAction,FREECAD_COURSE,FREECAD_CHAPTER} from './freecadCourse';
 import { desktopRoom } from './desktopRoom';
-import { Auth } from './auth';
+import { Auth, learnerInitial } from './auth';
 import { audioPolicy, trustedRoomUrl, audioControls, CoachAudio, SpokenReply } from './coachAudio';
 import { notebookMessageBar } from './learningComposer';
 import { mediaIcon } from './mediaIcons';
@@ -80,7 +83,8 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
   type Mode = 'tutor' | 'doubt_solver';
   type WorkspaceTarget = {panel:vscode.WebviewPanel; key:string; course?:string; lesson?:string; dispose():void;
     editNote?:(target:TutorNotebookStore, note:CourseNote, expected:string)=>Promise<void>|undefined};
-  const notebooks = new Map<string, {panel: vscode.WebviewPanel; mode?: Mode; exercise?: string; workspace?:WorkspaceTarget; chooseCourse?: (course: vscode.Uri | string, lesson?: string) => void}>();
+  const menuChanges = new vscode.EventEmitter<void>();
+  const notebooks = new Map<string, {panel: vscode.WebviewPanel; mode?: Mode; exercise?: string; workspace?:WorkspaceTarget; menu?:() => SkillingTarget; chooseCourse?: (course: vscode.Uri | string, lesson?: string) => void}>();
   let activeCourse: string | undefined;
   const selectCourse = (course?:string) => {
     if (activeCourse===course) return;
@@ -89,8 +93,11 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
   };
   // Exercise identity, rather than its title, owns the tab just as it owns the saved document.
   const practiceKey = (env: EnvironmentName, account: string, id: string) => `practice:${env}:${account}:${id}`;
-  const updateNotebookContext = () => vscode.commands.executeCommand('setContext', 'dhimantai.tutorNotebookOpen',
+  const updateNotebookContext = () => {
+    menuChanges.fire();
+    return vscode.commands.executeCommand('setContext', 'dhimantai.tutorNotebookOpen',
     [...notebooks.values()].some(({panel}) => panel.visible));
+  };
   const closeNotebooks = () => { courseNotes.dispose(); for (const {panel} of [...notebooks.values()]) panel.dispose(); selectCourse(); };
   /** `initialLesson` resumes that chapter directly (Course Catalog's Continue learning) instead of showing the picker. */
   function open(practice?: PracticeNotebook, initialCourse?: vscode.Uri | string, initialMode: Mode = 'tutor', initialLesson?: string, focusQuestion = '', reuse?:WorkspaceTarget,
@@ -140,14 +147,29 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
     const onDispose = (fn:()=>void) => { cleanup.push(fn); };
     const dispose = () => { if (disposed) return; disposed = true; for (const fn of cleanup) fn(); };
     const disposal = host.onDidDispose(dispose); onDispose(()=>disposal.dispose());
+    let menuControls = {ask:false, practice:false};
+    const roomMenu = (): SkillingTarget => {
+      const result: SkillingTarget = {};
+      const send = (action: string) => () => {
+        host.reveal(host.viewColumn, false);
+        return host.webview.postMessage({type:'skillingAction', action, attempt});
+      };
+      if (workspace.course) result.course = courseAction(workspace.course, workspace.lesson);
+      if (menuControls.ask && (!practice || aiEnabled())) result.ask = send('ask');
+      if (menuControls.practice && practice) {
+        if (practice.tests.length) result.check = send('check');
+        if (uuid(practice.id)) result.grade = send('grade');
+      }
+      return result;
+    };
     const workspace:WorkspaceTarget = {panel:host,key,course:courseName,lesson:initialLesson,dispose};
-    notebooks.set(key, {panel:host, workspace, mode:practice ? undefined : initialMode, exercise:practice?.id, chooseCourse: (uri, lesson) => {
+    notebooks.set(key, {panel:host, workspace, menu:roomMenu, mode:practice ? undefined : initialMode, exercise:practice?.id, chooseCourse: (uri, lesson) => {
       const course = typeof uri === 'string' ? uri : courses?.recordFor(uri)?.course;
       if (!course || (typeof uri !== 'string' && course === courseName)) return;
       if (!instructor) {open(undefined,uri,'tutor',lesson,'',{...workspace,course,lesson});return;}
       courseFile = typeof uri === 'string' ? undefined : uri; courseName = boundCourse = workspace.course = course; selectCourse(course);
       practiceChoices.clear(); practiceLoad++;
-      workspace.lesson = lesson; host.title = course;
+      workspace.lesson = lesson; host.title = course; menuControls = {ask:false, practice:false}; menuChanges.fire();
       void view.postMessage({type:'chooseCourse', course, ...(lesson ? {lesson} : {})});
     }});
     const selectCopilotCourse = copilot?.bindPanel(host, practice?.course, practice?.assistance ?? true);
@@ -322,12 +344,16 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
      * After every sample passes, offer the graded run: every case, hidden ones included, in the same course runtime.
      * The suite stays in memory; the learner sees counts and the kind of each failed case, never its data.
      */
-    const offerGrading = async (id: number, owner: string, snapshot: import('./roomCode').CodeSnapshot,
-      input: {source: string; stdin: string; argv: string[]; files: {name: string; content: string}[]}, engine: Awaited<ReturnType<typeof courseEngine>>) => {
-      if (!practice) return;
+    let grading = false, gradingRevision = 0;
+    const gradeSolution = async (id: number, owner: string, snapshot: import('./roomCode').CodeSnapshot,
+      input: {source: string; stdin: string; argv: string[]; files: {name: string; content: string}[]}, engine: Awaited<ReturnType<typeof courseEngine>>, offer = true) => {
+      if (!practice || !uuid(practice.id) || grading) return;
+      const previousGrade = gradingRevision;
       const grade = 'Submit for grading';
-      if (await vscode.window.showInformationMessage('Every sample passes. Submit for grading against the hidden tests too?', grade) !== grade) return;
-      if (!active(id) || (await auth.session())?.user.id !== owner) return;
+      if (offer && await vscode.window.showInformationMessage('Every sample passes. Submit for grading against the hidden tests too?', grade) !== grade) return;
+      if ((await auth.session())?.user.id !== owner || !active(id) || grading || gradingRevision !== previousGrade) return;
+      grading = true;
+      gradingRevision++;
       try {
         const choice = helpSinceAssessment(records(owner).find(r => r.id === practice!.id)) ? {value:'reported' as CourseworkHelp}
           : await vscode.window.showQuickPick([
@@ -335,7 +361,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
             {label:'I used help',value:'reported' as CourseworkHelp},
             {label:'Prefer not to say',value:'unknown' as CourseworkHelp},
           ],{title:'Help used for this graded attempt'});
-        if (!choice || !active(id)) return;
+        if (!choice || !active(id) || (await auth.session())?.user.id !== owner) return;
         const api = new Api(auth, () => backend, owner);
         const report = await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: 'Grading your code against every test…'},
           () => gradeLocally(() => api.gradingSuite(practice.id), cases => engine.tests(snapshot.language, input, cases), practice.id));
@@ -355,6 +381,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
         else void vscode.window.showWarningMessage(`${report.passed} of ${report.total} tests passed. Failed hidden tests check: ` +
           [...new Set(failed.map(c => FAILURE_CATEGORIES[c.category ?? 'other'] ?? FAILURE_CATEGORIES.other))].join('; ') + '. Hidden inputs stay private.');
       } catch (error) { void vscode.window.showErrorMessage('Grading did not finish: ' + (error instanceof Error ? error.message : String(error))); }
+      finally { grading = false; }
     };
     const aiEnabled = () => (!practice || practice.assistance) && vscode.workspace.getConfiguration('dhimantai').get<boolean>('aiAssistance', true);
     const active = (id: number) => ownsPanel() && name === environment() && revision === id;
@@ -372,7 +399,10 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
       if (ownsPanel()) void view.postMessage({type:'notebookDebugState',attempt,snippet:snapshot.snippet,revision:snapshot.revision,state});
     });
     onDispose(() => debugging.dispose());
+    let cadSession:Awaited<ReturnType<typeof openFreeCAD>>|undefined;
+    let cadAbort:AbortController|undefined;
     const reset = () => {
+      cadAbort?.abort(); cadAbort=undefined; cadSession=undefined;
       lessonRequest?.abort(); lessonRequest = undefined;
       selectionRequest?.abort(); selectionRequest = undefined;
       if(browserConnectionAccount)browserLearning?.setConnection(browserConnectionAccount,name,false,'Instructor is disconnected. Open the answer box to reconnect.');
@@ -388,7 +418,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
     const checkAccount = async () => {
       const prior = account || documentAccount;
       if (prior && (await auth.session())?.user.id !== prior && (account === prior || documentAccount === prior)) {
-        courseNotes.dispose(); reset(); resetCells(); resetGpu(); selectCourse(); store = undefined; documentKey = documentAccount = ''; lessonAccount = ''; lessonCourses = []; notebook = emptyNotebook(); void view.postMessage({type: 'signedOut'});
+        courseNotes.dispose(); reset(); resetCells(); resetGpu(); selectCourse(); workspace.course = undefined; workspace.lesson = undefined; menuControls = {ask:false, practice:false}; menuChanges.fire(); store = undefined; documentKey = documentAccount = ''; lessonAccount = ''; lessonCourses = []; notebook = emptyNotebook(); void view.postMessage({type: 'signedOut'});
       }
     };
     const credentials = context.secrets.onDidChange(e => {
@@ -407,10 +437,10 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
       }
     });
     onDispose(() => settings.dispose());
-    let wasVisible = host.visible;
+    let wasActive = host.active;
     const visibilitySubscription = host.onDidChangeViewState(({webviewPanel}) => {
-      if (webviewPanel.visible && !wasVisible) hideRoomSidebars();
-      wasVisible = webviewPanel.visible;
+      if (webviewPanel.active && !wasActive) hideRoomSidebars();
+      wasActive = webviewPanel.active;
       if (webviewPanel.active) selectCourse(courseName);
       void updateNotebookContext();
       if (!webviewPanel.visible) void view.postMessage({type:'audioOff'});
@@ -419,6 +449,11 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
     onDispose(() => visibilitySubscription.dispose());
     const messages = view.onDidReceiveMessage(async msg => {
       if ((!ownsPanel() && msg?.type !== 'notebookChanged') || name !== environment()) return;
+      if (msg?.type === 'skillingControls') {
+        menuControls = {ask:msg.ask === true, practice:msg.practice === true};
+        menuChanges.fire();
+        return;
+      }
       if (msg?.type === 'learningPreferences') {
         const user = await auth.session();
         if (!user || !ownsPanel() || user.user.id !== account) return;
@@ -481,7 +516,8 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
               if (task.id!==question.id || task.kind!=='written') throw new Error('The service returned a different practice set.');
               if (!ownsPanel() || (await auth.session())?.user.id!==user.user.id) return;
               workspace.dispose();
-              notebooks.set(key,{panel:host,workspace,exercise:question.id});
+              notebooks.set(key,{panel:host,workspace,exercise:question.id,menu:() => writtenMenu(host, task.course, workspace.lesson)});
+              menuChanges.fire();
               await openWrittenPractice(context,task,api,auth,user.user.id,name,environment,{records,note},
                 {panel:host,cleanup:dispose=>{
                   const closed=host.onDidDispose(()=>workspace.dispose());
@@ -505,6 +541,15 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
             open(undefined,courseName,msg.mode,workspace.lesson,'',workspace,draft);
           }
         } catch (error) { if (ownsPanel()) await view.postMessage({type:'workspaceError',message:error instanceof Error?error.message:'Could not change mode. Your work is still here.'}); }
+        return;
+      }
+      if(msg?.type==='freecadAction') {
+        const session=cadSession, id=revision;
+        if(!session || msg.attempt!==attempt || !account || notebook.lessonId!==FREECAD_CHAPTER
+            || (msg.action!=='state' && !cadAction(msg.action)) || typeof msg.id!=='string' || msg.id.length>64
+            || (await auth.session())?.user.id!==account || !active(id))return;
+        const result=await session.call(msg.action).catch(()=>({status:'disconnected'}));
+        if(active(id))await view.postMessage({type:'freecadResult',attempt,id:msg.id,result});
         return;
       }
       if(msg?.type==='browserState') {
@@ -681,19 +726,34 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
         }
         return;
       }
+      if (msg?.type === 'savedPracticeNotebooks') {
+        await vscode.commands.executeCommand('dhimantai.practiceHistory');
+        return;
+      }
       if (msg?.type === 'courseNotes' && msg.documentKey === documentKey && courseName && documentAccount) {
         const owner = documentAccount, course = courseName;
         const current = async () => name === environment() && (await auth.session())?.user.id === owner;
-        const selected = lessonCourses.find(item => item.name === course);
-        if (!selected || !await current()) return;
-        const scopes = selected.chapters.map(ch => ({scope:'\0tutor:' + ch.id, chapter:ch.lesson || ch.name}));
+        let selected = lessonCourses.find(item => item.name === course);
+        let loadPracticeChapters = !!practice && !selected;
         await notebookWrites;
+        if (!await current()) return;
         courseNotes.open(name + '|' + owner + '|' + course, course, current,
           async () => {
+            // Practice opens directly on an exercise, without visiting the chapter picker.
+            if (loadPracticeChapters) {
+              loadPracticeChapters = false;
+              try {
+                const catalog = await new Api(auth, () => backend, owner).practiceCatalog(AbortSignal.timeout(10000));
+                selected = catalog.courses.find(item => item.name === course);
+              } catch {
+                if (await current()) void vscode.window.showInformationMessage('The chapter list is unavailable. Course Notes is showing saved Practice and Doubt Solver notes.');
+              }
+            }
+            const scopes = (selected?.chapters ?? []).map(ch => ({scope:'\0tutor:' + ch.id, chapter:ch.lesson || ch.name}));
             const chats = (await new DoubtConversations(notebookDirectory,name,owner).list()).filter(chat=>chat.course===course);
             const doubtScopes = chats.length ? chats.map(chat=>({scope:'\0doubt-chat:' + chat.id,chapter:'Doubt Solver · ' + chat.title}))
               : [{scope:'\0doubt_solver:' + course,chapter:'Doubt Solver'}];
-            return readCourseNotes(notebookDirectory, name, owner, [...scopes,...doubtScopes]);
+            return readCourseNotes(notebookDirectory, name, owner, [...scopes,...doubtScopes], course);
           }, async (note, expected) => {
             const target = new TutorNotebookStore(notebookDirectory, name, owner + note.scope);
             for (const {workspace} of notebooks.values()) {
@@ -903,7 +963,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
           const lesson = chosen && !chosen.locked ? chosen : undefined;
           if (!practice && !lesson) throw new Error('Choose an available chapter from your course before starting ' + assistantName + '.');
           if (lesson) {
-            courseName=workspace.course=lesson.course; selectCourse(lesson.course); workspace.lesson=lesson.id; host.title=lesson.course;
+            courseName=workspace.course=lesson.course; selectCourse(lesson.course); workspace.lesson=lesson.id; host.title=lesson.course; menuChanges.fire();
             if(instructor && lesson.course===ERP_COURSE) {
               browserConnectionAccount=account;
               browserLearning?.setConnection(account,name,false,'Connecting to Instructor…');
@@ -953,17 +1013,30 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
             await saveRoomNotebook(store!,merged); notebook=merged; carriedFiles=handoff.files; handoff=undefined;
           }
           documentKey = randomBytes(16).toString('hex'); savedSequence = 0;
-          await view.postMessage({type:'restoreNotebook', attempt:msg.attempt, documentKey, notebook});
+          await view.postMessage({type:'restoreNotebook', attempt:msg.attempt, documentKey, notebook, learnerInitial:learnerInitial(user)});
           if(conversations)await view.postMessage({type:'doubtHistory',chats:await conversations.list()});
           if(carriedFiles?.length)await view.postMessage({type:'handoffAttachments',attempt:msg.attempt,files:carriedFiles});
-          if (lesson) {
+          const cadLesson=instructor && lesson?.course===FREECAD_COURSE && lesson.id===FREECAD_CHAPTER;
+          if(cadLesson) {
+            if((await auth.session())?.user.id!==account || !active(id))return;
+            if(vscode.env.remoteName)throw new Error('Open the FreeCAD lesson in a local desktop window.');
+            cadAbort=new AbortController();
+            const report=(message:string)=>{if(active(id))void view.postMessage({type:'freecadSetup',attempt:msg.attempt,message});};
+            report('Looking for FreeCAD on this computer…');
+            cadSession=undefined;
+            const session=await openFreeCAD(context.globalStorageUri.fsPath,join(context.extensionPath,'media','freecad'),
+              name+'\0'+account,cadAbort.signal,report);
+            if(!active(id))return;
+            cadSession=session;
+          }
+          if (lesson && !cadLesson) {
             const configuration=courseConfiguration((await new Api(auth,()=>backend,account).courseRuntime(lesson.course)).configuration,lesson.course);
             if (!active(id)) return;
             gpuRequirement=gpuLabRequirement(configuration,lesson.lesson||lesson.name,lesson.name);
             preferredAccelerator=configuration.preferred_accelerator;
           }
-          if (lesson && courses?.enabled && lesson.course!==ERP_COURSE) courseFile = await courses.courseFolder({course:lesson.course, account, environment:name});
-          if(lesson?.course===ERP_COURSE)courseFile=undefined;
+          if (lesson && courses?.enabled && lesson.course!==ERP_COURSE && !cadLesson) courseFile = await courses.courseFolder({course:lesson.course, account, environment:name});
+          if(cadLesson || lesson?.course===ERP_COURSE)courseFile=undefined;
           if (!active(id)) return;
           await selectRuntimeJournal(); await runtimeHistory();
           const api = new Api(auth, () => {
@@ -1025,7 +1098,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
             gpuRuntimes: !practice && (!!gpuRequirement || preferredAccelerator === 'gpu'),
             managedGpuRuntimes: !practice && !!gpuRequirement, gpuCostNotice: GPU_COST_NOTICE, gpuNodes:gpuRequirement?.nodes,
             gpuCount:gpuRequirement?gpuRequirement.nodes*gpuRequirement.gpusPerNode:0,
-            browserCourse:lesson?.course===ERP_COURSE,
+            freecad:cadLesson, browserCourse:lesson?.course===ERP_COURSE,
             browserProgress:progress,
             ...(!practice && lesson ? {chapterId:lesson.id} : {}),
             ...(!practice && msg.mode === 'doubt_solver' && lesson ? {doubtContext:{chapter_id:lesson.id, lesson_name:lesson.lesson || lesson.name}} : {}),
@@ -1034,7 +1107,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
             ...(practice ? {help:helpState(helpRecords, practice.id)} : {}),
             ...(practice ? {practice:{id:practice.id, language:practice.language, title:practice.title, course:practice.course,
               tools:{tests:practice.tests.length, trace:practice.language === 'python'}}} : {}),
-            codeRuntime: selectedGpu ? GPU_RUNTIMES[selectedGpu] : lesson?.course===ERP_COURSE ? 'ERPNext · Browser' : (courseFile ? courses?.recordFor(courseFile)?.course ?? 'Course' : 'Course') + ' · Podman', ...grant});
+            codeRuntime: cadLesson ? 'FreeCAD' : selectedGpu ? GPU_RUNTIMES[selectedGpu] : lesson?.course===ERP_COURSE ? 'ERPNext · Browser' : (courseFile ? courses?.recordFor(courseFile)?.course ?? 'Course' : 'Course') + ' · Podman', ...grant});
           if (!practice && (gpuRequirement || preferredAccelerator === 'gpu')) await view.postMessage({type:'runtimeSelected',runtime:selectedGpu ?? 'course',label:selectedGpu ? gpuRuntime?.label??GPU_RUNTIMES[selectedGpu] : undefined,ready:true});
           if(lesson?.course===ERP_COURSE) {
             requestedBrowserChapter=lesson.id;
@@ -1253,7 +1326,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
       // Sample tests, step-through and a new input: learning tools that run code, never ask a model.
       if (msg?.type === 'practiceTool' && codeSession && (practice || ['my_tests','test_code'].includes(msg.tool))
           && msg.attempt === attempt && validSnapshot(msg.snapshot)
-          && ['tests', 'trace', 'variation', 'my_tests','test_code'].includes(msg.tool) && Number.isSafeInteger(msg.request)) {
+          && ['tests', 'grade', 'trace', 'variation', 'my_tests','test_code'].includes(msg.tool) && Number.isSafeInteger(msg.request)) {
         const id = revision, owner = account, snapshot = msg.snapshot, tool: string = msg.tool;
         const reply = (result: object) => { if (active(id)) void view.postMessage({type:'practiceToolResult', attempt, request:msg.request, tool, ...result}); };
         try {
@@ -1270,6 +1343,10 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
           const input = {source:snapshot.source, stdin:snapshot.stdin, argv:snapshot.argv??[], files:snapshot.files??[]};
           const engine = await courseEngine(snapshot.language);
           if (!active(id) || (await auth.session())?.user.id !== owner) return;
+          if (tool === 'grade' && practice) {
+            await gradeSolution(id, owner, snapshot, input, engine, false);
+            reply({}); return;
+          }
           if (tool === 'test_code') {
             const execution = await engine.run(snapshot.language,input);
             if (!active(id) || (await auth.session())?.user.id !== owner) return;
@@ -1292,7 +1369,7 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
               const all = await note(owner, {type:'samples', id:practice.id, total:rows.length, passed});
               if (active(id)) await view.postMessage(helpState(all, practice.id));
               // Samples alone never solve a problem: offer the full graded run, in the same runtime.
-              if (passed === rows.length && /^[0-9a-f-]{36}$/i.test(practice.id)) void offerGrading(id, owner, snapshot, input, engine);
+              if (passed === rows.length && /^[0-9a-f-]{36}$/i.test(practice.id)) void gradeSolution(id, owner, snapshot, input, engine);
             }
             return;
           }
@@ -1352,22 +1429,44 @@ export function registerLearningRoom(context: vscode.ExtensionContext, environme
     const roomMode = practice ? 'practice' : initialMode;
     const roomTabs = ([['tutor', 'Instructor'], ['practice', 'Practice'], ['doubt_solver', 'Doubt Solver']] as const)
       .map(([value, label]) => `<button type="button" data-room="${value}" aria-pressed="${roomMode === value}">${label}</button>`).join('');
-    const lessons = practice ? '' : `<section id="tutor-lessons" aria-label="Course lessons" hidden><div class="chapter-filters"><div><label for="lesson-course">Course</label><select id="lesson-course" class="dh-select"></select></div><div><label for="lesson-search">Find a chapter</label><input id="lesson-search" type="search" placeholder="Search chapters" autocomplete="off"></div></div><div id="lesson-list" role="group" aria-label="Available lessons"></div><button type="button" id="reload-lessons" hidden>Retry loading courses</button><button type="button" id="lesson-catalog" class="quiet">Course Catalog</button></section>`;
-    const languageSetting = `<label class="coaching-language">Coaching language <select id="coaching-language" class="dh-select" aria-label="Coaching language">${Object.entries(coachingLanguages).map(([id,label])=>`<option value="${id}">${label}</option>`).join('')}</select></label>`;
+    const lessons = practice ? '' : `<section id="tutor-lessons" aria-label="Course lessons" hidden>
+<div class="chapter-filters">
+  <div class="chapter-filter course-picker">
+    <label id="course-label" for="course-toggle">Course</label>
+    <select id="lesson-course" hidden></select>
+    <button type="button" id="course-toggle" aria-labelledby="course-label course-toggle" aria-controls="course-popup" aria-expanded="false" disabled>Choose course</button>
+    <div id="course-popup" hidden>
+      <input id="course-query" type="text" role="combobox" aria-label="Search courses" placeholder="Search courses" autocomplete="off" spellcheck="false" aria-autocomplete="list" aria-expanded="true" aria-controls="course-options">
+      <div id="course-options" role="listbox" aria-label="Courses"></div>
+      <div id="course-no-matches" role="status" hidden>No courses match your search.</div>
+    </div>
+  </div>
+  <div class="chapter-filter"><label for="lesson-search">Find a chapter</label><input id="lesson-search" type="search" placeholder="Search chapters" autocomplete="off"></div>
+</div>
+<div id="lesson-list" role="group" aria-label="Available lessons"></div><button type="button" id="reload-lessons" hidden>Retry loading courses</button><button type="button" id="lesson-catalog" class="quiet">Course Catalog</button></section>`;
+    const languageSetting = `<label class="coaching-language"><span><span class="coaching-prefix">Coaching </span>language</span> <select id="coaching-language" class="dh-select" aria-label="Coaching language">${Object.entries(coachingLanguages).map(([id,label])=>`<option value="${id}">${label}</option>`).join('')}</select></label>`;
     view.html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${practice ? 'Practice notebook' : initialMode === 'doubt_solver' ? 'Doubt Solver notebook' : 'Instructor notebook'}</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' ${view.cspSource} 'wasm-unsafe-eval'; style-src ${view.cspSource} 'unsafe-inline'; font-src ${view.cspSource}; img-src https: data: blob:; media-src blob:; connect-src ${audioPolicy}; frame-src 'self' ${origin}">
-<style>${UI_TOKENS}</style><link rel="stylesheet" href="${asset('learning-room/room.css')}"></head><body${practice ? '' : ' class="selecting-course"'} data-notebook-mode="${practice ? 'practice' : initialMode}">
-${doubt ? `<details id="doubt-history" class="doubt-history"><summary>Chat history</summary><div class="history-list"><div id="doubt-chat-list" role="group" aria-label="Previous chats"></div><p>Saved on this computer.</p></div></details>` : ''}${practice ? '' : `<section id="course-selection" aria-labelledby="selection-title"><header><button type="button" id="selection-back" class="quiet" hidden>← Back to room</button><span class="eyebrow">${assistantName}</span><h1 id="selection-title" tabindex="-1">Choose a course and chapter</h1></header>${lessons}</section>`}
-<header class="workspace-header"><div class="room-bar"><fieldset class="room-tabs" id="workspace-mode" aria-label="Learning mode">${roomTabs}</fieldset><div class="workspace-actions"><select id="course-runtime" aria-label="Runtime"><option value="course">Course container</option><option value="colab" data-gpu hidden disabled>Google Colab · GPU</option><option value="cloud" data-gpu hidden disabled>Cloud GPU · Jupyter</option><option value="jupyter" data-gpu hidden disabled>Your GPU · Jupyter</option><option value="cloud-cli" data-gpu data-managed-gpu hidden disabled>Cloud · Spot GPUs</option><option value="ssh" data-gpu data-managed-gpu hidden disabled>Add SSH runtime…</option><option value="finish" data-gpu hidden disabled>Finish lab · Save and release compute</option><option value="terminal">Open course terminal</option><option value="setup">Set up / rebuild course</option></select>
-<details class="workspace-menu"><summary aria-label="Notebook options" title="Notebook options">⋯</summary><div class="menu-content"><button id="doubt_solver" ${practice ? 'hidden' : ''} aria-pressed="false">Open Doubt Solver</button><hr><button type="button" id="course-notes" class="quiet" title="Search and edit private notes from every chapter">Course Notes</button><button id="save-notebook">Save a copy</button><button id="open-notebook" aria-describedby="notebook-format">Open saved notebook</button><small id="notebook-format">${NOTEBOOK_FORMAT_HELP}</small>${practice ? '<button type="button" id="clear-conversation" disabled>Clear conversation</button>' : ''}<button id="restart-runtime">Restart runtime</button><button id="wide" aria-pressed="false">Focus view</button><hr>
-<label class="code-follow"><input type="checkbox" id="follow-code" checked> Let ${assistantName} follow code edits and runs</label><label class="code-follow"><input type="checkbox" id="stuck-hints"> Offer hints when I’m stuck</label><small id="code-observer-status" role="status"></small>${languageSetting}${practice ? '' : learningPreferencesHtml}</div></details></div></div>
-<div class="workspace-topline"><div class="workspace-title"><div class="room-location">${practice ? '' : '<button type="button" id="choose-course" class="quiet" title="Change course or chapter">← Chapters</button>'}<span id="notebook-mode" class="eyebrow">${html(practice?.course || courseName || assistantName)}</span></div><h1>${html(practice?.title || courseName || 'Your learning notebook')}</h1></div></div>
-<div class="workspace-status"><span id="status" role="status">${practice ? 'Opening Practice…' : initialMode === 'doubt_solver' ? 'Choose a course and chapter to ask Doubt Solver.' : 'Choose a lesson to learn with Instructor.'}</span><small id="notebook-save-status" role="status"></small><button id="tutor" hidden aria-pressed="false">Retry</button><button id="end" hidden disabled>End session</button></div>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' ${view.cspSource} 'wasm-unsafe-eval'; style-src ${view.cspSource} 'unsafe-inline'; font-src ${view.cspSource}; img-src ${view.cspSource} https: data: blob:; media-src blob:; connect-src ${audioPolicy}; frame-src 'self' ${origin}">
+<style>${UI_TOKENS}</style><link rel="stylesheet" href="${asset('learning-room/room.css')}"><link rel="stylesheet" href="${asset('conversation.css')}"></head><body${practice ? '' : ' class="selecting-course"'} data-notebook-mode="${practice ? 'practice' : initialMode}">
+${practice ? '' : `<div id="lesson-loading" role="status"><span class="loading-spinner" aria-hidden="true"></span><span>Opening ${assistantName} notebook…</span></div>
+<section id="course-selection" aria-labelledby="selection-title" hidden>
+<header><button type="button" id="selection-back" class="quiet" hidden>← Back to room</button><span class="eyebrow">${assistantName}</span><h1 id="selection-title" tabindex="-1">Choose a course and chapter</h1>
+${doubt ? `<details id="doubt-history" class="doubt-history"><summary>Chat history</summary><div class="history-list"><div id="doubt-chat-list" role="group" aria-label="Previous chats"></div><p>Saved on this computer.</p></div></details>` : ''}</header>
+${lessons}</section>`}
+<nav class="notebook-toolbar room-bar" aria-label="Learning notebook controls">
+<fieldset class="room-tabs" id="workspace-mode" aria-label="Learning mode">${roomTabs}</fieldset>
+<div class="room-settings">${languageSetting}<select id="course-runtime" aria-label="Runtime"><option value="course">Course container</option><option value="colab" data-gpu hidden disabled>Google Colab · GPU</option><option value="cloud" data-gpu hidden disabled>Cloud GPU · Jupyter</option><option value="jupyter" data-gpu hidden disabled>Your GPU · Jupyter</option><option value="cloud-cli" data-gpu data-managed-gpu hidden disabled>Cloud · Spot GPUs</option><option value="ssh" data-gpu data-managed-gpu hidden disabled>Add SSH runtime…</option><option value="finish" data-gpu hidden disabled>Finish lab · Save and release compute</option><option value="terminal">Open course terminal</option><option value="setup">Set up / rebuild course</option></select></div>
+<div class="notebook-tools" role="group" aria-label="Notebook tools"><div class="add-code-group"><button id="add-code">＋ Code</button><select id="cell-language" aria-label="New code cell language" title="Language for new cells. Change an existing cell using its own language selector.">${Object.entries(cellLanguages).map(([id,label])=>`<option value="${id}"${cellLanguage===id?' selected':''}>${label}</option>`).join('')}</select></div><button id="add-note" class="quiet" title="A private note on this computer. ${assistantName} never sees it unless you share it.">＋ Note</button><button type="button" id="course-notes" class="quiet" ${practice && !courseName ? 'data-unscoped disabled title="Open a course notebook to view Course Notes"' : 'title="Search and edit private notes from this course"'}>Course Notes</button></div>
+<div class="workspace-actions"><details class="workspace-menu"><summary aria-label="Notebook options" title="Notebook options">⋯</summary><div class="menu-content"><div id="compact-notebook-tools"></div><div id="compact-chat-history"></div><div id="saved-task-actions"></div><button type="button" id="saved-practice">Saved Practice notebooks</button><div class="notebook-jumps"><button type="button" id="previous-chapter" class="quiet" hidden>← Previous chapter</button>${practice ? '' : '<button type="button" id="skip-chapter" class="quiet" hidden>Next chapter →</button>'}<button type="button" id="latest" hidden>Jump to latest</button></div><hr><button id="doubt_solver" ${practice ? 'hidden' : ''} aria-pressed="false">Open Doubt Solver</button><hr><button id="save-notebook">Save a copy</button><button id="open-notebook" aria-describedby="notebook-format">Open saved notebook</button><small id="notebook-format">${NOTEBOOK_FORMAT_HELP}</small>${practice ? '<button type="button" id="clear-conversation" disabled>Clear conversation</button>' : ''}<button id="restart-runtime">Restart runtime</button><button id="wide" aria-pressed="false">Focus view</button><hr>
+<label class="code-follow"><input type="checkbox" id="follow-code" checked> Let ${assistantName} follow code edits and runs</label><label class="code-follow"><input type="checkbox" id="stuck-hints"> Offer hints when I’m stuck</label><small id="code-observer-status" role="status"></small>${practice ? '' : learningPreferencesHtml}</div></details></div>
+</nav>
+<header class="workspace-header"><div class="workspace-topline"><div class="workspace-title"><div class="room-location">${practice ? '' : '<button type="button" id="choose-course" class="quiet" title="Change course or chapter">← Chapters</button>'}<span id="notebook-mode" class="eyebrow">${html(practice?.course || courseName || assistantName)}</span><button type="button" id="crt-assessment" data-lessons="${CRT_ENTRY} ${CRT_EXIT}" hidden>Start assessment</button></div><h1 tabindex="-1">${html(practice?.title || courseName || 'Your learning notebook')}</h1></div></div>
+<div class="workspace-status"><span id="status" role="status">${practice ? 'Opening Practice…' : initialMode === 'doubt_solver' ? 'Choose a course and chapter to ask Doubt Solver.' : 'Choose a lesson to learn with Instructor.'}</span><small id="freecad-status" role="status" hidden></small><small id="notebook-save-status" role="status"></small><button id="tutor" hidden aria-pressed="false">Retry</button><button id="end" hidden disabled>End session</button></div>
 </header><div id="learning-workspace"><div id="learning-document">
-<section class="notebook-toolbar" aria-label="Notebook tools"><div class="notebook-tools" role="toolbar" aria-label="Notebook tools"><div class="add-code-group"><button id="add-code">＋ Code</button><select id="cell-language" aria-label="New code cell language" title="Language for new cells. Change an existing cell using its own language selector.">${Object.entries(cellLanguages).map(([id,label])=>`<option value="${id}"${cellLanguage===id?' selected':''}>${label}</option>`).join('')}</select></div><button id="add-note" class="quiet" title="A private note on this computer. ${assistantName} never sees it unless you share it.">＋ Note</button><button type="button" id="crt-assessment" data-lessons="${CRT_ENTRY} ${CRT_EXIT}" hidden>Start assessment</button><button type="button" id="previous-chapter" class="quiet" hidden>← Previous chapter</button>${practice ? '' : '<button type="button" id="skip-chapter" class="quiet" hidden>Next chapter →</button>'}<button type="button" id="latest" hidden>Jump to latest</button></div></section>
 <main id="feed" aria-label="Learning notebook" aria-live="polite" tabindex="0" data-diagram-renderer="${asset('learning-room/diagramEngines.js')}"></main>
 <section id="workspace-practice" hidden aria-labelledby="practice-title"><div class="practice-heading"><div><p id="practice-course"></p><h2 id="practice-title" tabindex="-1">Chapter exercises</h2></div><button id="practice-back" class="quiet" type="button">Back to notebook</button></div><label for="practice-chapter">Chapter</label><select id="practice-chapter" class="dh-select" disabled></select><p id="practice-list-status" role="status"></p><div id="practice-questions"></div></section>
-${conversation}</div></div>${practice ? '' : `<script nonce="${nonce}" src="${asset('livekit-client.umd.js')}"></script>`}<script nonce="${nonce}" src="${asset('dictation.js')}"></script><script nonce="${nonce}" src="${asset('learning-room/room.js')}"></script><script nonce="${nonce}" src="${asset('learning-room/learningWorkspace.js')}"></script></body></html>`;
+${conversation}</div></div>
+<nav id="notebook-edges" aria-label="Notebook navigation" hidden><button type="button" id="notebook-top" aria-label="Top of notebook" title="Top of notebook">↑</button><button type="button" id="notebook-bottom" aria-label="Bottom of notebook" title="Bottom of notebook">↓</button></nav>${practice ? '' : `<script nonce="${nonce}" src="${asset('livekit-client.umd.js')}"></script>`}<script nonce="${nonce}" src="${asset('dictation.js')}"></script><script nonce="${nonce}" src="${asset('learning-room/room.js')}"></script><script nonce="${nonce}" src="${asset('learning-room/learningWorkspace.js')}"></script></body></html>`;
   }
   const browserReopen=browserLearning?.onUpdate(event=>{
     if((!event.focusQuestion && !event.reconnect) || event.observation?.course!=='erpnext-essentials' || notebooks.has('tutor'))return;
@@ -1378,7 +1477,19 @@ ${conversation}</div></div>${practice ? '' : `<script nonce="${nonce}" src="${as
         open(undefined,ERP_COURSE,'tutor',event.chapter,event.focusQuestion??event.question?.id);
     });
   });
-  const subscriptions = vscode.Disposable.from(new vscode.Disposable(()=>browserReopen?.dispose()), vscode.commands.registerCommand('dhimantai.openLearningRoom', (course?: vscode.Uri | string, lesson?: unknown) =>
+  function writtenMenu(panel: vscode.WebviewPanel, course: string, chapter?: string): SkillingTarget {
+    const target: SkillingTarget = {course:courseAction(course, chapter)};
+    if (vscode.workspace.getConfiguration('dhimantai').get('aiAssistance', true)) {
+      const send = (action: string) => () => {
+        panel.reveal(panel.viewColumn, false);
+        return panel.webview.postMessage({type:'skillingAction',action});
+      };
+      target.ask = send('ask');
+      target.feedback = send('feedback');
+    }
+    return target;
+  }
+  const subscriptions = vscode.Disposable.from(menuChanges, new vscode.Disposable(()=>browserReopen?.dispose()), vscode.commands.registerCommand('dhimantai.openLearningRoom', (course?: vscode.Uri | string, lesson?: unknown) =>
       open(undefined, course, 'tutor', typeof lesson === 'string' && lesson ? lesson : undefined)),
     vscode.commands.registerCommand('dhimantai.openDoubtSolver', () => open(undefined, undefined, 'doubt_solver')),
     vscode.commands.registerCommand('dhimantai.exportPracticeRecord', async () => {
@@ -1426,7 +1537,7 @@ ${conversation}</div></div>${practice ? '' : `<script nonce="${nonce}" src="${as
         const key = practiceKey(env, session.user.id, questionId);
         notebooks.get(key)?.panel.dispose();
         const host = await openWrittenPractice(context,task,api,auth,session.user.id,env,environment,{records,note});
-        notebooks.set(key, {panel:host, exercise:questionId});
+        notebooks.set(key, {panel:host, exercise:questionId, menu:() => writtenMenu(host, task.course)});
         copilot?.bindPanel(host);
         host.onDidDispose(() => {
           if (notebooks.get(key)?.panel === host) notebooks.delete(key);
@@ -1464,7 +1575,18 @@ ${conversation}</div></div>${practice ? '' : `<script nonce="${nonce}" src="${as
     }),
     vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('dhimantai.environment')) closeNotebooks(); }),
     new vscode.Disposable(closeNotebooks));
-  return { activeCourse: () => activeCourse, browsePractice: () => {
+  return { onMenuChange:menuChanges.event, menuTarget:() => {
+    const active = [...notebooks.values()].filter(room => room.panel.active);
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    // Tab events and panel visibility events arrive separately when switching retained webviews.
+    if (active.length === 1 && active[0].panel.title === tab?.label) return active[0].menu?.();
+  },
+    activeCourse: () => activeCourse, activeLesson: () => {
+    const rooms = [...notebooks.values()];
+    const item = rooms.find(room=>room.panel.active && room.workspace?.course === activeCourse)
+      ?? rooms.find(room=>room.workspace?.course === activeCourse && room.mode === 'tutor');
+    return {course:activeCourse, lesson:item?.workspace?.lesson, mode:item?.exercise ? 'practice' : item?.mode};
+  }, browsePractice: () => {
     const current=[...notebooks.values()].find(item=>item.panel.active && item.workspace?.course)
       ?? [...notebooks.values()].find(item=>item.workspace?.course===activeCourse);
     if (!current?.workspace?.course) return false;

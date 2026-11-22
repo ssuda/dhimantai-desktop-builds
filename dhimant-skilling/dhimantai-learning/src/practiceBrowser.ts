@@ -299,13 +299,13 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
         const legacy = courses.length > 0 && courses.every(course => course.project_coach === undefined);
         const action = 'Open Course Catalog';
         const choice = await vscode.window.showInformationMessage(
-          legacy ? 'This service version offers Project Coach through the course titled Python. Open the Course Catalog to check access.'
-            : 'Project Coach needs an accessible chapter. Start the companion course in the Course Catalog, or check your existing course using the account you joined with. An active free first chapter includes Coach.', action);
+          legacy ? 'This service version offers Project Instructor through the course titled Python. Open the Course Catalog to check access.'
+            : 'Project Instructor needs an accessible chapter. Start the companion course in the Course Catalog, or check your existing course using the account you joined with. An active free first chapter includes the Instructor.', action);
         if (choice === action) await vscode.commands.executeCommand('dhimantai.courseCatalog', legacy ? 'python' : PROJECT_COURSES[project.id]);
         return;
       }
       const choice = await vscode.window.showQuickPick(choices, {title: project.title,
-        placeHolder: 'Choose a course for the project workspace and Coach'});
+        placeHolder: 'Choose a course for the project workspace and Instructor'});
       if (!choice) return;
       await this.requireScope(scope);
       return {...scope, course: choice.label};

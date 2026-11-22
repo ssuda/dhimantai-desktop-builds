@@ -1,3 +1,4 @@
+import type { ArchitectureAttempts, ArchitectureEvent, ArchitectureTopic, PracticeFollowup } from './architectureMemory';
 import type { SkillingPathway, SkillingBrief } from './skilling';
 import { randomUUID } from 'node:crypto';
 import { Auth } from './auth';
@@ -212,8 +213,11 @@ export interface GeneratedExercise {
 
 export interface LearningPurchases {
   payments_ready: boolean;
+  refresh_incomplete?: boolean;
+  more_pending?: boolean;
   purchases: { id: string; title: string; amount: number; currency: string; course_ids: string[];
     status: 'creating' | 'created' | 'paid' | 'refunded'; created_at: string; offer_id: string;
+    can_resume?: boolean; attempt_state?: 'failed' | 'processing' | null;
     paid_at?:string|null; razorpay_payment_id?:string|null }[];
 }
 
@@ -318,6 +322,16 @@ export class Api {
     return this.request<{ courses: Course[]; languages: Language[]; question_pools?: QuestionPool[] }>('GET', '/notebook-coach/exercises', undefined, false, signal);
   }
 
+  architecturePractice(course?: string) {
+    return this.request<PracticeFollowup>('GET', '/notebook-coach/project/architecture-memory/practice'
+      + (course ? '?course=' + encodeURIComponent(course) : ''));
+  }
+
+  architectureMemory(project: string, event: ArchitectureEvent, course?: string) {
+    const query = course ? '?course=' + encodeURIComponent(course) : '';
+    return this.request<{attempts:ArchitectureAttempts; event:string}>('POST', '/notebook-coach/project/architecture-memory' + query, {project, ...event});
+  }
+
   projectHandoffAvailability() {
     return this.request<HandoffAvailability>('GET', '/course-project-handoffs');
   }
@@ -346,8 +360,10 @@ export class Api {
   claimCourseCertificate(course: string) {
     return this.request<{certificate: CourseCertificate}>('POST', '/coursework/courses/' + encodeURIComponent(course) + '/certificate', {});
   }
-  courseworkResult(kind: 'exercise' | 'project', id: string, result: CourseworkResult) {
-    return this.request<{recorded: boolean; score: number}>('POST', '/coursework/' + (kind === 'exercise' ? 'exercises/' : 'projects/') + encodeURIComponent(id) + '/result', result);
+  async courseworkResult(kind: 'exercise' | 'project', id: string, result: CourseworkResult) {
+    const receipt = await this.request<{recorded: boolean; score: number}>('POST', '/coursework/' + (kind === 'exercise' ? 'exercises/' : 'projects/') + encodeURIComponent(id) + '/result', result);
+    if (receipt?.recorded !== true) throw new Error('The gradebook did not confirm this result. Retry sync.');
+    return receipt;
   }
   projectAssessment(id: string) {
     return this.request<{assessment: ProjectAssessment}>('GET', '/coursework/projects/' + encodeURIComponent(id));
@@ -362,8 +378,9 @@ export class Api {
   skillingReview(id:string) { return this.request<import('./skillingReview').ReviewDetail>('GET','/skilling/reviews/'+encodeURIComponent(id)); }
   saveSkillingReview(id:string,value:object) { return this.request('POST','/skilling/reviews/'+encodeURIComponent(id),value); }
 
-  learningPurchases(refresh = false) {
-    return this.request<LearningPurchases>('GET', '/learning-billing/purchases' + (refresh ? '?refresh=true' : ''));
+  learningPurchases(refresh = false, openedPurchase?: string) {
+    const query = refresh ? '?refresh=true' + (openedPurchase ? '&purchase=' + encodeURIComponent(openedPurchase) : '') : '';
+    return this.request<LearningPurchases>('GET', '/learning-billing/purchases' + query);
   }
 
   courseLabs(course: string) {
@@ -376,6 +393,10 @@ export class Api {
 
   purchaseLearningOffer(offer_id: string) {
     return this.request<{order_id: string; checkout_url: string}>('POST', '/learning-billing/orders', {offer_id});
+  }
+
+  resumeLearningPurchase(id: string) {
+    return this.request<{order_id: string; checkout_url: string}>('POST', '/learning-billing/orders/' + encodeURIComponent(id) + '/resume');
   }
 
   practiceQuestions(chapter: string, pool: QuestionPool) {
@@ -401,7 +422,7 @@ export class Api {
     return this.request<{url: string; token: string}>('POST', '/vscode-learning/session', {mode});
   }
 
-  dictate(pcm: string, language: string, signal: AbortSignal) {
+  dictate(pcm: string, language: string | undefined, signal: AbortSignal) {
     return this.request<{text: string}>('POST', '/notebook-coach/dictation', {pcm, language}, false, signal, 35000);
   }
 
@@ -418,9 +439,16 @@ export class Api {
     return this.request<{code: string; hint: string; explanation: string; ladder_token?: string | null}>('POST', path + '/next-line', body);
   }
 
+  studioEntry(lesson:import('./studioTypes').LessonId, mode:import('./studioTypes').StudioMode, attempt?:string) {
+    return this.request<import('./studioTypes').StudioAccess>('POST','/notebook-coach/project/equipment-desk/entry',{lesson,mode,attempt});
+  }
+  studioTurn(turn:object) {
+    return this.request<import('./studioTypes').StudioReply>('POST','/notebook-coach/project',{...turn,project_id:'equipment-desk'});
+  }
+
   notebookCoach(path: string, body: object, signal?: AbortSignal) {
     return this.request<{ guidance: string; prompt: string; line: number | null; choices?: string[]; replies?: string[]; strategy?: string;
-      published_comparison?: { call: string; expected: string; matches: boolean }; ladder_token?: string | null; help_level?: number;
+      architecture_topic?: ArchitectureTopic; published_comparison?: { call: string; expected: string; matches: boolean }; ladder_token?: string | null; help_level?: number;
       /** Set when the next rung was requested without a new attempt, so the level stayed the same. */
       ladder_note?: string }>('POST', path, body, false, signal);
   }

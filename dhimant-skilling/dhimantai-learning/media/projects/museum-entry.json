@@ -1,0 +1,32 @@
+{
+  "id": "museum-entry",
+  "version": 1,
+  "title": "Museum entry",
+  "files": [
+    "README.md",
+    "tickets.py"
+  ],
+  "architecture": {
+    "prediction": "At age 16, how many of the two starter channels offer a youth ticket?",
+    "focusFile": "tickets.py",
+    "boundaryHint": "Which decision belongs in one place even if the two channels change independently?"
+  },
+  "steps": [
+    {
+      "id": "investigate",
+      "title": "Investigate and repair",
+      "goal": "A visitor aged 16 saw different ticket eligibility online and at the kiosk. Both channels offer youth admission through age 16 inclusive. Both public entry points must stay available when the museum updates its seasonal policy.",
+      "opening": "Inspect the original behavior before changing it.",
+      "task": "Investigate the report in README.md. Read tickets.py. Record your prediction before editing, then repair the service and verify the result.",
+      "files": [
+        "README.md",
+        "tickets.py"
+      ],
+      "check": "architecture:museum-entry",
+      "expected": "Both entry points follow the published contract across its boundary cases.",
+      "hint": "Compare what each channel does on the visitor\u2019s birthday.",
+      "reflection": "How did you verify the change?",
+      "evidencePrompt": "What did you observe before and after your repair?"
+    }
+  ]
+}

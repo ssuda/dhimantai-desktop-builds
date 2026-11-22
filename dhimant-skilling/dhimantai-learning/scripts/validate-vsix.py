@@ -1,13 +1,15 @@
 """Validate exact release bytes from stdin before publishing; standard library only."""
+import hashlib
 import io
 import json
+import re
 import struct
 import sys
 import zipfile
 from xml.etree import ElementTree
 
 
-def validate(data, expected):
+def validate(data, expected, *, course_tools=True):
     if not 22 <= len(data) <= 32 * 1024 * 1024:
         raise ValueError('VSIX size is outside the supported range')
     end = data.rfind(b'PK\x05\x06', max(0, len(data) - 65557))
@@ -23,15 +25,22 @@ def validate(data, expected):
         names = archive.namelist()
         if len(names) != count or len(set(names)) != count:
             raise ValueError('VSIX has duplicate or missing entries')
-        if any(name.endswith('.vsix') for name in names):
-            raise ValueError('VSIX must not contain another VSIX')
         if sum(item.file_size for item in archive.infolist()) > 64 * 1024 * 1024:
             raise ValueError('VSIX expanded size exceeds the supported range')
         if archive.testzip() is not None:
             raise ValueError('VSIX file checksum verification failed')
+        for name in names:
+            if name.lower().endswith('.vsix'):
+                match = re.fullmatch(r'extension/media/course-extensions/([0-9a-f]{64})\.vsix', name)
+                if not course_tools or not match:
+                    raise ValueError('Unexpected nested VSIX')
+                tool = archive.read(name)
+                if hashlib.sha256(tool).hexdigest() != match[1]:
+                    raise ValueError('Course editor package checksum differs')
+                validate(tool, None, course_tools=False)
         package = json.loads(archive.read('extension/package.json'))
         for field in ('name', 'publisher', 'version'):
-            if package.get(field) != expected[field]:
+            if not isinstance(package.get(field), str) or (expected is not None and package[field] != expected[field]):
                 raise ValueError(f'VSIX package {field} does not match the release')
         entry = 'extension/' + package['main'].removeprefix('./')
         if not archive.read(entry):
@@ -39,7 +48,7 @@ def validate(data, expected):
         archive.read('[Content_Types].xml')
         manifest = ElementTree.fromstring(archive.read('extension.vsixmanifest'))
         identity = manifest.find('.//{*}Identity')
-        if identity is None or any(identity.get(key) != expected[field] for key, field in
+        if identity is None or any(identity.get(key) != package[field] for key, field in
                                    [('Id', 'name'), ('Publisher', 'publisher'), ('Version', 'version')]):
             raise ValueError('VSIX manifest identity does not match the release')
 

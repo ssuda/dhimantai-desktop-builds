@@ -9,6 +9,14 @@ import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import type { Execution } from './api';
 import { entryFile } from './learning';
 
+/** Direct runner calls are valid inside the course image, including its isolated test fixture. */
+export function assertInCourseContainer() {
+  if (process.platform !== 'linux' || !(existsSync('/run/.containerenv') || existsSync('/.dockerenv')) ||
+      !existsSync('/opt/dhimantai/runner.cjs')) {
+    throw new Error('Host execution is disabled. Set up the course container or connect a remote runtime.');
+  }
+}
+
 export const RUN_TIMEOUT_MS = 45_000;
 const COMPILE_TIMEOUT_MS = 120_000;
 const OUTPUT_LIMIT = 200_000;
@@ -191,6 +199,7 @@ export const TRACE_LIMIT = 2000;
 
 /** Python only: run main.py under media/pytrace.py and return every step in the learner's file. */
 export async function traceLocally(tracer: string, input: LocalRun, toolchains: Toolchains = {}, limit = TRACE_LIMIT): Promise<Trace> {
+  assertInCourseContainer();
   const dir = await mkdtemp(join(tmpdir(), 'dhimantai-trace-'));
   const env = programEnvironment();
   const out = join(dir, '.trace.json');
@@ -222,6 +231,7 @@ const quote = (part: string) => (/^[\w./:=@%+-]+$/.test(part) ? part : `'${part.
 
 /** Returns the same Execution shape the sandbox produces, plus `toolchain_missing` when a tool is absent. */
 export async function runLocally(language: string, input: LocalRun, toolchains: Toolchains = {}, timeoutMs = RUN_TIMEOUT_MS): Promise<Execution> {
+  assertInCourseContainer();
   const steps = plan(language);
   const dir = await mkdtemp(join(tmpdir(), 'dhimantai-run-'));
   const started = Date.now();
@@ -280,6 +290,7 @@ const normalizeLines = (text: string) => text.replace(/\r\n/g, '\n').split('\n')
 export async function runPublicTests(
   language: string, source: string, tests: import('./api').PublicTest[], pycall: string, toolchains: Toolchains = {},
 ): Promise<LocalTestResult[]> {
+  assertInCourseContainer();
   const results: LocalTestResult[] = [];
   for (const test of tests) {
     if (test.kind === 'function') {

@@ -1,4 +1,5 @@
 /** Runtime releases come from the entitled course API; notebooks cannot provide image URLs or Compose files. */
+import {PREVIEW_PORTS} from './skilling';
 import type {Recipe} from './courseRecipe';
 import type {CourseConfiguration} from './courseConfiguration';
 export interface RuntimeSelection {image: string; compose?: string}
@@ -18,6 +19,7 @@ const name = /^[a-z][a-z0-9-]{0,62}$/;
 export function courseMediaPublishArgs(configuration:Pick<CourseConfiguration,'ports'>):string[] {
   return configuration.ports.flatMap(p=>{
     if(!Number.isInteger(p.port)||p.port<1024||p.port>65535||!['tcp','udp'].includes(p.protocol))throw new Error('Invalid course preview port.');
+    if (p.protocol === 'tcp' && PREVIEW_PORTS.some(port => port === p.port)) return [];
     return ['--publish',`127.0.0.1:${p.port}:${p.port}/${p.protocol}`];
   });
 }

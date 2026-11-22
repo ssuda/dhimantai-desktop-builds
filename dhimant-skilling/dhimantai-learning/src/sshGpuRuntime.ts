@@ -5,6 +5,7 @@ import {readFile,mkdir,statfs} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createInterface} from 'node:readline';
 import {NotebookCells,CellOptions} from './notebookCells';
+import {withHostMarker} from './hostRuntimeCheck';
 import {SshConnection,SshCommandError} from './sshConnection';
 import {SshHost,GpuLabRequirement,configuredSshHosts,parseSshHost,hostLabel,quoteSh,sshArgs} from './sshRuntimeConfig';
 
@@ -144,6 +145,17 @@ export class SshGpuRuntime implements vscode.Disposable {
     return {command:password?"sudo -S -p '' "+command:'sudo -n '+command,input:password?password+'\n':''};
   }
   private async system(host:SshHost,progress:(message:string)=>void) {
+    // Verify the destination before checking dependencies or elevating for installation.
+    await withHostMarker(async (paths, bootHash) => {
+      const matches = paths.map(path => '[ -d ' + quoteSh(path) + ' ]');
+      if (bootHash) matches.push('[ "${boot%% *}" = ' + quoteSh(bootHash) + ' ]');
+      const identity = bootHash ? 'boot=$(sha256sum /proc/sys/kernel/random/boot_id) || exit 1; ' : '';
+      const course = '[ -f /opt/dhimantai/runner.cjs ] && { [ -f /run/.containerenv ] || [ -f /.dockerenv ]; }';
+      const check = 'if ' + course + '; then echo remote; else ' + identity +
+        'if ' + matches.join(' || ') + '; then echo host; else echo remote; fi; fi';
+      const result = await this.connection.exec(host, check, {signal:this.abort.signal});
+      if (result.trim() !== 'remote') throw new Error('Choose an SSH machine separate from this computer, or use the course container.');
+    });
     const probe='for tool in python3 ip iptables git gcc curl ffmpeg; do command -v "$tool" >/dev/null || exit 1; done; python3 -c "import venv" && nvidia-smi -L >/dev/null 2>&1';
     try{await this.connection.exec(host,probe,{signal:this.abort.signal});return;}
     catch(error){if(!(error instanceof SshCommandError)||error.code===255)throw error;}

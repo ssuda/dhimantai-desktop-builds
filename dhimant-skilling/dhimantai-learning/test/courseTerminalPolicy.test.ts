@@ -168,3 +168,85 @@ test('Practice refuses execution when course setup returns no container', async 
   assert.equal(success,false);
   assert.match(JSON.stringify(outputs),/Set up the course container/);
 });
+
+for (const platform of ['darwin', 'win32', 'linux'] as const) {
+  test(`a bare ${platform} host refuses learner execution before touching host tools or files`, async () => {
+    const unexpected = new Proxy({}, {get() { throw new Error('Unexpected access to host execution'); }});
+    const load = (name: string, extra: Record<string, unknown> = {}) => moduleWithHost(name, {}, platform, {
+      'node:fs': {existsSync: () => false},
+      'node:fs/promises': unexpected, 'node:child_process': unexpected, ...extra,
+    });
+    const local = load('localRunner');
+    const deps = {'./localRunner': local};
+    const {NotebookCells} = load('notebookCells', deps);
+    const {NativeRunner} = load('nativeRun', {...deps, './courseTerminal': {}});
+    const {NotebookDebugger} = load('notebookDebugger', {...deps, './courseDebug': {}, './nativeRun': {}});
+    const blocked = /Host execution is disabled/;
+    const input = {source: '', argv: [], files: [], stdin: ''};
+    await assert.rejects(local.runLocally('python', input), blocked);
+    await assert.rejects(local.traceLocally('', input), blocked);
+    await assert.rejects(local.runPublicTests('python', '', [{kind: 'function'}], ''), blocked);
+    await assert.rejects(new NotebookCells(() => assert.fail(), async () => undefined).run('python', ''), blocked);
+    const unavailable = () => { throw new Error('Selected runtime unavailable'); };
+    const container = new NotebookCells(() => assert.fail(), async () => ({bin: 'podman', name: 'course'}), unavailable);
+    await assert.rejects(container.run('python', ''), /Selected runtime unavailable/);
+    const remote = new NotebookCells(() => assert.fail(), undefined, undefined, 0, {target: 'SSH', start: unavailable});
+    await assert.rejects(remote.run('python', ''), /Selected runtime unavailable/);
+    await assert.rejects(NativeRunner.prototype.buildOnly('cpp', {}, {}), blocked);
+    await assert.rejects(NativeRunner.prototype.run('python', {}, [], {}), blocked);
+    await assert.rejects(NotebookDebugger.prototype.start({}, undefined, {}, () => assert.fail()), blocked);
+  });
+}
+
+test('the notebook binds to the chosen remote provider and stops on cancellation', async () => {
+  const doc = {notebookType: 'jupyter-notebook'}, editor = {notebook: doc};
+  for (const [provider, owner, collection] of [
+    ['jupyter', 'ms-toolsai.jupyter', '_builtin.jupyterServerUrlProvider'], ['colab', 'google.colab', 'colab'],
+  ]) {
+    let id: string | undefined;
+    let bindings = 0;
+    let canBind = true;
+    const vscode = {
+      ViewColumn: {One: 1}, window: {showNotebookDocument: async () => editor},
+      extensions: {getExtension: () => ({activate: async () => {}})},
+      commands: {executeCommand: async (command: string, ...args: any[]) => {
+        if (command === 'jupyter.kernel.selectJupyterServerKernel') {
+          assert.deepEqual(args, [owner, collection, doc]);
+          return id;
+        }
+        assert.equal(command, 'notebook.selectKernel');
+        assert.ok(id);
+        assert.equal(args[0].id, id);
+        assert.equal(args[0].extension, 'ms-toolsai.jupyter');
+        assert.equal(args[0].notebookEditor, editor);
+        bindings++;
+        return canBind;
+      }},
+    };
+    const picker = moduleWithHost('notebookKernelPicker', vscode);
+    assert.match(await picker.openNotebookKernelPicker(doc, provider), /No kernel was selected/);
+    assert.equal(bindings, 0);
+    id = 'remote-controller';
+    assert.match(await picker.openNotebookKernelPicker(doc, provider), /Remote kernel selected/);
+    assert.equal(bindings, 1);
+    canBind = false;
+    await assert.rejects(picker.openNotebookKernelPicker(doc, provider), /remote kernel could not be selected/);
+    assert.equal(bindings, 2);
+  }
+});
+
+test('direct runner calls require the course runtime inside a Linux container', () => {
+  for (const platform of ['linux', 'win32', 'darwin'] as const) {
+    for (const marker of ['/run/.containerenv', '/.dockerenv']) {
+      const files = new Set<string>();
+      const runner = moduleWithHost('localRunner', {}, platform, {'node:fs': {existsSync: (file: string) => files.has(file)}});
+      files.add('/opt/dhimantai/runner.cjs');
+      assert.throws(() => runner.assertInCourseContainer(), /Host execution is disabled/);
+      files.add(marker);
+      if (platform === 'linux') assert.doesNotThrow(() => runner.assertInCourseContainer());
+      else assert.throws(() => runner.assertInCourseContainer(), /Host execution is disabled/);
+      files.delete('/opt/dhimantai/runner.cjs');
+      assert.throws(() => runner.assertInCourseContainer(), /Host execution is disabled/);
+    }
+  }
+});

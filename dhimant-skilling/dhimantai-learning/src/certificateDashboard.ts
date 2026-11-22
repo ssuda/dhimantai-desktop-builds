@@ -1,3 +1,4 @@
+import { ApiError } from './api';
 import type { CatalogCourse } from './learnerCatalog';
 import type { CourseCertificate, CourseGrade } from './courseworkProgress';
 
@@ -19,7 +20,11 @@ export async function loadCertificateCourses(courses: CatalogCourse[], grade: (i
     while (next < results.length && active()) {
       const item = results[next++];
       try { item.grade = await grade(item.id); }
-      catch { item.error = item.expired ? 'Course access has ended. Renew access to check remaining requirements.' : 'Requirements could not be loaded. Refresh to try again.'; }
+      catch (error) {
+        if (item.expired) item.error = 'Course access has ended. Renew access to check remaining requirements.';
+        else if (error instanceof ApiError && error.status === 404) item.error = error.message;
+        else item.error = 'Requirements could not be loaded. Refresh to try again.';
+      }
     }
   }));
   return results;

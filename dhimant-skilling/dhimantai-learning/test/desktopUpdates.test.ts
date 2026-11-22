@@ -155,3 +155,12 @@ test('shutdown cancels downloads, removes partial bytes and prevents late ready 
     assert.notEqual(updates.state.status, 'ready'); assert.deepEqual(await readdir(directory), []);
   });
 });
+
+test('a missing architecture produces a compatibility warning and never downloads an installer', async () => {
+  await fixture(async () => new Response(JSON.stringify({...manifest, artifacts:[{...artifact, arch:'x64'}]})), async updates => {
+    await updates.check();
+    assert.equal(updates.state.status, 'incompatible'); assert.match(updates.state.message, /arm64/);
+    await updates.download();
+    assert.equal(await updates.installerPath(), undefined);
+  });
+});

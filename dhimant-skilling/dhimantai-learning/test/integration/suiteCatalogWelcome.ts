@@ -1,3 +1,4 @@
+import {learningFrame} from './learningFrame';
 import * as assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,6 +7,8 @@ import type { ProjectResults } from '../../src/projectResults';
 import { loadProjectCurriculum } from '../../src/projectCore';
 import * as vscode from 'vscode';
 import { JSDOM } from 'jsdom';
+import { chromium } from 'playwright-core';
+import { CATALOG_PROJECTS } from '../../src/catalogProjects';
 import { CourseCatalog } from '../../src/courseCatalog';
 import { Auth } from '../../src/auth';
 
@@ -18,6 +21,10 @@ export async function run() {
   };
   const extension = vscode.extensions.getExtension<{catalog: CourseCatalog; projectResults: ProjectResults; welcome: () => Promise<void>}>('optficial.dhimantai-learning')!;
   const {catalog, projectResults, welcome} = await extension.activate();
+  const browser = vscode.env.appName === 'dhimantAI'
+    ? await chromium.connectOverCDP('http://127.0.0.1:' + process.env.DHIMANTAI_CDP_PORT) : undefined;
+  const desktop = browser?.contexts()[0].pages().find(page => page.url().includes('workbench'));
+  if (browser) assert.ok(desktop);
   const panel = () => (catalog as any).panel as vscode.WebviewPanel | undefined;
   const create = vscode.window.createWebviewPanel;
   let learning: vscode.WebviewPanel | undefined, receive: ((message: any) => Promise<void>) | undefined;
@@ -35,6 +42,14 @@ export async function run() {
     return host;
   };
   const click = async (action: string, id?: string) => {
+    if (desktop && (action === 'tutor' || action === 'doubtSolver')) {
+      await catalog.open();
+      const name = action === 'tutor' ? 'Instructor' : 'Doubt Solver';
+      const sidebar = await learningFrame(desktop,'nav[aria-label="Learning destinations"]');
+      await sidebar.getByRole('button',{name,exact:true}).click();
+      await desktop.locator('.tab.active').filter({hasText:name + ' notebook'}).waitFor({state:'visible'});
+      return;
+    }
     const dom = new JSDOM(panel()!.webview.html, {runScripts:'outside-only'});
     try {
       const sent: any[] = [];
@@ -61,6 +76,63 @@ export async function run() {
       assert.ok(!vscode.window.tabGroups.all.some(g => g.tabs.some(t => /Instructor notebook|Doubt Solver notebook/.test(t.label))),
         'welcome does not start an unsolicited learning session');
     });
+    if (desktop) await check('Category arrow keys filter courses, projects and bundles in the desktop webview', async () => {
+      const view = await learningFrame(desktop,'#open-guide');
+      await view.getByRole('button',{name:'Explore',exact:true}).click();
+      if (await view.locator('#toggle-filters').isVisible()) await view.locator('#toggle-filters').click();
+      const category = view.getByRole('combobox', {name:'Category', exact:true});
+      const count = view.locator('#result-count');
+      await category.selectOption({label:'Courses'});
+      await category.press('ArrowDown');
+      await view.locator('#results [data-project]:visible').first().waitFor({timeout:5000});
+      assert.equal(await count.textContent(), `${CATALOG_PROJECTS.length} matching projects`);
+      await category.press('ArrowDown');
+      await view.locator('#results [data-bundle]:visible').waitFor({timeout:5000});
+      assert.equal(await count.textContent(), '1 matching bundle');
+      await category.press('ArrowUp');
+      assert.equal(await count.textContent(), `${CATALOG_PROJECTS.length} matching projects`);
+      assert.equal(await category.evaluate(el => document.activeElement === el), true);
+      assert.equal(await view.locator('#results .course:visible').count(), CATALOG_PROJECTS.length);
+      await category.press('Space');
+      await desktop.keyboard.press('ArrowDown');
+      await desktop.keyboard.press('Enter');
+      assert.equal(await count.textContent(), '1 matching bundle');
+      await category.selectOption('');
+    });
+    if (desktop) await check('Home track shortcuts open filtered Explore using the keyboard', async () => {
+      const view = await learningFrame(desktop,'#open-guide');
+      await view.getByRole('button',{name:'Home',exact:true}).click();
+      const chip = view.locator('.type-chip[data-browse-category="type:project"]');
+      await chip.focus(); await chip.press('Enter');
+      assert.ok(await view.locator('#explore-title').evaluate(el => el === document.activeElement));
+      assert.equal(await view.locator('#results [data-project]:visible').count(), CATALOG_PROJECTS.length);
+      assert.equal(await view.locator('#results [data-course]:visible').count(), 0);
+    });
+    if (desktop) await check('optional help opens from the catalog footer and returns keyboard focus', async () => {
+      const view = await learningFrame(desktop,'#open-guide');
+      const trigger = view.getByRole('button', {name:'Help & Course Guide', exact:true});
+      await trigger.scrollIntoViewIfNeeded();
+      await trigger.evaluate(el => (el as HTMLButtonElement).focus({preventScroll:true}));
+      const scroll = await trigger.evaluate(el => {
+        const rect = el.getBoundingClientRect();
+        if (rect.top < 0 || rect.bottom > window.innerHeight) throw new Error('Guide is outside the viewport');
+        return window.scrollY;
+      });
+      assert.ok(scroll > 0);
+      await trigger.press('Enter');
+      const guide = view.getByRole('dialog', {name:'Help & Course Guide'});
+      assert.equal(await guide.getByRole('tab').count(), 5);
+      await guide.getByRole('tab', {name:'Learning', exact:true}).press('ArrowRight');
+      assert.ok(await guide.getByRole('tabpanel', {name:'Run Your Code'}).isVisible());
+      assert.ok(await guide.getByRole('button', {name:'Set Up Course Container'}).isVisible());
+      if (process.env.DHIMANTAI_UX_OUT) await desktop.screenshot({path:join(process.env.DHIMANTAI_UX_OUT, 'course-guide.png')});
+      await guide.getByRole('tab', {name:'AI Help Rules'}).click();
+      assert.ok(await guide.getByText('How to restore Copilot', {exact:true}).isVisible());
+      await guide.getByRole('tab', {name:'AI Help Rules'}).press('Escape');
+      await guide.waitFor({state:'hidden'});
+      assert.ok(await trigger.evaluate(el => document.activeElement === el));
+      assert.equal(await trigger.evaluate(() => window.scrollY), scroll);
+    });
     await check('command search delegates to the native palette before sign-in', async () => {
       const execute = vscode.commands.executeCommand;
       const opened: unknown[][] = [];
@@ -76,17 +148,20 @@ export async function run() {
     await check('Projects is a standalone catalog category with complete cards before sign-in', async () => {
       const dom = new JSDOM(panel()!.webview.html);
       try {
-        const section = dom.window.document.querySelector('#results > section[aria-labelledby="projects-title"]')!;
+        const section = dom.window.document.querySelector('#results')!;
         assert.ok(section, 'projects are independent of Engineering Essentials');
         const cards = [...section.querySelectorAll<HTMLElement>('[data-project]')];
-        assert.deepEqual(cards.map(c => c.dataset.project), ['course-agent', 'shelf']);
+        assert.deepEqual(cards.map(c => c.dataset.project), CATALOG_PROJECTS.map(project => project.id));
         for (const card of cards) {
-          assert.ok(card.querySelector('h3')!.textContent!.length > 10);
-          assert.ok(card.querySelector('p')!.textContent!.length > 40, 'each project has a description');
+          const project = CATALOG_PROJECTS.find(project => project.id === card.dataset.project)!;
+          assert.equal(card.querySelector('h3')!.textContent, project.title);
+          assert.equal(card.querySelector('p')!.textContent, project.description);
+          assert.equal(card.querySelector('.size-tag')!.textContent, project.level);
+          assert.equal(card.querySelector('.project-status')!.textContent, 'Not started');
           assert.match(card.textContent!, /Beginner|Intermediate/);
-          assert.match(card.textContent!, /Estimated \d+–\d+ hours/);
+          assert.ok(card.textContent!.includes('Estimated ' + project.estimatedTime));
           assert.match(card.textContent!, /Learning outcomes/);
-          assert.ok(card.querySelectorAll('li').length >= 3);
+          assert.equal(card.querySelectorAll('li').length, project.outcomes.length);
           const buttons = [...card.querySelectorAll<HTMLButtonElement>('button')];
           assert.equal(buttons.length, 1, 'one clear action per project');
           assert.equal(buttons[0].textContent, 'Start Project');
@@ -129,7 +204,7 @@ export async function run() {
       try {
         await vscode.commands.executeCommand('dhimantai.startCapstone');
         await vscode.commands.executeCommand('dhimantai.startCapstone', 'engineering-code-reading');
-        assert.deepEqual(choices, [['course-agent', 'shelf']]);
+        assert.deepEqual(choices, [CATALOG_PROJECTS.map(project => project.id)]);
       } finally { (vscode.window as any).showQuickPick = pick; }
     });
     await check('old reading workspaces and saved shortcuts cannot launch Coach or erase notes', async () => {
@@ -269,6 +344,7 @@ export async function run() {
       assert.match(panel()!.webview.html, /<h3>Python<\/h3>/);
     });
   } finally {
+    await browser?.close();
     (vscode.window as any).createWebviewPanel = create;
     for (const notebook of [...notebooks]) notebook.dispose();
     catalog.dispose();

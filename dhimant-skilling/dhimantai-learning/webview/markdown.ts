@@ -68,6 +68,8 @@ markdown.renderer.rules.fence = (tokens, i, options, env, renderer) => {
     const kind=token.info.includes('prediction-only')?'Prediction only':'Explanation only';
     return '<div class="code-reading-only"><small>'+kind+' · not executable</small>'+fence(tokens,i,options,env,renderer)+'</div>';
   }
+  const expected = token.info.trim().match(/^\S+\s+expected-error=([A-Z]\w{0,60})$/);
+  if (expected) token.attrSet('data-expected-error', expected[1]);
   return svgFence(token) ? diagram(token.content) : fence(tokens, i, options, env, renderer);
 };
 const codeBlock = markdown.renderer.rules.code_block!;

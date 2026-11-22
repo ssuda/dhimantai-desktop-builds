@@ -3,12 +3,28 @@ import type { Execution } from './roomCode';
 /** Local follow-up notes, never restored run evidence or assessment results. */
 export interface ExecutionIssue { key: string; snippet: string; detail: string }
 
-export function recordExecutionIssue(issues: ExecutionIssue[], key: string, snippet: string, run?: Execution, error?: string): ExecutionIssue[] {
+function lastException(output: string) {
+  const plain = output.replace(/\x1b\[[0-9;]*m/g, '');
+  return [...plain.matchAll(/^([A-Z]\w*)(?::[^\r\n]*)?$/gm)].at(-1);
+}
+
+export function matchesExpectedError(run?: Execution, expected?: string): boolean {
+  if (!expected || !run || run.status !== 'exited' || run.exit_code !== 1 || run.truncated) return false;
+  // Local kernels can put the traceback in stdout. Prefer stderr when present.
+  return lastException(run.stderr.trim() || run.stdout)?.[1] === expected;
+}
+
+export function recordExecutionIssue(issues: ExecutionIssue[], key: string, snippet: string, run?: Execution, error?: string, expected?: string): ExecutionIssue[] {
   const remaining = issues.filter(issue => issue.key !== key);
+  if (!error && matchesExpectedError(run, expected)) return remaining;
   if (run?.status === 'exited' && run.exit_code === 0 && !run.truncated && !error) return remaining;
-  const detail = error ? 'Run could not be confirmed: ' + error
-    : run ? (run.stderr.trim() || (run.status === 'exited' ? `Exit code ${run.exit_code}` : run.status.replace(/_/g, ' ')))
-      + (run.truncated ? ' · Output incomplete; rerun to confirm.' : '') : '';
+  let detail = '';
+  if (error) detail = 'Run could not be confirmed: ' + error;
+  else if (run) {
+    const cause = run.stderr.trim() || (run.exit_code ? lastException(run.stdout)?.[0] : '');
+    detail = cause || (run.status === 'exited' ? `Exit code ${run.exit_code}` : run.status.replace(/_/g, ' '));
+    if (run.truncated) detail += ' · Output incomplete; rerun to confirm.';
+  }
   if (!detail) return issues;
   return [...remaining, {key, snippet, detail:detail.slice(-600)}].slice(-1000);
 }

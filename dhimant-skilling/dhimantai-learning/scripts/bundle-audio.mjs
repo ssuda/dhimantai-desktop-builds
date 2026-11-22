@@ -1,4 +1,5 @@
-import { copyFile, cp } from 'node:fs/promises';
+import { copyFile, cp, mkdir, rm, readdir, readFile, writeFile } from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 const require = createRequire(import.meta.url);
@@ -9,6 +10,29 @@ await copyFile(resolve(dirname(sdk), '../LICENSE'), new URL('../media/livekit-cl
 const { build } = await import('esbuild');
 const { fileURLToPath } = await import('node:url');
 const root = fileURLToPath(new URL('../', import.meta.url));
+const studio = resolve(root,'media/build-studio');
+const {execFileSync} = await import('node:child_process');
+execFileSync(process.platform==='win32'?'python':'python3', [resolve(root,'../../content/courses/full-stack-web/build-studio/build_starters.py'),studio]);
+const courseTools = resolve(root,'media/course-extensions');
+await rm(courseTools,{recursive:true,force:true});
+await mkdir(courseTools,{recursive:true});
+const coursesRoot = resolve(root, '../../content/courses');
+for (const group of await readdir(coursesRoot, {withFileTypes: true})) {
+  if (!group.isDirectory()) continue;
+  const source = resolve(coursesRoot, group.name, 'editor-extensions');
+  const files = await readdir(source).catch(error => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  for (const name of files.filter(name => name.endsWith('.vsix'))) {
+    const bytes = await readFile(resolve(source, name));
+    if (name !== createHash('sha256').update(bytes).digest('hex') + '.vsix')
+      throw new Error('Course editor package checksum differs: ' + group.name + '/' + name);
+    await writeFile(resolve(courseTools, name), bytes);
+  }
+}
+await copyFile(resolve(root,'../../content/courses/full-stack-web/build-studio/check.py'), resolve(studio,'check.py'));
+await build({entryPoints:[resolve(root,'webview/buildStudio.ts')],bundle:true,minify:true,outdir:studio,target:'es2022'});
 // Instructor and desktop consume one authored business shift.
 await copyFile(resolve(root, '../../agent/course_projects/data/erpnext_shift.json'), resolve(root, 'media/browser/erpnext/shift.json'));
 await copyFile(resolve(root, '../../agent/course_projects/data/inference_runtime.json'), resolve(root, 'media/course/inference_runtime.json'));
@@ -17,6 +41,11 @@ await copyFile(resolve(root, '../../content/courses/inference-engineering/labs/c
 await build({entryPoints: [resolve(root, 'webview/coachMarkdown.ts')], bundle: true, minify: true,
   outfile: resolve(root, 'media/coachMarkdown.js'), format: 'iife', target: 'es2022',
   assetNames: 'fonts/[name]', loader: {'.woff2': 'file', '.woff': 'file', '.ttf': 'file'}});
+await mkdir(resolve(root, 'media/fonts'), {recursive: true});
+for (const file of ['paper-sans.ttf', 'paper-sans-bold.ttf', 'PAPER_FONT_LICENSE.txt']) {
+  await copyFile(resolve(root, '../../assets/fonts', file), resolve(root, 'media/fonts', file));
+}
+await copyFile(resolve(root, 'node_modules/pdfmake/LICENSE'), resolve(root, 'media/fonts/pdfmake.LICENSE'));
 const outdir = resolve(root, 'media/learning-room');
 await build({entryPoints:[resolve(root,'webview/composer.ts'),resolve(root,'webview/composer.css')], bundle:true, minify:true,
   outdir, format:'iife', globalName:'LearningComposer', target:'es2022'});
@@ -39,7 +68,6 @@ for (const [name, source] of [['markdown-it','markdown-it/LICENSE'], ['katex','k
 }
 
 // Build the seven course notebooks from the same authored Markdown used by the Colab exporter.
-const { readdir, readFile, mkdir, writeFile } = await import('node:fs/promises');
 // Reuse Flutter's ebook engine and bridge; never maintain a second reader fork.
 const study = resolve(root, 'media/study');
 await mkdir(study, {recursive:true});

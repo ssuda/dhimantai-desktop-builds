@@ -9,7 +9,13 @@ export class NotebookNavigation {
   constructor(toolbar: HTMLElement, private readonly jump: (id: string) => void) {
     this.select.className = 'notebook-index';
     this.select.setAttribute('aria-label', 'Go to notebook entry');
-    this.select.onchange = () => { if (this.select.value) this.jump(this.select.value); this.select.value = ''; };
+    this.select.onchange = () => {
+      if (!this.select.value) return;
+      const menu = this.select.closest('details');
+      if (menu) menu.open = false;
+      this.jump(this.select.value);
+      this.select.value = '';
+    };
     this.progress.className = 'notebook-progress';
     this.meter.className = 'dh-progress';
     this.meter.setAttribute('aria-hidden', 'true');

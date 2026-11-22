@@ -8,6 +8,10 @@ import json
 import os
 import runpy
 import sys
+from pathlib import Path
+
+if sys.platform != 'linux' or not any(Path(marker).is_file() for marker in ('/run/.containerenv', '/.dockerenv')):
+    raise SystemExit('Host execution is disabled. Use the course container or a remote runtime.')
 
 LIMIT = int(sys.argv[1])
 TARGET = os.path.abspath(sys.argv[2])

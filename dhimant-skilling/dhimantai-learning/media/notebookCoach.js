@@ -1,12 +1,10 @@
 (() => {
   const api = acquireVsCodeApi();
   window.installNotebookRuntime?.(api);
-  const playback = window.installCoachAudio?.(api);
-  const dictation = window.installDictation?.(api, document.getElementById('message'), () => playback?.listenForReply());
   const field = id => document.getElementById(id);
   const text = value => typeof value === 'string' && !/^(null|undefined)$/i.test(value.trim()) ? value : '';
   let revision, conversationId, busy = true;
-  const composer = window.LearningComposer.bindComposer(field('composer'), async message => {
+  const composer = window.LearningComposer.bindInstructorComposer(api, field('composer'), async message => {
     if (busy) return;
     const activeRevision = revision, chat = conversationId;
     busy = true; composer.setAvailable(false);
@@ -20,7 +18,7 @@
       busy = false; composer.setAvailable(true);
     }
   });
-  const {attachments} = composer;
+  const {attachments, dictation} = composer;
   const rendered = new Map();
   const renderConversation = messages => {
     const log = field('conversation');

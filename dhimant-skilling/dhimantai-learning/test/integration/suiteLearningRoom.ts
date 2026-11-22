@@ -45,11 +45,8 @@ export async function run() {
       panel.onDidDispose(() => notebooks.delete(panel));
       const reveal = panel.reveal.bind(panel);
       panel.reveal = (...args) => { host = panel; receive = entry.receive!; reveal(...args); };
-      let selectedLocal = false;
       const handlers: ((message:any) => Promise<void>)[] = [];
       (panel.webview as any).onDidReceiveMessage = (handler: any) => { handlers.push(handler); receive = entry.receive = async message => {
-        // Explicit local runtime for this contract fixture; the product defaults to the course container.
-        if (message.type === 'join' && !selectedLocal) { selectedLocal = true; for (const h of handlers) await h({type:'runtime', runtime:'local'}); }
         for (const h of handlers) await h(message);
       }; return new vscode.Disposable(() => {}); };
       (panel.webview as any).postMessage = async (message: any) => { responses.push(message); entry.responses.push(message); return true; };
@@ -78,7 +75,8 @@ export async function run() {
       assert.match(host!.webview.html, /id="follow-code" checked>/, 'Instructor follows the active notebook by default');
       assert.match(host!.webview.html, /<\/main>\s*<footer id="message-bar"/);
       assert.doesNotMatch(host!.webview.html, /id="draft-cell"/);
-      assert.match(host!.webview.html, /value="local" selected/, 'this contract fixture disables course containers');
+      assert.match(host!.webview.html, /value="course">Course container/);
+      assert.doesNotMatch(host!.webview.html, /<option value="local"/);
       await receive!({type:'ready'});
       assert.equal(responses.at(-1).type,'openTutor');
       for (const language of ['python','javascript','typescript','c','java','go','rust']) assert.ok(host!.webview.html.includes('value="' + language + '"'));

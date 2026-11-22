@@ -1,43 +1,57 @@
 #coach { gap: 8px; padding: 10px 0; height: 100vh; min-height: 0; overflow: hidden; }
 #coach > #projectContent { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; padding-right: 4px; display: flex; flex-direction: column; gap: 10px; }
 #projectContent > * { flex-shrink: 0; }
-h2 { margin: 0; font-size: 1.15em; }
+h2 { margin: 0; font-size: 1em; font-weight: 500; color: var(--vscode-descriptionForeground); overflow-wrap: anywhere; }
 h3 { margin: 0 0 6px; font-size: 1em; }
-.milestone-nav { display: flex; align-items: center; gap: 6px; }
-.milestone-nav select { flex: 1; min-width: 0; }
-.milestone-nav button { flex-shrink: 0; min-width: 28px; font-size: 1.2em; line-height: 1; }
-#progressText { margin: 0; font-size: .9em; }
-#progress { width: 100%; height: 5px; flex-shrink: 0; accent-color: var(--vscode-progressBar-background); }
+.milestone-picker { position: relative; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 3px;
+  background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border, var(--vscode-contrastBorder, transparent)); }
+.milestone-picker::after { content: ''; width: 6px; height: 6px; flex: none; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-2px) rotate(45deg); }
+.milestone-picker:focus-within { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+#stepTitle { flex: 1; font-size: 1.12em; font-weight: 600; overflow-wrap: anywhere; }
+#step { position: absolute; inset: 0; height: 100%; opacity: 0; cursor: pointer; }
+.milestone-progress { display: flex; align-items: center; gap: 6px; }
+.milestone-progress button { flex-shrink: 0; min-width: 26px; font-size: 1.2em; line-height: 1; }
+#progressText { margin: 0; font-size: .9em; color: var(--vscode-descriptionForeground); }
+#progress { flex: 1; min-width: 24px; height: 4px; accent-color: var(--vscode-progressBar-background); }
 select, textarea { width: 100%; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); padding: 6px; font: inherit; }
 textarea { resize: vertical; max-height: 120px; }
 [hidden] { display: none !important; }
-#goal { font-weight: 600; }
+.milestone-work { padding: 10px 0; border-top: 1px solid var(--vscode-panel-border); overflow-wrap: anywhere; }
+.milestone-work .row { margin-top: 12px; }
+#requirements { margin-bottom: 8px; white-space: pre-wrap; }
+#startFile { margin-top: 6px; color: var(--vscode-descriptionForeground); }
+#instructions:empty { display: none; }
 #task ol { margin: 0; padding-inline-start: 1.5em; }
 #task li + li { margin-top: 6px; }
-#checkpointDetails { display: grid; gap: 6px; border-top: 1px solid var(--vscode-panel-border); padding-block-start: 10px; }
-#checkpointDetails h3 { margin: 0; }
+.checkpoint-form { display: grid; gap: 6px; }
 #note[aria-invalid="true"] { border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)); outline: 2px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)); outline-offset: -2px; }
 #noteError { color: var(--vscode-errorForeground); }
-#noteError:empty, #saved:empty, #milestoneStatus:empty { display: none; }
+#noteError:empty, #saved:empty, #milestoneStatus:empty, #checkRecovery:empty, #status:empty { display: none; }
 #files { gap: 8px; }
 #files button { text-align: left; overflow-wrap: anywhere; }
 #files > div { max-width: 100%; }
 #files small { display: block; padding-left: 8px; overflow-wrap: anywhere; }
 #checkResult { min-width: 0; max-width: 100%; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
 #checkCause { font-weight: 600; }
+#checkLocation { max-width: 100%; padding: 0; overflow-wrap: anywhere; text-align: left; font-family: var(--vscode-editor-font-family); }
+#checkLocation:enabled { text-decoration: underline; }
+#checkLocation:disabled { color: var(--vscode-descriptionForeground); opacity: 1; }
 details { border-top: 1px solid var(--vscode-panel-border); padding-top: 8px; }
-details[open] > * { margin-top: 8px; }
+details[open] > :not(summary) { margin-top: 8px; }
+summary { cursor: pointer; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 250px; overflow: auto; }
 #composer { flex-shrink: 0; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); padding: 8px 0 0; border-top: 1px solid var(--vscode-panel-border); }
 .log { flex: 0 0 auto; }
 .bubble { white-space: pre-wrap; }
 #handoffStatus { white-space: pre-wrap; overflow-wrap: anywhere; }
 .shared-summary { margin: 4px 0; font-size: .85em; overflow-wrap: anywhere; }
-#task .link, #guide .link { display: inline; font-family: var(--vscode-editor-font-family); font-size: .95em; padding: 0; text-decoration: underline; overflow-wrap: anywhere; }
-#projectTools summary, #sharingDetails summary { cursor: pointer; }
+#task .link, #guide .link, #startFile .link { display: inline; max-width: 100%; font-family: var(--vscode-editor-font-family); font-size: .95em; padding: 0; text-decoration: underline; overflow-wrap: anywhere; }
 #sharingDetails { border: 0; padding: 0; }
 #shared { max-height: 16vh; }
 #conversation:empty { display: none; }
+#selectionContext { font-size: .9em; overflow-wrap: anywhere; }
+.instructor-sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; font-size: .9em; color: var(--vscode-descriptionForeground); }
+.instructor-sources .link { padding: 0; text-align: left; overflow-wrap: anywhere; text-decoration: underline; }
 #checkpointDetails .row { margin: 0; }
 #composer .audio-picker { top: auto; bottom: calc(100% + 8px); left: 0; }
 #dictation-status { margin: 4px 0; color: var(--vscode-descriptionForeground); }
@@ -52,3 +66,11 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 250px; overflo
 #reviewList { max-height: 25vh; overflow-y: auto; }
 #reviewSteps { display: grid; justify-items: start; }
 #reviewSteps .link { text-align: left; }
+
+#architecturePractice { margin-block: 8px; }
+#architectureIdentify { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
+#architectureIdentify input { max-width: 100%; box-sizing: border-box; }
+#architecturePredict, #architectureNext { justify-self: start; margin-block: 4px; }
+#architecturePractice [hidden] { display: none; }
+
+.milestone-picker[hidden], .milestone-progress[hidden] { display: none; }

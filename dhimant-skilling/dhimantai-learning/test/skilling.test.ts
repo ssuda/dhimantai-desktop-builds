@@ -34,8 +34,60 @@ test('a perfect practice grade cannot enable certificate issuance or locked proj
   locked.click();assert.equal(p.messages.length,0);
   (doc.querySelector('[data-action="skillingProject"][data-id="micro"]') as HTMLButtonElement).click();
   assert.equal(p.messages[0].id,'micro');assert.ok(p.messages[0].requestId);
-  assert.match(doc.body.textContent??'',/independent readiness assessments/);
+  assert.match(doc.querySelector('#panel-Certificate')!.textContent!, /Pass each readiness assessment/);
   p.dom.window.close();
+});
+
+test('a lesson-locked Micro links to its course and lists the unavailable lessons', () => {
+  const locked = structuredClone(data);
+  const reason = 'Unlock 1 required lesson in Python Programming.';
+  locked.pathway.lesson_access = {reason, lessons:['Loops <and> conditions']};
+  locked.pathway.blockers.unshift(reason);
+  Object.assign(locked.pathway.milestones[0], {unlocked:false, status:'locked', lock_reason:reason});
+  const p = page('', undefined, courseGradeHtml('nonce', {...grade, readiness:locked.pathway}, [], '', 0));
+  const doc = p.dom.window.document;
+  const start = doc.querySelector<HTMLButtonElement>('[data-action="skillingProject"][data-id="micro"]')!;
+  assert.equal(start.disabled, true);
+  assert.equal(start.textContent, 'Locked');
+  assert.match(start.closest('li')!.textContent!, /Unlock 1 required lesson in Python/);
+  assert.ok(doc.body.textContent!.includes('Loops <and> conditions'));
+  assert.equal(doc.querySelector('#panel-Overview')!.textContent!.split(reason).length, 2);
+  const lessons = doc.querySelector<HTMLButtonElement>('[data-action="nextCourse"][data-id="python"]')!;
+  assert.equal(lessons.textContent, 'View course lessons');
+  lessons.click();
+  assert.equal(p.messages[0].type, 'nextCourse');
+  assert.equal(p.messages[0].id, 'python');
+  p.dom.window.close();
+
+  // An older server can send the original contradictory state during rollout.
+  delete locked.pathway.lesson_access;
+  locked.pathway.milestones[0].status = 'not_started';
+  locked.pathway.milestones[0].lock_reason = undefined;
+  locked.pathway.blockers = ['Unlock the required course lessons before starting readiness assessments.'];
+  const older = page('', undefined, courseGradeHtml('nonce', grade, [], '', 0, false, false, locked));
+  const legacyStart = older.dom.window.document.querySelector<HTMLButtonElement>('[data-action="skillingProject"][data-id="micro"]')!;
+  assert.equal(legacyStart.disabled, true);
+  assert.match(legacyStart.closest('li')!.textContent!, /Unlock the required course lessons/);
+  assert.ok(older.dom.window.document.querySelector('[data-action="nextCourse"][data-id="python"]'));
+  older.dom.window.close();
+});
+
+test('eligible and issued certificates reveal their corresponding claim or verified record',()=>{
+  const eligible=page('',undefined,courseGradeHtml('nonce',{...grade,eligible:true},[],'',0));
+  const doc=eligible.dom.window.document;
+  assert.equal(doc.querySelector('#panel-Certificate .locked'),null);
+  doc.querySelector<HTMLButtonElement>('[data-action="claim"]')!.click();
+  assert.equal(eligible.messages[0].type,'claim');
+  eligible.dom.window.close();
+
+  const certificate={id:'earned',course_id:'python',course_title:'Python',recipient_name:'A Learner',grade:'A',score:94,
+    issued_at:'2026-11-15',revoked_at:null,policy_version:'v1'};
+  const issued=page('',undefined,courseGradeHtml('nonce',{...grade,certificate_id:'earned'},[certificate],'',0));
+  assert.match(issued.dom.window.document.querySelector('.earned-paper')!.textContent!, /A Learner/);
+  assert.equal(issued.dom.window.document.querySelector('[data-action="claim"]'),null);
+  issued.dom.window.document.querySelector<HTMLButtonElement>('[data-action="certificate"]')!.click();
+  assert.equal(issued.messages[0].id,'earned');
+  issued.dom.window.close();
 });
 
 test('evidence drafts survive rerenders and retries but cannot cross account or service boundaries',()=>{
@@ -78,9 +130,14 @@ test('submission retries stay idempotent while changed files or prerequisite rev
 });
 
 test('supplementary tasks reuse saved Practice notebooks without claiming validated tests or grading credit',()=>{
-  const practice=supplementalPractice({assessment:'practice_only',title:'Java boundary cases',question:'Implement and explain failure handling.',course:'Java Programming',language:'java'},'generated-'+'b'.repeat(24),'learner');
-  assert.equal(practice.language,'java');assert.equal(practice.course,'Java Programming');assert.deepEqual(practice.tests,[]);
-  assert.deepEqual(savedPractice(practiceDocument(practice),'learner'),practice);
+  for (const [course, language] of [['Java Programming', 'java'], ['Laravel equipment desk', 'bash']]) {
+    const practice = supplementalPractice({assessment:'practice_only', title:'Boundary cases',
+      question:'Implement and explain failure handling.', course, language}, 'generated-'+'b'.repeat(24), 'learner');
+    assert.equal(practice.language, language);
+    assert.equal(practice.course, course);
+    assert.deepEqual(practice.tests, []);
+    assert.deepEqual(savedPractice(practiceDocument(practice), 'learner'), practice);
+  }
 });
 
 test('older unfinished mocks remain resumable without mixing their answers or assistance',()=>{
@@ -127,5 +184,22 @@ test('custom Coach uses installed steps, bounded public source and the matching 
     await symlink(join(root,'README.md'),join(root,'src/linked.py'));
     assert.ok(!(await projectFiles(root,curriculum)).includes('src/linked.py'));
     await assert.rejects(publicProjectFile(root,'src/linked.py'));
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('a guided project shares its own security and deployment files, never secrets',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'skilling-deploy-'));
+  try{
+    await mkdir(join(root,'src/auth'),{recursive:true});await mkdir(join(root,'tests'));await mkdir(join(root,'.github/workflows'),{recursive:true});
+    await writeFile(join(root,'.dhimantai-project.json'),JSON.stringify({id:'skilling-project',version:1}));
+    await writeFile(join(root,'.dhimantai-skilling.json'),JSON.stringify({course_id:'software-engineering',title:'Orders',requirements:'Take orders.',language:'python'}));
+    for(const name of ['README.md','EXPLANATION.md','src/README.md','tests/README.md','src/auth/tokens.py','Dockerfile','requirements.txt','docker-compose.yml','Makefile','.github/workflows/ci.yml'])
+      await writeFile(join(root,name),'public evidence');
+    for(const name of ['.env','secrets.json','src/auth/keys.json','.github/workflows/notes.txt'])await writeFile(join(root,name),'private sentinel');
+    const curriculum=await loadProjectCurriculum(resolve('media'),'skilling-project',root);
+    const files=await projectFiles(root,curriculum);
+    for(const name of ['src/auth/tokens.py','Dockerfile','requirements.txt','docker-compose.yml','Makefile','.github/workflows/ci.yml'])assert.ok(files.includes(name),name);
+    for(const name of ['.env','secrets.json','src/auth/keys.json','.github/workflows/notes.txt'])assert.ok(!files.includes(name),name);
+    assert.ok(!files.includes('pyproject.toml'),'absent files are not listed as missing evidence');
   }finally{await rm(root,{recursive:true,force:true});}
 });

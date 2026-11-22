@@ -2,11 +2,12 @@ import * as vscode from 'vscode';
 import type {SshGpuRuntime} from './sshGpuRuntime';
 import type {CloudGpuRuntime} from './cloudGpuRuntime';
 import type {GpuLabRequirement} from './sshRuntimeConfig';
-import {createHash} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {mkdir, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {chooseColabKernel, ensureColab} from './colab';
 import {COLAB_SETUP_STEPS} from './colabSetup';
+import {withHostMarker} from './hostRuntimeCheck';
 import {openNotebookKernelPicker} from './notebookKernelPicker';
 import type {CellOptions} from './notebookCells';
 import type {Execution} from './api';
@@ -29,6 +30,8 @@ interface Kernel {
 }
 interface JupyterApi { kernels: {getKernel(uri: vscode.Uri): Thenable<Kernel | undefined>} }
 const marker = 'DHIMANTAI_GPU_READY';
+const stdoutMime = new Set(['application/vnd.code.notebook.stdout', 'application/x.notebook.stream.stdout']);
+const stderrMime = new Set(['application/vnd.code.notebook.stderr', 'application/x.notebook.stream.stderr']);
 export function gpuRequirements(requirement?:GpuLabRequirement) {
   const count=requirement?requirement.nodes*requirement.gpusPerNode:1;
   const capability=requirement?.minComputeCapability??7.5, memory=requirement?.minVramMiB??6000;
@@ -54,11 +57,11 @@ export function gpuProbeFailure(output:string) {
   }
   return 'GPU connection check failed. Read the connection notebook output, select a compatible GPU kernel and retry.';
 }
-export function gpuProbe(provider: GpuRuntime, requirement?:GpuLabRequirement) {
+export function gpuProbe(provider: GpuRuntime, requirement?:GpuLabRequirement, hostPaths: string[] = [], bootHash?: string) {
   const recovery=provider==='colab'
     ? 'In Select Kernel, choose Colab > New Colab Server > GPU, select a compatible allocation, then choose Google Colab again in Instructor to retry. If your account cannot allocate it, use your own compatible GPU via Jupyter.'
     : 'Select a compatible Linux GPU Jupyter server, then choose this runtime again in Instructor to retry.';
-  return `import json, os, platform, subprocess
+  return `import hashlib, json, os, platform, subprocess
 
 def _dhimantai_gpu_error(message):
     print('${probeErrorMarker}' + json.dumps({'message': message}), flush=True)
@@ -68,6 +71,13 @@ ${provider === 'colab' ? `if 'COLAB_RELEASE_TAG' not in os.environ:
     _dhimantai_gpu_error('This is not a Colab runtime. Choose Use Colab Kernel in the notebook toolbar, then Select Another Kernel > Colab > New Colab Server > GPU > Python 3 (ipykernel). If Colab is missing, enable Google Colab and Microsoft Jupyter in Extensions and reload the app. GPU availability has not been checked.')
 ` : ''}if platform.system() != 'Linux':
     _dhimantai_gpu_error('The kernel connected, but this lab needs Linux. ${recovery}')
+course_container = os.path.isfile('/opt/dhimantai/runner.cjs') and any(os.path.isfile(p) for p in ('/run/.containerenv', '/.dockerenv'))
+if not course_container:
+    same_host = any(os.path.isdir(path) for path in ${JSON.stringify(hostPaths)})
+${bootHash ? `    with open('/proc/sys/kernel/random/boot_id', 'rb') as boot:
+        same_host = same_host or hashlib.sha256(boot.read()).hexdigest() == ${JSON.stringify(bootHash)}
+` : ''}    if same_host:
+        _dhimantai_gpu_error('This kernel is running on the desktop host. Connect a remote GPU server or select the course container.')
 visible = os.environ.get('CUDA_VISIBLE_DEVICES')
 if visible is not None and visible.strip() in ('', '-1'):
     _dhimantai_gpu_error('The kernel connected, but no CUDA devices are visible. ${recovery}')
@@ -94,7 +104,7 @@ export class GpuNotebookRuntime implements vscode.Disposable {
   private finishing?:Promise<string|undefined>;
   private lifetime?:NodeJS.Timeout;
   private selected?:GpuRuntime;
-  private connection?: {provider: GpuRuntime; doc: vscode.NotebookDocument; kernel: Kernel; api: JupyterApi};
+  private connection?: {provider: GpuRuntime; doc: vscode.NotebookDocument; kernel: Kernel; api: JupyterApi; session: string};
   private cancellation?: vscode.CancellationTokenSource;
   private connecting = false;
   private cancelProbe?: () => void;
@@ -161,27 +171,30 @@ export class GpuNotebookRuntime implements vscode.Disposable {
             dhimantai_runtime:{provider:provider === 'colab' ? 'google.colab' : 'jupyter',accelerator:'gpu',version:1}}, cells:[]}), {flag:'wx'});
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
       const doc = await vscode.workspace.openNotebookDocument(uri);
-      const edit = new vscode.WorkspaceEdit();
-      edit.set(uri, [vscode.NotebookEdit.replaceCells(new vscode.NotebookRange(0, doc.cellCount), [
-        new vscode.NotebookCellData(vscode.NotebookCellKind.Markup,
-          `# ${GPU_RUNTIMES[provider]}\n\n${GPU_COST_NOTICE}\n\n**GPU requirements**\n\n${gpuRequirements(this.managed?.requirement)}\n\n${provider === 'colab' ? COLAB_SETUP_STEPS : 'Connect your GPU Jupyter server using Select Kernel.'}\n\nThis connection notebook runs the hardware check; your lesson cells and outputs stay in Instructor. Keep it open while using this runtime. After fixing a failed connection, choose the runtime again in Instructor to complete its hardware check. Release rented compute with your provider when finished.`, 'markdown'),
-        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, gpuProbe(provider,this.managed?.requirement), 'python'),
-      ]), vscode.NotebookEdit.updateNotebookMetadata({...doc.metadata, metadata: {
-        ...(doc.metadata.metadata ?? doc.metadata.custom?.metadata ?? {}),
-        dhimantai_runtime: {provider: provider === 'colab' ? 'google.colab' : 'jupyter', accelerator: 'gpu', version: 1},
-      }})]);
-      if (!await vscode.workspace.applyEdit(edit)) throw new Error('Could not prepare the GPU connection notebook.');
-      await doc.save();
-      if (provider !== 'colab') void vscode.window.showInformationMessage(
-        'Choose Existing Jupyter Server and enter your GPU server connection, or its local Python kernel. Instructor will then run cells there. Compute costs are separate from the course fee.');
-      const selection = provider === 'colab' ? await chooseColabKernel(doc, 'gpu') : await openNotebookKernelPicker(doc);
-      if (!selection || selection.startsWith('No kernel was selected')) throw new Error('GPU connection cancelled. Select the runtime to retry.');
-      if (generation !== this.generation) throw new Error('The learning session changed during GPU setup.');
-      await this.probe(doc);
+      const session = randomUUID();
+      await withHostMarker(async (hostPaths, bootHash) => {
+        const edit = new vscode.WorkspaceEdit();
+        edit.set(uri, [vscode.NotebookEdit.replaceCells(new vscode.NotebookRange(0, doc.cellCount), [
+          new vscode.NotebookCellData(vscode.NotebookCellKind.Markup,
+            `# ${GPU_RUNTIMES[provider]}\n\n${GPU_COST_NOTICE}\n\n**GPU requirements**\n\n${gpuRequirements(this.managed?.requirement)}\n\n${provider === 'colab' ? COLAB_SETUP_STEPS : 'Connect your GPU Jupyter server using Select Kernel.'}\n\nThis connection notebook runs the hardware check; your lesson cells and outputs stay in Instructor. Keep it open while using this runtime. After fixing a failed connection, choose the runtime again in Instructor to complete its hardware check. Release rented compute with your provider when finished.`, 'markdown'),
+          new vscode.NotebookCellData(vscode.NotebookCellKind.Code, gpuProbe(provider,this.managed?.requirement,hostPaths,bootHash) + '\n_dhimantai_verified_session = ' + JSON.stringify(session), 'python'),
+        ]), vscode.NotebookEdit.updateNotebookMetadata({...doc.metadata, metadata: {
+          ...(doc.metadata.metadata ?? doc.metadata.custom?.metadata ?? {}),
+          dhimantai_runtime: {provider: provider === 'colab' ? 'google.colab' : 'jupyter', accelerator: 'gpu', version: 1},
+        }})]);
+        if (!await vscode.workspace.applyEdit(edit)) throw new Error('Could not prepare the GPU connection notebook.');
+        await doc.save();
+        if (provider !== 'colab') void vscode.window.showInformationMessage(
+          'Choose Existing Jupyter Server and connect to your GPU server. Instructor will then run cells there. Compute costs are separate from the course fee.');
+        const selection = provider === 'colab' ? await chooseColabKernel(doc, 'gpu') : await openNotebookKernelPicker(doc);
+        if (!selection || selection.startsWith('No kernel was selected')) throw new Error('GPU connection cancelled. Select the runtime to retry.');
+        if (generation !== this.generation) throw new Error('The learning session changed during GPU setup.');
+        await this.probe(doc);
+      });
       const kernel = await api.kernels.getKernel(uri);
       if (!kernel || kernel.language.toLowerCase() !== 'python') throw new Error('A Python GPU kernel did not connect. Select the runtime again.');
       if (generation !== this.generation) throw new Error('The learning session changed during GPU setup.');
-      this.connection = {provider, doc, kernel, api};
+      this.connection = {provider, doc, kernel, api, session};
     } finally { this.connecting = false; }
   }
 
@@ -243,6 +256,19 @@ export class GpuNotebookRuntime implements vscode.Disposable {
       }
       if (kernel.status !== 'idle') throw new Error('The selected GPU kernel is busy. Wait for it to finish before running this cell.');
       if (options.signal?.aborted) abort();
+      if (!cancellation.token.isCancellationRequested) {
+        // A notebook can switch or restart kernels between the hardware probe and Run.
+        let session = '';
+        for await (const output of kernel.executeCode('print(globals().get("_dhimantai_verified_session", ""))', cancellation.token)) {
+          for (const item of output.items) {
+            if (stdoutMime.has(item.mime)) session += Buffer.from(item.data).toString();
+          }
+        }
+        if (!cancellation.token.isCancellationRequested && session.trim() !== connection.session) {
+          this.connection = undefined;
+          throw new Error('The GPU kernel session changed. Reconnect the remote runtime before running this cell.');
+        }
+      }
       if (!cancellation.token.isCancellationRequested) options.event?.({kind:'phase',phase:'running'});
       if (!cancellation.token.isCancellationRequested) for await (const output of kernel.executeCode(source, cancellation.token)) {
         const display: Record<string,string> = {};
@@ -253,8 +279,8 @@ export class GpuNotebookRuntime implements vscode.Disposable {
             let message = text;
             try { const error = JSON.parse(text); message = error.stack || `${error.name}: ${error.message}`; } catch { /* plain error */ }
             stderr += message + '\n'; options.event?.({kind:'stream',stream:'stderr',text:message+'\n'});
-          } else if (item.mime.startsWith('application/x.notebook.stream.')) {
-            const stream = item.mime.endsWith('.stderr') ? 'stderr' : 'stdout';
+          } else if (stdoutMime.has(item.mime) || stderrMime.has(item.mime)) {
+            const stream = stderrMime.has(item.mime) ? 'stderr' : 'stdout';
             if (stream === 'stdout') stdout += text; else stderr += text;
             options.event?.({kind:'stream',stream,text});
           } else if (['text/plain','text/html','text/markdown','image/png','image/jpeg','image/svg+xml','application/json'].includes(item.mime)) {

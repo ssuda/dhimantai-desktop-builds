@@ -63,7 +63,7 @@ export async function run() {
         assert.match(dom.window.document.querySelector('main')!.textContent!, /Unlock all · ₹499/, 'the course price sits on its card');
         assert.equal(dom.window.document.querySelectorAll('.offer').length, 1, 'only multi-course offers are bundles');
         assert.match(dom.window.document.querySelector('.offer')!.textContent!, /Programming bundle/);
-        assert.match(dom.window.document.querySelector('main')!.textContent!, /First chapter free/);
+        assert.match(dom.window.document.querySelector('main')!.textContent!, /Chapter 1 free/);
         assert.match(dom.window.document.querySelector('main')!.textContent!, /Locked/);
         const buy = dom.window.document.querySelector('button[data-action="buy"]') as HTMLButtonElement;
         buy.click(); buy.click();
@@ -90,7 +90,7 @@ export async function run() {
           const commands: any[] = [];
           (vscode.commands as any).executeCommand = async (...args: any[]) => { commands.push(args); };
           await (catalog as any).handle({type:'practice',id:'python'});
-          assert.deepEqual(commands, [['dhimantai.openLearningRoom','Python']], 'syllabus IDs resolve the teaching subject even when the catalog title differs');
+          assert.deepEqual(commands, [['dhimantai.openLearningRoom','Python',selectedCourse.chapters[0].id]], 'syllabus IDs resolve the teaching subject even when the catalog title differs');
         } finally { (vscode.commands as any).executeCommand = execute; selectedCourse.title = title; }
         assert.ok((await practice.getChildren()).some(node => node.kind === 'course' && node.course.name === 'Python'));
         const courseNode = (await practice.getChildren()).find(node => node.kind === 'course')!;
@@ -115,8 +115,8 @@ export async function run() {
         const dom = new JSDOM((catalog as any).panel.webview.html);
         try {
           const card = dom.window.document.querySelector('.course')!;
-          assert.match(card.textContent!, /Free course · All chapters included/);
-          assert.doesNotMatch(card.textContent!, /Locked|coming soon|First chapter free|Unlock all/);
+          assert.match(card.textContent!, /All chapters free/);
+          assert.doesNotMatch(card.textContent!, /Locked|coming soon|Chapter 1 free|Unlock all/);
           assert.equal(card.querySelectorAll('button[data-action="buy"]').length, 0);
           assert.deepEqual([...card.querySelectorAll<HTMLButtonElement>('.actions button')].map(b => b.dataset.action),
             ['practice'], 'joined free courses open their learning room');
@@ -173,55 +173,40 @@ export async function run() {
           const doc = dom.window.document;
           (dom.window as any).acquireVsCodeApi = () => ({ postMessage() {} });
           for (const script of doc.querySelectorAll('script')) dom.window.eval(script.textContent!);
-          // Essentials have their own section under Software Engineering, never mixed into the plain course grid.
-          assert.equal(doc.querySelectorAll('.category > .courses [data-course^="engineering-"]').length, 0);
-          assert.ok(doc.querySelector('#category-software-engineering ~ .essentials, .category .essentials'));
-          assert.equal(doc.querySelectorAll('.essentials .course').length, 2);
+          const chip = (category:string) => doc.querySelector<HTMLButtonElement>(`.type-chip[data-browse-category="${category}"]`)!;
+          const tracks = [...doc.querySelectorAll('.type-chip')].map(el => el.textContent);
+          assert.equal(tracks[0], 'Software Engineering');
+          chip('Engineering Essentials').click();
+          const cards = [...doc.querySelectorAll('#results [data-course]')];
+          assert.deepEqual(cards.map(card => card.querySelector('.access-tag')!.textContent), ['All chapters free','Chapter 1 free']);
           const paths = [...doc.querySelectorAll<HTMLButtonElement>('.paths button')];
           assert.deepEqual(paths.map(b => b.textContent), ['All', 'Before a first project', 'Backend and data']);
           paths[2].click();
-          const visible = [...doc.querySelectorAll<HTMLElement>('.essentials .course')].filter(c => !c.hidden).map(c => c.dataset.course);
-          assert.deepEqual(visible, ['engineering-sql-data']);
-          assert.equal(doc.querySelector('.essentials button[data-action="capstone"]'), null);
+          assert.deepEqual([...doc.querySelectorAll<HTMLElement>('#results .course')].map(c => c.dataset.course), ['engineering-sql-data']);
+          assert.equal(doc.querySelector('#results button[data-action="capstone"]'), null);
+          chip('type:project').click();
+          const visibleProjects = () => [...doc.querySelectorAll<HTMLElement>('#results [data-project]')].map(p => p.dataset.project);
           const projects = CATALOG_PROJECTS.map(project => project.id);
-          assert.deepEqual([...doc.querySelectorAll<HTMLElement>('#results > .projects [data-project]')].map(card => card.dataset.project), projects);
-          assert.ok([...doc.querySelectorAll<HTMLElement>('[data-project]')].every(p => !p.hidden), 'course paths do not filter projects');
-          // Categories group the catalog in a fixed order.
-          const headings = [...doc.querySelectorAll('.category > h2')].map(h => h.textContent);
-          assert.equal(headings[0], 'Software Engineering');
-          if (selected.courses.some(c => c.id === 'build-an-llm')) {
-            assert.ok(headings.includes('AI & Machine Learning'));
-            assert.ok(doc.querySelector('#category-ai-machine-learning ~ .courses [data-course="build-an-llm"], [aria-labelledby="category-ai-machine-learning"] [data-course="build-an-llm"]'));
-          }
-          const cards = [...doc.querySelectorAll('.essentials .course')].map(c => c.textContent!);
-          assert.match(cards[0], /· Free/);assert.match(cards[1], /First chapter free/);
-          assert.match(doc.querySelector('.essentials > p')!.textContent!, /Courses labelled Free include all chapters\. Paid courses include a free first chapter;/);
+          assert.deepEqual(visibleProjects(), projects);
           const search = doc.querySelector<HTMLInputElement>('#search')!;
-          assert.ok(search, 'search includes both courses and projects');
           const find = (query: string) => { search.value = query; search.dispatchEvent(new dom.window.Event('input')); };
-          const visibleProjects = () => [...doc.querySelectorAll<HTMLElement>('[data-project]')].filter(p => !p.hidden).map(p => p.dataset.project);
           find('research agent');
           assert.deepEqual(visibleProjects(), ['course-agent']);
-          assert.equal(doc.querySelector<HTMLElement>('.essentials')!.hidden, true);
-          assert.equal(doc.querySelector<HTMLElement>('#empty')!.hidden, true);
           find('regression test');
           assert.deepEqual(visibleProjects(), ['shelf'], 'learning outcomes are searchable');
           find('no-such-course-or-project');
-          assert.equal(doc.querySelector<HTMLElement>('.projects')!.hidden, true);
           assert.equal(doc.querySelector<HTMLElement>('#empty')!.hidden, false);
-          assert.match(doc.querySelector('#empty')!.textContent!, /courses or projects/);
+          assert.match(doc.querySelector('#empty')!.textContent!, /No matching results/);
           find('');
           assert.deepEqual(visibleProjects(), projects);
-          assert.equal(doc.querySelector<HTMLElement>('.essentials')!.hidden, false);
-          assert.equal(doc.querySelector<HTMLElement>('.projects')!.hidden, false);
         } finally { dom.window.close(); }
         for (const free of [true, false]) {
           selected.courses = selected.courses.map(c => ({...c, is_free:free}));
           (catalog as any).render(selected);
           const rendered = new JSDOM((catalog as any).panel.webview.html);
-          const intro = rendered.window.document.querySelector('.essentials > p')!.textContent!;
-          assert.match(intro, free ? /free in full, with all chapters included/ : /free first chapter.*remaining chapters/);
-          assert.doesNotMatch(intro, /Start free with|The others/);
+          const labels = [...rendered.window.document.querySelectorAll('#results [data-course^="engineering-"] .access-tag')].map(tag => tag.textContent);
+          assert.deepEqual(labels, selected.courses.filter(c => c.id.startsWith('engineering-')).map(c =>
+            free ? 'All chapters free' : c.unlocked ? 'Full course unlocked' : 'Chapter 1 free'));
           rendered.window.close();
         }
       } finally { catalog.dispose(); }

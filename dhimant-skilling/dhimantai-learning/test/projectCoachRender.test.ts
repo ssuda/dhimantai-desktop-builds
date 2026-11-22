@@ -9,8 +9,8 @@ function panel(withSpeaker = false) {
   // Use the actual renderer's HTML, so missing controls fail this test.
   const source = readFileSync(join(__dirname, '../../src/projectCoach.ts'), 'utf8');
   const html = source.slice(source.indexOf('<body>'), source.indexOf('</body>') + 7).replace(/<script[\s\S]*?<\/script>/g, '')
-    .replace(/\$\{messageComposer\(\{assistant:'Coach',[\s\S]*?support:`([\s\S]*?)`\}\)\}/, (_, support) =>
-      messageComposer({assistant:'Coach', maxlength:600, sendId:'ask', camera:true, audio:withSpeaker ? '<div id="coach-audio"><button type="button" id="audio-toggle"></button><span id="audio-status"></span></div>' : '', support}));
+    .replace(/\$\{instructorComposer\(webview, media, nonce, \{[\s\S]*?support:`([\s\S]*?)`\}\)\}/, (_, support) =>
+      messageComposer({assistant:'Instructor', maxlength:600, sendId:'ask', camera:true, audio:withSpeaker ? '<div id="coach-audio"><button type="button" id="audio-toggle"></button><span id="audio-status"></span></div>' : '', support}));
   const dom = new JSDOM(html, {runScripts: 'outside-only'}), sent: any[] = [];
   (dom.window as any).acquireVsCodeApi = () => ({postMessage: (m: unknown) => sent.push(m)});
   dom.window.eval(readFileSync(join(__dirname, '../../media/coachMarkdown.js'), 'utf8'));
@@ -36,11 +36,12 @@ function panel(withSpeaker = false) {
 }
 
 test('the first cause and affected file appear before collapsed output, with stale and milestone isolation', () => {
-  const {dom, doc, post} = panel();
+  const {dom, doc, post, sent} = panel();
   try {
     const check = {state: 'current', status: 'failed', output: '<script>failure</script>\nTraceback…', truncated: true};
     const checkDiagnostic = {cause: 'This part is not implemented yet: <b>dispatch</b>', file: 'course_agent/tools.py', line: 14};
-    post({check, checkDiagnostic});
+    const structure = {files: ['course_agent/tools.py']};
+    post({check, checkDiagnostic, structure});
     const details = doc.getElementById('checkDetails') as HTMLDetailsElement;
     const diagnostic = doc.getElementById('checkDiagnostic')!;
     assert.equal(diagnostic.hidden, false);
@@ -51,8 +52,14 @@ test('the first cause and affected file appear before collapsed output, with sta
     assert.equal(doc.getElementById('checkCause')!.children.length, 0, 'process output is text, never HTML');
     assert.equal(doc.getElementById('checkLocation')!.textContent, 'course_agent/tools.py:14');
     assert.equal(doc.getElementById('output')!.textContent, check.output);
+    const location = doc.querySelector<HTMLButtonElement>('#checkLocation')!;
+    location.click();
+    assert.equal(sent.at(-1).type, 'checkLocation');
+    assert.equal(sent.at(-1).line, 14);
+    assert.equal(sent.at(-1).path, 'course_agent/tools.py');
     details.open = true;
-    post({check: {...check, state: 'changed'}, checkDiagnostic});
+    post({check: {...check, state: 'changed'}, checkDiagnostic, structure});
+    assert.equal(location.disabled, true);
     assert.match(doc.getElementById('checkState')!.textContent!, /Earlier files/);
     assert.match(doc.getElementById('checkRecovery')!.textContent!, /run this step again/);
     assert.equal(details.open, true, 'refresh preserves the learner’s expanded output');
@@ -86,7 +93,25 @@ test('project refresh preserves message nodes, reading position and a draft whil
     post({messages: [...messages, {role: 'tutor', text: 'A delayed reply.'}], revision: 3});
     assert.equal(content.scrollTop, 400, 'new replies do not drag someone away from earlier messages');
     assert.equal(draft.value, 'My next question');
-    assert.equal(row?.querySelector('strong')?.textContent, 'Coach');
+    assert.equal(row?.querySelector('strong')?.textContent, 'Instructor');
+  } finally { dom.window.close(); }
+});
+
+test('asking for a hint reveals the start of the reply from the task', () => {
+  const {dom, doc, post} = panel();
+  try {
+    post();
+    const content = doc.getElementById('projectContent')!;
+    Object.defineProperties(content, {scrollHeight: {value: 2200}, clientHeight: {value: 300}});
+    const bounds = dom.window.HTMLElement.prototype.getBoundingClientRect;
+    dom.window.HTMLElement.prototype.getBoundingClientRect = function() {
+      const rect = bounds.call(this);
+      if (this.tagName === 'ARTICLE') return {...rect, top: 760};
+      return rect;
+    };
+    doc.querySelector<HTMLButtonElement>('#hint')!.click();
+    post({revision:2, messages:[{role:'tutor', text:'Compare the values in the failing assertion.'}]});
+    assert.equal(content.scrollTop, 760);
   } finally { dom.window.close(); }
 });
 
@@ -201,10 +226,40 @@ test('milestone references expose anchors and help progresses without losing the
     assert.equal(doc.getElementById('expected')!.textContent, 'Groups by decade.');
     assert.equal(doc.getElementById('hint')!.textContent, 'Try a smaller step');
     post({hintLevel: 2, signedIn: true});
-    assert.equal(doc.getElementById('hint')!.textContent, 'Ask Coach for help');
+    assert.equal(doc.getElementById('hint')!.textContent, 'Ask the Instructor');
     post({hintLevel: 2, signedIn: true, ai: false});
     assert.equal(doc.getElementById('hint')!.textContent, 'Review next step');
     assert.equal((doc.getElementById('hint') as HTMLButtonElement).disabled, false);
+  } finally { dom.window.close(); }
+});
+
+test('the active task links authored files beside the editor and keeps secondary material folded', () => {
+  const {dom, doc, post, sent} = panel();
+  try {
+    const task = doc.getElementById('task')!;
+    const brief = doc.querySelector<HTMLDetailsElement>('#fullTask')!;
+    const checkpoint = doc.querySelector<HTMLDetailsElement>('#checkpointDetails')!;
+    const current = {files: ['README.md', 'shelf/search.py', 'tests/search.py'], task: 'Read README.md, shelf/search.py and search.py.'};
+    post({current});
+    assert.equal(brief.open, false);
+    assert.equal(checkpoint.open, false);
+    assert.equal(task.closest('details'), null);
+    const links = task.querySelectorAll('button');
+    assert.deepEqual(Array.from(links, link => link.textContent), ['README.md', 'shelf/search.py']);
+    links[1].click();
+    assert.equal(sent.at(-1).path, 'shelf/search.py');
+    brief.open = true;
+    post({current, revision: 2});
+    assert.equal(brief.open, true);
+    assert.equal(task.querySelectorAll('button')[1], links[1], 'refresh preserves keyboard focus targets');
+    post({steps:['One','Two'], revision:3, step:1, current:{files:['checks/test_search.py'], task:'Count the distinct matches.'}});
+    assert.equal(brief.open, false);
+    const start = doc.querySelector<HTMLButtonElement>('#startFile button')!;
+    start.click();
+    assert.equal(sent.at(-1).path, 'checks/test_search.py');
+    post({steps:['One','Two'], revision:4, step:0, current, guide:'Read `README.md`.'});
+    assert.ok(brief.contains(task), 'a guided step keeps the full instructions in the brief');
+    assert.equal(doc.getElementById('guide')!.closest('details'), null);
   } finally { dom.window.close(); }
 });
 
@@ -272,7 +327,7 @@ test('a context problem is shown with working controls, and sharing follows the 
     assert.equal((doc.getElementById('check') as HTMLButtonElement).disabled, false);
     assert.equal((doc.getElementById('step') as HTMLSelectElement).disabled, false);
     post({revision: 2, sharedFiles: ['README.md:1–5', 'course_agent/tools.py:1–40 (excerpt)']});
-    assert.equal(doc.getElementById('sharedSummary')!.textContent, '2 project files included when you send');
+    assert.equal(doc.getElementById('sharedSummary')!.textContent, '2 project files in this context');
     const message = doc.getElementById('message') as HTMLTextAreaElement;
     message.value = 'How does search.py rank?'; message.dispatchEvent(new dom.window.Event('input'));
     await new Promise(resolve => setTimeout(resolve, 350));
@@ -281,7 +336,7 @@ test('a context problem is shown with working controls, and sharing follows the 
     dom.window.dispatchEvent(new dom.window.MessageEvent('message', {data: {...preview, text: 'an older draft'}}));
     assert.match(doc.getElementById('shared')!.textContent!, /tools\.py/, 'a stale preview is ignored');
     dom.window.dispatchEvent(new dom.window.MessageEvent('message', {data: preview}));
-    assert.equal(doc.getElementById('sharedSummary')!.textContent, '1 project file included when you send');
+    assert.equal(doc.getElementById('sharedSummary')!.textContent, '1 project file in this context');
     assert.match(doc.getElementById('shared')!.textContent!, /course_agent\/search.py:1–20/);
   } finally { dom.window.close(); }
 });

@@ -364,7 +364,8 @@ test('generated exercises keep independent tabs and saved work even when titles 
   const opened: any[] = [], documents: any[] = [];
   const context: any = {subscriptions: [], extensionUri: {fsPath: resolve(__dirname, '../..')}, extensionPath: resolve(__dirname, '../..'),
     globalStorageUri: {fsPath: storage}, secrets: {onDidChange: () => disposable}, globalState: {get: () => undefined, update: async () => {}}};
-  const session = {user: {id: 'learner'}, access_token: 'token'};
+  const claims = Buffer.from(JSON.stringify({user_metadata:{name:'दीपा'}})).toString('base64url');
+  const session = {user: {id: 'learner', email:'learner@example.test'}, access_token:'fixture.' + claims + '.fixture'};
   const auth: any = {session: async () => session, signIn: async () => session, accessToken: async () => 'token'};
   const register = () => registerLearningRoom(context, () => 'production', () => ({apiUrl:'https://api.example'}) as any, auth);
   try {
@@ -384,7 +385,7 @@ test('generated exercises keep independent tabs and saved work even when titles 
       assert.equal(panel.title, 'Practice notebook · ' + title);
       await panel.send({type:'join', mode:'tutor', attempt:1});
       const document = panel.posted.find((m: any) => m.type === 'restoreNotebook');
-      assert.ok(document);
+      assert.equal(document.learnerInitial, 'दी', 'use the signed-in name before the email');
       const notebook = {...document.notebook, textDraft:'Unsent answer ' + opened.length,
         cells:[...document.notebook.cells, {id:'my-note', kind:'note', text:'Reasoning ' + opened.length}],
         drafts:[{key:'practice-question:0', snippet:'code-1', language:'python', source:'print(' + opened.length + ')',
@@ -690,9 +691,71 @@ test('Course Notes follows notebook edits and writes through the lesson that own
     for (let i=0;i<100 && latestNotes()[0].text!=='Edited again in Instructor';i++) await new Promise(done=>setTimeout(done,10));
     assert.equal(latestNotes()[0].text,'Edited again in Instructor');
     assert.equal((await original.load()).cells[0].text,'Edited again in Instructor');
+
+    notes.dispose();
+    await commands.get('dhimantai.openPracticeNotebook')!('', 'learner', 'Python', {
+      assessment:'practice_only', title:'List lengths', question:'Find the length of each list.', course:'Python', language:'python',
+    });
+    const practice = panels.at(-1);
+    await practice.send({type:'join', mode:'tutor', attempt:1});
+    const saved = practice.posted.find((m:any) => m.type === 'restoreNotebook');
+    await practice.send({type:'notebookChanged', sequence:1, documentKey:saved.documentKey,
+      notebook:{...saved.notebook, cells:[...saved.notebook.cells, {kind:'note', id:'p1', text:'Practice note'}]}});
+    await practice.send({type:'courseNotes', documentKey:saved.documentKey});
+    const practiceNotes = panels.at(-1);
+    await practiceNotes.send({type:'load'});
+    const entries = practiceNotes.posted.at(-1).notes;
+    assert.deepEqual(entries.map((n:any) => n.text), ['Edited again in Instructor', 'Practice note']);
+    await practiceNotes.send({type:'save', scope:entries[1].scope, id:'p1', text:'Edited practice note', expected:'Practice note'});
+    assert.equal(practice.posted.at(-1).type,'courseNoteUpdated');
+    assert.equal(practice.posted.at(-1).text,'Edited practice note');
+    await practice.send({type:'savedPracticeNotebooks'});
+    assert.equal(executed.at(-1),'dhimantai.practiceHistory');
   } finally {
     Api.prototype.learningRoom=grant;
     for(const panel of panels) if(!panel.disposed) panel.dispose();
     await rm(storage,{recursive:true,force:true});
   }
+});
+
+test('the entitled FreeCAD lesson opens its own exercise and disconnects native actions on leave', async t => {
+  const {FREECAD_COURSE,FREECAD_CHAPTER}=require('../src/freecadCourse') as typeof import('../src/freecadCourse');
+  const native=require('../src/freecadLesson') as typeof import('../src/freecadLesson');
+  const storage=await mkdtemp(join(tmpdir(),'cad-room-'));
+  const context:any={subscriptions:[],extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
+    globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:()=>undefined,update:async()=>{}}};
+  const auth:any={session:async()=>({user:{id:'learner'}})};
+  let locked=true, signal:AbortSignal|undefined;
+  const calls:string[]=[];
+  const start=t.mock.method(native,'openFreeCAD',async (_root:string,_assets:string,owner:string,session:AbortSignal)=>{
+    assert.equal(owner,'production\0learner');signal=session;
+    return {call:async(action:string)=>{calls.push(action);return {status:'ready',radius:7};}};
+  });
+  t.mock.method(Api.prototype,'practiceCatalog',async()=>({courses:[{name:FREECAD_COURSE,
+    chapters:[{id:FREECAD_CHAPTER,name:'Size the bore in a mounting plate',locked}]}],languages:[],question_pools:[]}));
+  t.mock.method(Api.prototype,'learningRoom',async()=>({url:'wss://lk-prod.dhimant.ai',token:'grant'}));
+  const runtime=t.mock.method(Api.prototype,'courseRuntime',async()=>({}));
+  try {
+    vscode.env.remoteName=undefined;
+    registerLearningRoom(context,()=> 'production',()=>({apiUrl:'https://api.example'}) as any,auth);
+    await commands.get('dhimantai.openLearningRoom')!(FREECAD_COURSE,FREECAD_CHAPTER);
+    const panel=panels.at(-1);
+    await panel.send({type:'join',mode:'tutor',attempt:1,chapterId:FREECAD_CHAPTER});
+    assert.equal(start.mock.callCount(),0);
+    locked=false;
+    await panel.send({type:'join',mode:'tutor',attempt:2,chapterId:FREECAD_CHAPTER});
+    assert.equal(start.mock.callCount(),1);
+    assert.equal(runtime.mock.callCount(),0);
+    assert.equal(panel.posted.find((m:any)=>m.type==='grant')?.codeRuntime,'FreeCAD');
+    await panel.send({type:'freecadAction',attempt:1,id:'old',action:'demonstrate_radius'});
+    await panel.send({type:'freecadAction',attempt:2,id:'bad',action:'save'});
+    await panel.send({type:'freecadAction',attempt:2,id:'view',action:'observe'});
+    assert.deepEqual(calls,['observe']);
+    assert.equal(panel.posted.find((m:any)=>m.id==='view')?.result.radius,7);
+    await panel.send({type:'leave'});
+    assert.equal(signal?.aborted,true);
+    await panel.send({type:'freecadAction',attempt:2,id:'late',action:'top_view'});
+    assert.deepEqual(calls,['observe']);
+    panel.dispose();
+  } finally {delete vscode.env.remoteName;await rm(storage,{recursive:true,force:true});}
 });

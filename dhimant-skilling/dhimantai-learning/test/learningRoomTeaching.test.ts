@@ -27,7 +27,7 @@ function room(assistant: 'Instructor' | 'Doubt Solver', workspace = false, rpcRe
   const ids = ['tutor','doubt_solver','end','wide','latest','add-note','add-code','save-notebook','open-notebook','restart-runtime'];
   const dom = new JSDOM('<!doctype html><header class="workspace-header"><div class="workspace-title"><h1>Notebook</h1></div><div class="workspace-status"><span id="status"></span><small id="notebook-save-status"></small></div></header><main id="feed"></main>'
     + notebookMessageBar(assistant, false, '<button type="button" id="sound"></button>')
-    + '<div class="notebook-tools">' + ids.map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('') + '</div>'
+    + '<div id="saved-task-actions"></div><div class="notebook-jumps"></div><div class="notebook-tools">' + ids.map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('') + '</div>'
     + '<input id="follow-code" type="checkbox"><input id="stuck-hints" type="checkbox"><span id="code-observer-status"></span>'
     + '<select id="cell-language">' + Object.keys(cellLanguages).map(language => `<option>${language}</option>`).join('') + '</select>',
     {runScripts:'outside-only', url:'https://webview.example', pretendToBeVisual:true});
@@ -382,7 +382,7 @@ test('a guiding question stays on speaker leakage after a failed import, and rec
   const ui = room('Instructor'), {w, sent, post, publish, chats, chatOptions, data, tick, $} = ui;
   try {
     post({type:'openTutor'});
-    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Speech to text', chapters}]});
+    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Speech to text', chapters:[chapters[0], chapters[3]]}]});
     $<HTMLButtonElement>('#lesson-list button').click();
     const attempt = sent.at(-1).attempt;
     post({type:'restoreNotebook', attempt, documentKey:'stt', notebook:emptyNotebook()});
@@ -406,7 +406,11 @@ test('a guiding question stays on speaker leakage after a failed import, and rec
       lesson_progress:{total:3, completed_count:3}});
     assert.match($('#feed').textContent!, /Lesson completed.*3\/3 lesson sections completed/s);
     assert.match($('.execution-followup').textContent!, /Coding follow-up pending.*transformers/s);
-    assert.ok($('[data-next-lesson]'));
+    assert.equal($('[data-next-lesson]').textContent, 'Next lesson: Classes');
+    const failedLink = $<HTMLAnchorElement>('.execution-followup a');
+    assert.equal(failedLink.textContent, request.snippet);
+    failedLink.click();
+    assert.equal(w.document.activeElement, $('.practice-code-editor'));
 
     $('#add-code').click();
     const other = [...w.document.querySelectorAll<HTMLElement>('.practice-code-editor')].at(-1)!;
@@ -508,7 +512,7 @@ test('lesson chooser explains ended access, keeps reload reachable and refreshes
 });
 
 test('Instructor teaches through open questions, struggle signals, Your turn cells and a next step after the recap', async () => {
-  const ui = room('Instructor'), {w, sent, post, rpcs, chats, publish, data, tick, $} = ui;
+  const ui = room('Instructor'), {w, sent, post, rpcs, chats, chatOptions, publish, data, tick, $} = ui;
   try {
     post({type:'openTutor'});
     post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Python', chapters}]});
@@ -560,13 +564,20 @@ test('Instructor teaches through open questions, struggle signals, Your turn cel
     field.value = 'It prints 4'; field.dispatchEvent(new w.Event('input')); $<HTMLButtonElement>('#send').click(); await tick();
     assert.equal(turn.classList.contains('is-open'), false, 'the Your turn cell closes when the learner replies');
 
-    data({method:'tutor_session_summary', big_idea:'Indexes are positions.', work_on:'negative indexes', is_complete:true, partial_session:false, summary_scope:'full'});
-    const next = $<HTMLButtonElement>('[data-next-lesson]');
-    assert.equal(next.textContent, 'Next lesson: Classes', 'skips ended and locked lessons');
+    const topics = [{id:'a', title:'Indexing', status:'Needs review'}, {id:'b', title:'Slicing', status:'Answered independently'}];
+    data({method:'tutor_session_summary', big_idea:'Indexes are positions.', topics_discussed:topics,
+      work_on:'Indexing; Slicing', is_complete:true, partial_session:false, summary_scope:'full'});
+    assert.match($('#feed article:last-child').textContent!, /Keep practising: Indexing/);
+    assert.doesNotMatch($('#feed article:last-child').textContent!, /Keep practising: Indexing; Slicing/);
+    assert.equal($('[data-next-lesson]'), null);
     $<HTMLButtonElement>('[data-review-weak]').click(); await tick();
-    assert.match(chats.at(-1)!, /keep practising: negative indexes/);
-    next.click();
-    assert.equal(sent.at(-1).type, 'join'); assert.equal(sent.at(-1).chapterId, 'c4');
+    assert.equal(chatOptions.at(-1).attributes.tutor_action_id, 'reviewWeakSpots');
+    data({method:'topic_update', subject:'Python', chapter_name:'Lists', lesson_name:'Lists',
+      lesson_topics:topics.map(topic => ({...topic, learning_status:'Answered independently', covered:true}))});
+    assert.equal($('[data-review-weak]'), null);
+    assert.doesNotMatch($('#lesson-list .topic-coverage').textContent!, /Needs review/);
+    data({method:'tutor_session_summary', topics_discussed:[], is_complete:true, partial_session:false, summary_scope:'full'});
+    assert.equal($('[data-review-weak]'), null);
   } finally { await ui.close(); }
 });
 
@@ -1059,13 +1070,67 @@ test('reopening sends the exact pending question, preserves the draft and return
     assert.doesNotMatch($('#feed').textContent!, /Session recap|Previously covered|questions? received feedback/i);
     assert.match($('#stopping-point').textContent!, /still waiting for your answer/);
     post({type:'runtimeHistory',documentKey:'saved',count:1,needsRestore:true});
-    assert.match($('#stopping-point #runtime-restore').textContent!, /Python variables need restoring/);
-    assert.equal($('#stopping-point').lastElementChild?.textContent,'Return to stopping point');
+    assert.match($('#runtime-restore').textContent!, /Python variables need restoring/);
+    assert.equal($('#saved-task-actions #stopping-point > button').textContent,'Return to stopping point');
     $('#stopping-point > button').click();
     assert.equal(ui.w.document.activeElement?.getAttribute('data-cell-id'), 'q');
     assert.equal($<HTMLTextAreaElement>('#message').value,'not sent yet');
     assert.equal(ui.chats.length,0,'restoring must not send Continue or the draft');
+    data({method:'notebook_resume_ready',checkpoint_id:'question-1',verified:false}); await tick();
+    const confirm = $('#confirm-saved-task');
+    assert.equal(confirm.hidden,false);
+    confirm.click(); await tick();
+    assert.match(ui.chats.at(-1) ?? '',/confirm my saved task/);
+    assert.equal($<HTMLTextAreaElement>('#message').value,'not sent yet');
     data({method:'notebook_resume_ready',checkpoint_id:'question-1',verified:true});await tick();
+    assert.equal(confirm.hidden,true);
     assert.match($('#composer-context').textContent!,/Print saved/);
   }finally{await ui.close();}
+});
+
+test('an Instructor error demonstration completes on its predicted exception and an unexpected failure links to the exact editor', async () => {
+  const ui = room('Instructor'), {post, sent, data, publish, tick, $, w} = ui;
+  const source = 'def pay(hours, rate):\n    print(hours * rate)\n\ntotal = pay(2, 150) + pay(1, 150)\nprint(total)';
+  const example = (tag: string) => ['```' + tag, source, '```'].join('\n');
+  try {
+    post({type:'openTutor'});
+    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Python Programming', chapters:[
+      {id:'c1', name:'Chapter 1: Your first Python program'}, {id:'c2', name:'Chapter 2: Text, input and conversion', locked:true}]}]});
+    $('#lesson-list button').click();
+    const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook', attempt, documentKey:'python', notebook:emptyNotebook()});
+    post({type:'grant', attempt, url:'unused', token:'unused', chapterId:'c1'}); await tick();
+    publish([example('python expected-error=TypeError'), 'This next example will print twice.', example('python'),
+      'This example raises a TypeError because both calls return None.'].join('\n\n'));
+    const editors = [...w.document.querySelectorAll<HTMLElement>('.practice-code-editor')];
+    assert.equal(editors.length, 2);
+    function run(editor: HTMLElement, error: string) {
+      editor.querySelector<HTMLButtonElement>('[data-action="run"]')!.click();
+      const request = sent.filter(m => m.type === 'codeAction').at(-1);
+      post({...request, type:'codeResult', execution:{status:'exited', exit_code:1, stdout:'300\n150\n' + error,
+        stderr:'', truncated:false}});
+      return request.snippet;
+    }
+    for (const editor of editors) {
+      run(editor, "TypeError: unsupported operand type(s) for +: 'NoneType' and 'NoneType'");
+      assert.match(editor.querySelector('.practice-status')!.textContent!, /expected TypeError/);
+    }
+    data({method:'tutor_session_summary', topics_discussed:[], is_complete:true, partial_session:false, summary_scope:'full'});
+    assert.equal($('.execution-followup'), null);
+    assert.equal($('[data-next-lesson]'), null);
+    assert.match($('.recap-actions').textContent!, /Chapter 2: Text, input and conversion · Locked/);
+    const snippet = run(editors[1], "NameError: name 'pay' is not defined");
+    const row = editors[1].closest('article')!;
+    row.querySelector<HTMLButtonElement>('[data-collapse]')!.click();
+    assert.equal(row.querySelector<HTMLElement>('.conversation-body')!.hidden, true);
+    const link = $<HTMLAnchorElement>('.execution-followup a');
+    assert.equal(link.textContent, snippet);
+    link.click();
+    assert.equal(row.querySelector<HTMLElement>('.conversation-body')!.hidden, false);
+    assert.equal(w.document.activeElement, editors[1]);
+    const view = EditorView.findFromDOM(editors[0].querySelector('.cm-editor')!)!;
+    view.dispatch({changes:{from:0,to:view.state.doc.length,insert:'print(None + 1)'}});
+    run(editors[0], 'TypeError: other failure');
+    assert.equal(w.document.querySelectorAll('.execution-followup a').length, 2);
+  } finally { await ui.close(); }
 });
