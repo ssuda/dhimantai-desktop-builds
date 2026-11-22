@@ -38,6 +38,19 @@ test('native update selection requires installation channel, exact CPU and owned
   assert.throws(() => desktopArtifact(manifest, { ...target, version: '1.143.10006' }));
 });
 
+test('stable desktop checks the production installer feed', async () => {
+  const stable = { ...target, environment: 'production', version: '1.143.10014' };
+  const updates = new DesktopUpdates(stable, tmpdir(), () => {}, async input => {
+    assert.equal(String(input), 'https://dhimant.ai/upskill/releases-production.json');
+    return new Response(JSON.stringify({ ...manifest, environment: 'production',
+      artifacts: [{ ...artifact, channel: 'stable', version: stable.version }] }));
+  });
+  try {
+    await updates.check();
+    assert.equal(updates.state.status, 'current');
+  } finally { updates.dispose(); }
+});
+
 async function fixture(fetcher: typeof fetch, run: (updates: DesktopUpdates, directory: string) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), 'desktop-updates-test-'));
   const updates = new DesktopUpdates(target, directory, () => {}, fetcher);
@@ -153,5 +166,14 @@ test('shutdown cancels downloads, removes partial bytes and prevents late ready 
     updates.dispose(); assert.equal(signal?.aborted, true); complete(new Response(bytes));
     await pending;
     assert.notEqual(updates.state.status, 'ready'); assert.deepEqual(await readdir(directory), []);
+  });
+});
+
+test('a missing architecture produces a compatibility warning and never downloads an installer', async () => {
+  await fixture(async () => new Response(JSON.stringify({...manifest, artifacts:[{...artifact, arch:'x64'}]})), async updates => {
+    await updates.check();
+    assert.equal(updates.state.status, 'incompatible'); assert.match(updates.state.message, /arm64/);
+    await updates.download();
+    assert.equal(await updates.installerPath(), undefined);
   });
 });

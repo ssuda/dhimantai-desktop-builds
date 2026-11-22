@@ -4,8 +4,93 @@ const {writeFileSync}=require('node:fs');
 const assert=require('node:assert/strict');
 const {startFixtures}=require('./webviewFixtures.cjs');
 let origin,output;
+async function checkAccountLayout(page) {
+ for (const mode of ['signIn', 'signUp']) {
+   await page.goto(origin + '/' + mode);
+   for (const [width, height] of [[1920, 1080], [1280, 600], [760, 800], [759, 800], [390, 700]]) {
+     await page.setViewportSize({width, height});
+     const panel = await page.locator('.account').boundingBox();
+     const form = await page.locator('.form-content').boundingBox();
+     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+     if (width >= 760) {
+       assert.ok(panel.x === 0 && panel.y === 0 && panel.width === width && panel.height >= height,
+         mode + ' fills the desktop viewport at ' + width);
+       assert.ok(form.width <= 480 && Math.abs(form.x + form.width / 2 - width * .75) < 1,
+         mode + ' centers a readable form in the right panel');
+     } else {
+       assert.ok(panel.x > 0 && panel.width <= 540 && Math.abs(panel.x * 2 + panel.width - width) < 1);
+       assert.equal(await page.locator('.brand-story').isVisible(), false);
+       const brand = await page.locator('.brand-panel').boundingBox();
+       assert.ok(form.y >= brand.y + brand.height);
+     }
+     const submit = page.locator('.submit');
+     await submit.scrollIntoViewIfNeeded();
+     const button = await submit.boundingBox();
+     assert.ok(button.y >= -1 && button.y + button.height <= height + 1, 'submit is reachable at ' + width);
+     await page.evaluate(() => scrollTo(0, 0));
+     await page.screenshot({path:join(output, mode + '-' + width + '.png'), fullPage:true});
+   }
+ }
+}
+async function checkCourseSearch(page, path) {
+ const courses = [
+   {name:'AI at Work', chapters:[{id:'ai', name:'Using AI'}]},
+   {name:'Algorithms with Python', chapters:[{id:'algorithms', name:'Sorting'}]},
+   {name:'Data Structures with Python', chapters:[{id:'structures', name:'Stacks'}]},
+ ];
+ await page.goto(origin + path + '?holdLessons');
+ await page.waitForFunction(() => window.posts.some(post => post.type === 'tutorLessons'));
+ await page.evaluate(courses => window.fixturePost({type:'tutorLessons', courses,
+   attempt:window.posts.find(post => post.type === 'tutorLessons').attempt}), courses);
+ const toggle = page.getByRole('button', {name:'Course AI at Work', exact:true});
+ const query = page.getByRole('combobox', {name:'Search courses'});
+ const options = page.getByRole('listbox', {name:'Courses'}).getByRole('option');
+ const chapterSearch = page.getByLabel('Find a chapter');
+ await chapterSearch.fill('Using');
+ await toggle.click();
+ assert.equal(await query.evaluate(field => field === document.activeElement), true);
+ assert.deepEqual(await options.allTextContents(), courses.map(course => course.name));
+ await query.fill('YtH');
+ assert.deepEqual(await options.allTextContents(), courses.slice(1).map(course => course.name));
+ await page.locator('#course-selection').screenshot({path:join(output, path.slice(1) + '-course-search.png')});
+ assert.ok(await page.getByRole('button', {name:'Using AI', exact:true}).isVisible());
+ await query.fill('unknown');
+ assert.ok(await page.getByText('No courses match your search.').isVisible());
+ await query.press('Enter');
+ assert.ok(await query.isVisible());
+ await query.press('Escape');
+ assert.ok(await toggle.evaluate(button => button === document.activeElement));
+ assert.equal(await chapterSearch.inputValue(), 'Using');
+ await toggle.press('Enter');
+ assert.equal(await query.inputValue(), '');
+ assert.equal(await options.count(), courses.length);
+ await query.fill('YtH');
+ await query.press('ArrowDown');
+ await query.press('Enter');
+ const selected = page.getByRole('button', {name:'Course Data Structures with Python', exact:true});
+ assert.ok(await selected.evaluate(button => button === document.activeElement));
+ assert.equal(await chapterSearch.inputValue(), '');
+ assert.ok(await page.getByRole('button', {name:'Stacks', exact:true}).isVisible());
+ await selected.click();
+ await query.fill('rith');
+ await chapterSearch.click();
+ assert.equal(await query.isVisible(), false);
+ await selected.click();
+ await query.press('Tab');
+ assert.equal(await query.isVisible(), false);
+ assert.ok(await chapterSearch.evaluate(field => field === document.activeElement));
+ await selected.click();
+ await options.filter({hasText:'Algorithms with Python'}).click();
+ await page.getByRole('button', {name:'Sorting', exact:true}).click();
+ await page.waitForFunction(() => window.posts.some(post => post.type === 'join' && post.chapterId === 'algorithms'));
+}
+
 async function checkCoursePreviews(page) {
  await page.goto(origin+'/previews');
+ const initialPostCount = await page.evaluate(() => window.posts.length);
+ const previewPosts = () => page.evaluate(start => window.posts.slice(start), initialPostCount);
+ await page.getByRole('button',{name:'Explore',exact:true}).click();
+ if(await page.locator('#toggle-filters').isVisible()) await page.locator('#toggle-filters').click();
  await page.locator('#filter-status').selectOption('preview');
  assert.equal(await page.locator('#results .course:visible').count(),2);
  for(const [id, wrong, right, width] of [
@@ -23,7 +108,7 @@ async function checkCoursePreviews(page) {
    await dialog.getByRole('button',{name:right,exact:true}).click();
    assert.match(await dialog.locator('[role=status]').innerText(),/^Correct\./);
    assert.equal(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth),true);
-   assert.deepEqual(await page.evaluate(()=>window.posts),[]);
+   assert.deepEqual(await previewPosts(),[]);
    await dialog.screenshot({path:join(output,id+'-preview.png')});
    await page.keyboard.press('Escape');
    assert.equal(await entry.evaluate(el=>document.activeElement===el),true);
@@ -31,8 +116,8 @@ async function checkCoursePreviews(page) {
    assert.equal(await dialog.locator('[role=status]').innerText(),'');
    if(id==='algorithms-python') await dialog.getByRole('button',{name:'Close preview'}).click();
    else {
-     await dialog.getByRole('button',{name:'Start free'}).click();
-     assert.deepEqual(await page.evaluate(()=>window.posts),[{type:'signUp',id}]);
+     await dialog.getByRole('button',{name:'Start chapter 1'}).click();
+     assert.deepEqual(await previewPosts(),[{type:'signUp',id}]);
    }
  }
 }
@@ -73,6 +158,84 @@ async function checkSolutionLayout(page) {
  assert.equal(await page.evaluate(()=>window.posts.filter(m=>m.type==='codeAction' && m.action==='run').at(-1).source),
    'def new_requirements(old, new):\n    return sorted(set(new) - set(old))');
 }
+async function checkStickyNotebook(page) {
+ for (const path of ['/room', '/practice', '/doubt']) {
+   await page.goto(origin + path);
+   if (path !== '/practice') await page.getByRole('button', {name:'Gradients and parameter updates', exact:true}).click();
+   await page.locator('.room-ready').waitFor();
+   await page.evaluate(() => {
+     window.fixturePost({type:'restoreNotebook', documentKey:'fixture', learnerInitial:'J', notebook:{version:1, title:'Saved notebook', drafts:[], textDraft:'Keep this draft',
+       cells:[{kind:'message',id:'question',text:'Please continue the lesson.'},
+         ...Array.from({length:28}, (_, i) => ({kind:'board',id:'section-' + i,text:'## Notebook section ' + i + '\n\nRead this passage.'}))]}});
+   });
+   const student = page.locator('[data-cell-id="question"]'), reply = page.locator('[data-cell-id="section-0"]');
+   assert.equal(await student.locator('.speaker-avatar[aria-hidden="true"]').innerText(), 'J');
+   assert.equal(await reply.locator('.speaker-name').innerText(), path === '/doubt' ? 'Doubt Solver' : 'Instructor');
+   const background = card => card.evaluate(el => getComputedStyle(el).backgroundColor);
+   assert.notEqual(await background(student.locator('.learner-message')), await background(reply));
+   const options = page.getByLabel('Notebook options', {exact:true});
+   await page.locator('#notebook-edges').waitFor();
+   let previousGutter = 0;
+   for (const width of [1440, 1920, 390, 320]) {
+     await page.setViewportSize({width,height:720});
+     const composer = await page.locator('.composer-box').boundingBox(), card = await reply.boundingBox();
+     assert.ok(Math.abs(card.x + card.width - composer.x - composer.width) < 2,
+       path + ' reply and composer share a right edge at ' + width);
+     if (width >= 1440) {
+       const header = await page.locator('.workspace-topline').boundingBox();
+       const avatar = await reply.locator('.speaker-avatar').boundingBox();
+       const bubble = await student.boundingBox();
+       const studentAvatar = await student.locator('.speaker-avatar').boundingBox();
+       const paragraph = await reply.locator('.conversation-body p').first().boundingBox();
+       const right = card.x + card.width;
+       assert.ok(card.width > width * .85 && Math.abs(card.x - composer.x) < 2);
+       assert.ok(paragraph.width > card.width * .9, 'reply text uses the width of its card');
+       assert.ok(header.x > previousGutter && Math.abs(width - right - header.x) < 2, 'both room gutters grow with the window');
+       assert.ok(avatar.x >= header.x && avatar.x + avatar.width <= card.x, 'the reply avatar fits inside the left gutter of the conversation');
+       assert.ok(bubble.width < card.width / 2 && Math.abs(studentAvatar.x + studentAvatar.width - right) < 2);
+       previousGutter = header.x;
+     }
+     await page.getByRole('button',{name:'Bottom of notebook'}).click();
+     await page.waitForFunction(() => {
+       const page = window.notebookScroller();
+       return Math.abs(page.scrollHeight - page.clientHeight - page.scrollTop) < 2;
+     });
+     assert.equal(await page.locator('#message').inputValue(), 'Keep this draft');
+     const bar = page.getByRole('navigation', {name:'Learning notebook controls'});
+     const box = await bar.boundingBox();
+     assert.ok(box && Math.abs(box.y) < 1 && box.height <= (width > 1000 ? 65 : 105), path+' toolbar at '+width+': '+JSON.stringify(box));
+     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+     for (const id of ['#workspace-mode', '#coaching-language', '#course-runtime']) {
+       const rect = await page.locator(id).boundingBox();
+       assert.ok(rect && rect.x >= 0 && rect.x + rect.width <= width && rect.y >= 0 && rect.y + rect.height <= box.height + 1, id+' at '+width);
+     }
+     if (!await page.locator('#course-notes').isVisible()) await options.click();
+     for (const id of ['#add-code', '#add-note', '#course-notes']) assert.equal(await page.locator(id).isVisible(), true);
+     await page.locator('#course-notes').click();
+     assert.ok(await page.evaluate(() => window.posts.some(m => m.type === 'courseNotes' && m.documentKey === 'fixture')));
+     await options.click();
+     await page.locator('#saved-practice').click();
+     assert.equal(await options.evaluate(el => el === document.activeElement), true);
+     assert.ok(await page.evaluate(() => window.posts.some(m => m.type === 'savedPracticeNotebooks')));
+     await page.getByRole('button',{name:'Top of notebook'}).focus();
+     await page.keyboard.press('Enter');
+     assert.equal(await page.evaluate(() => window.notebookScroller().scrollTop), 0);
+     assert.equal(await page.locator('.workspace-title h1').evaluate(el => el === document.activeElement), true);
+     await page.evaluate(() => { window.notebookScroller().scrollTop = 800; });
+     await page.screenshot({path:join(output, path.slice(1)+'-toolbar-'+width+'.png')});
+   }
+   await options.click();
+   await page.locator('#add-code').click();
+   await page.locator('#feed article[data-entry-kind="code"]').last().waitFor();
+   await options.click();
+   await page.locator('#add-note').click();
+   assert.equal(await page.getByRole('textbox',{name:'My notes'}).last().inputValue(), 'Keep this draft');
+   await page.setViewportSize({width:1440, height:1600});
+   await page.evaluate(() => window.fixturePost({type:'restoreNotebook', documentKey:'fixture',
+     notebook:{version:1, title:'Short notebook', drafts:[], cells:[]}}));
+   await page.locator('#notebook-edges').waitFor({state:'hidden'});
+ }
+}
 async function checkRoomNavigation(page) {
  const python = require('../../../website/upskill/catalog.json').courses.find(c=>c.id==='algorithms-python');
  const chapters = python.chapters.map((name,i)=>({id:'algorithm-'+i,name,locked:i===1}));
@@ -88,6 +251,7 @@ async function checkRoomNavigation(page) {
  await page.getByRole('button',{name:chapters[2].name,exact:true}).click();
  const connected = id=>page.waitForFunction(id=>window.posts.filter(m=>m.type==='join').at(-1)?.chapterId===id && document.getElementById('status').textContent.includes('connected'),id);
  await connected(chapters[2].id);
+ await page.getByLabel('Notebook options', {exact:true}).click();
  await page.locator('#previous-chapter').click();
  await connected(chapters[0].id);
  assert.equal(await page.locator('#previous-chapter').isDisabled(),true);
@@ -124,6 +288,10 @@ async function checkWrittenRoom(page) {
  }
  await brief.locator('summary').click();
  assert.equal(await page.locator('#task').isVisible(),false);
+ await page.evaluate(()=>window.fixturePost({type:'feedback', feedback:'Check the base case.', next_step:'Trace one return.'}));
+ const feedback = page.locator('.written-feedback');
+ assert.equal(await feedback.locator('.speaker-name').innerText(), 'Instructor');
+ assert.match(await feedback.locator('.speaker-avatar').evaluate(el=>getComputedStyle(el).backgroundImage), /dhimantai-avatar/);
  await page.getByRole('button',{name:'Back to course'}).click();
  assert.equal(await page.evaluate(()=>window.posts.filter(m=>m.type==='backToCourse').at(-1).answer),'Each call resumes after its recursive child returns.');
 }
@@ -184,8 +352,44 @@ async function checkChapterCards(page) {
  }
 }
 (async()=>{
- const fixture=await startFixtures();({origin,output}=fixture);const {page,errors}=fixture;
+ // Pass the installed or unpacked VSIX directory to exercise the assets learners receive.
+ const packagedLayout = process.argv[2] === '--layout-from';
+ if (packagedLayout) assert.ok(process.argv[3], '--layout-from requires an extension directory');
+ const fixture=await startFixtures(packagedLayout ? process.argv[3] : undefined);({origin,output}=fixture);const {page,errors}=fixture;
  try{
+ if (packagedLayout) {
+   await checkAccountLayout(page);
+   await checkStickyNotebook(page);
+   assert.deepEqual(errors, []);
+   console.log('Packaged account and learning chat layouts passed.');
+   return;
+ }
+ for (const path of ['/room', '/doubt']) {
+   await checkCourseSearch(page, path);
+   await page.goto(origin + path + '?holdLessons');
+   await page.waitForFunction(() => window.posts.some(m => m.type === 'tutorLessons'));
+   assert.ok(await page.locator('#lesson-loading[role=status]').isVisible());
+   assert.equal(await page.locator('#course-selection').isVisible(), false);
+   assert.equal(await page.locator('#learning-workspace').isVisible(), false);
+   await page.evaluate(() => {
+     window.fixturePost({type:'visibility', visible:false});
+     window.fixturePost({type:'visibility', visible:true});
+   });
+   assert.equal(await page.evaluate(() => window.posts.filter(m => m.type === 'tutorLessons').length), 1);
+   if (path === '/doubt') {
+     await page.evaluate(() => window.fixturePost({type:'tutorLessons', attempt:window.posts.findLast(m => m.type === 'tutorLessons').attempt, error:'Connection lost.'}));
+     await page.getByRole('button', {name:'Retry loading courses'}).click();
+     assert.ok(await page.locator('#lesson-loading').isVisible());
+   }
+   await page.evaluate(() => window.fixturePost({type:'tutorLessons', attempt:window.posts.findLast(m => m.type === 'tutorLessons').attempt,
+     preferredCourse:'Python', courses:[{name:'Python', chapters:[{id:'lists', name:'Lists'}]}]}));
+   await page.locator('#lesson-loading').waitFor({state:'hidden'});
+   if (path === '/doubt') await page.getByRole('button', {name:'Lists', exact:true}).click();
+   await page.locator('#learning-workspace').waitFor({state:'visible'});
+   assert.equal(await page.locator('#course-selection').isVisible(), false);
+ }
+ await checkStickyNotebook(page);
+ await checkAccountLayout(page);
  await checkCoursePreviews(page);
  await checkSolutionLayout(page);
  await checkRoomNavigation(page);
@@ -208,8 +412,10 @@ async function checkChapterCards(page) {
    await page.setViewportSize({width,height});
    assert.equal(await page.locator('#learning-coach,#learning-outline').count(),0);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'room overflow at '+width);
-   const feed=await page.locator('#feed').boundingBox(),composer=await page.locator('#message-bar').boundingBox();
-   assert.ok(composer.y>=feed.y+feed.height-1 && Math.abs(composer.width-feed.width)<2,'composer follows the full-width notebook at '+width);
+   assert.ok(await page.evaluate(() => {
+     const feed=document.getElementById('feed').getBoundingClientRect(), composer=document.getElementById('message-bar').getBoundingClientRect();
+     return composer.top >= feed.bottom - 1 && Math.abs(composer.width - feed.width) < 2;
+   }), 'composer follows the full-width notebook at '+width);
    await page.locator('#message').scrollIntoViewIfNeeded();
    await page.locator('.composer-menu summary').click();
    assert.ok(await page.locator('#attach-images').isVisible());
@@ -238,6 +444,7 @@ async function checkChapterCards(page) {
    const reading=await page.evaluate(()=>window.notebookScroller().scrollTop);
    await page.evaluate(()=>window.publish('## A later reply\n\n'+Array.from({length:18},(_,i)=>'Step '+(i+1)+': Keep the source, sample rate and speaker split with your experiment. Your earlier answers remain available.').join('\n\n')));
    assert.ok(Math.abs(await page.evaluate(()=>window.notebookScroller().scrollTop)-reading)<3,'incoming reply preserves reading position at '+width);
+   await page.getByLabel('Notebook options', {exact:true}).click();
    await page.locator('#latest').click();
    const latest=await page.locator('#feed > article').last().boundingBox();
    assert.ok(latest.y>=0 && latest.y<900,'Jump to latest reveals the reply rather than the composer at '+width+': '+JSON.stringify(latest));
@@ -296,7 +503,7 @@ async function checkChapterCards(page) {
    await page.setViewportSize({width,height:1000});
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Doubt Solver overflow at '+width);
    const documentBox=await page.locator('#learning-document').boundingBox();
-   assert.ok(documentBox.width>=width-50,'Doubt Solver uses the available room width');
+   assert.ok(documentBox.width >= width * .90,'Doubt Solver uses the available room width');
    assert.equal(await page.locator('#message-bar').evaluate(el=>el.parentElement.id),'learning-document');
    await page.evaluate(()=>window.scrollTo(0,0));
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
@@ -306,7 +513,8 @@ async function checkChapterCards(page) {
  }
  await page.locator('#choose-course').click();
  await page.waitForFunction(()=>document.getElementById('lesson-list').getAttribute('aria-busy')==='false');
- await page.locator('#lesson-course').selectOption('Python');
+ await page.locator('#course-toggle').click();
+ await page.getByRole('option', {name:'Python', exact:true}).click();
  assert.equal(await page.getByRole('button',{name:'Locked chapter · Locked',exact:true}).isDisabled(),true);
  await page.getByRole('button',{name:'Expired chapter · Access ended · Buy again',exact:true}).focus();
  await page.keyboard.press('Enter');
@@ -334,6 +542,7 @@ async function checkChapterCards(page) {
    {id:'11111111-1111-4111-8111-111111111111',title:'Why does ScriptedModel return None?',course:'Build AI Agents',chapter:'python-lists'},
    {id:'22222222-2222-4222-8222-222222222222',title:'How do gradients update weights?',course:'Developing Speech-to-Text Models',chapter:'chapter-2'},
  ]}));
+ await page.getByLabel('Notebook options', {exact:true}).click();
  await page.locator('#doubt-history summary').click();
  assert.equal(await page.locator('#doubt-chat-list button').count(),2);
  await page.evaluate(()=>window.publish('## Predict the third printed line\n\n```python\nmodel = ScriptedModel([1, 2])\nprint(model.reply([]))\n```\n\n```python prediction-only\nprint(missing_name)\n```'));

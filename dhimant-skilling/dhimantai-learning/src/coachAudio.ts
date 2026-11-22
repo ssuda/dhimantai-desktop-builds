@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Api } from './api';
 import { Auth } from './auth';
 import { Environment, EnvironmentName } from './environments';
+import { messageComposer } from './learningComposer';
 import { microphoneControl } from './dictation';
 
 export interface SpokenReply {
@@ -36,6 +37,15 @@ export function audioControls(webview: vscode.Webview, media: vscode.Uri, nonce:
     '<span id="audio-status" class="audio-sr-only" role="status">Spoken explanations off</span>' +
     '<p id="audio-help" class="audio-sr-only">Select the speaker for an explanation of the idea. The same control pauses, resumes or explains it again. Open the arrow menu to choose voice speed, mute, choose an output or turn spoken explanations off.</p></div>' +
     script('livekit-client.umd.js') + script('learning-room/audioControls.js') + script('coachAudio.js');
+}
+
+/** Instructor chats share their device controls and scripts as well as their message form. */
+export function instructorComposer(webview: vscode.Webview, media: vscode.Uri, nonce: string,
+    options: Omit<Parameters<typeof messageComposer>[0], 'assistant' | 'audio' | 'camera'>) {
+  const form = messageComposer({...options, assistant:'Instructor', audio:audioControls(webview, media, nonce),
+    camera:vscode.env.appName === 'dhimantAI'});
+  const dictation = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dictation.js'));
+  return form + `<script nonce="${nonce}" src="${dictation}"></script>`;
 }
 
 export class CoachAudio {

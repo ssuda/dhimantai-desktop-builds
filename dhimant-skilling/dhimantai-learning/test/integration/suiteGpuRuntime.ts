@@ -12,14 +12,18 @@ export async function run() {
   const original={get:vscode.extensions.getExtension,execute:vscode.commands.executeCommand,info:vscode.window.showInformationMessage};
   const checks:{step:string;ok:boolean}[]=[];
   const executed:string[]=[];
-  let probes=0;
+  let probes=0,session='';
   const kernel={language:'python',status:'idle',async *executeCode(code:string) {
+    if(code.startsWith('print(globals().get("_dhimantai_verified_session"')) {
+      yield {items:[{mime:'application/x.notebook.stream.stdout',data:Buffer.from(session)}]};return;
+    }
     executed.push(code);yield {items:[{mime:'application/x.notebook.stream.stdout',data:Buffer.from('on selected GPU\n')}]};
   }};
   const controller=vscode.notebooks.createNotebookController('dhimantai-gpu-test','jupyter-notebook','Test GPU provider');
   controller.supportedLanguages=['python'];
   controller.executeHandler=async cells=>{
     for(const cell of cells) {
+      session=/_dhimantai_verified_session = "([^"]+)"/.exec(cell.document.getText())?.[1] ?? '';
       probes++;assert.match(cell.document.getText(),/nvidia-smi/);
       const task=controller.createNotebookCellExecution(cell);task.start(Date.now());
       await task.replaceOutput([new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout('DHIMANTAI_GPU_READY\nSimulated GPU\n')])]);
@@ -30,7 +34,7 @@ export async function run() {
     (vscode.extensions as any).getExtension=(id:string)=>id==='ms-toolsai.jupyter'
       ? {activate:async()=>({kernels:{getKernel:async()=>kernel}})} : original.get(id);
     (vscode.window as any).showInformationMessage=async()=>undefined;
-    (vscode.commands as any).executeCommand=(id:string,...args:any[])=>id==='notebook.selectKernel'
+    (vscode.commands as any).executeCommand=(id:string,...args:any[])=>id==='jupyter.kernel.selectJupyterServerKernel' ? controller.id : id==='notebook.selectKernel'
       ? original.execute(id,{id:controller.id,extension:'optficial.dhimantai-learning',notebookEditor:vscode.window.activeNotebookEditor})
       : original.execute(id,...args);
     await runtime.connect('cloud');

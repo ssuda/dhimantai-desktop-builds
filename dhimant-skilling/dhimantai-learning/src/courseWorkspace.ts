@@ -1,4 +1,5 @@
-import { previewPublishArgs } from './skilling';
+import { watchAppRuns } from './courseAppPreview';
+import { PREVIEW_PORTS, previewPublishArgs } from './skilling';
 import * as vscode from 'vscode';
 import { createHash, randomUUID } from 'node:crypto';
 import { access, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
@@ -109,6 +110,7 @@ export class CourseWorkspaces {
   private readonly media: string;
   private readonly engines = new Map<string, CourseEngine>();
   private readonly releases = new Map<string, RuntimeRelease>();
+  private readonly appPreviews = new Map<string, vscode.Disposable>();
   private readonly started = new Map<string, CourseEngine>();
   private readonly activeMachines = new Map<string, {selection:string; names:string[]}>();
   private readonly verifiedLanguages = new WeakMap<CourseEngine, Set<string>>();
@@ -183,6 +185,11 @@ export class CourseWorkspaces {
       const response=await this.downloadRuntime(scope);
       await this.checkAccount(scope);
       const configuration=courseConfiguration(response.configuration,scope.course);
+      if(configuration.editor_extensions?.length){
+        const {activateCourseTools}=await import('./courseEditorTools');
+        await activateCourseTools(this.context.extensionPath,configuration.editor_extensions);
+        await this.checkAccount(scope);
+      }
       if(response.runtime)runtimeRelease(response.runtime);
       this.configurations.set(key,{...response,configuration});
     }
@@ -463,7 +470,8 @@ export class CourseWorkspaces {
         report('Pausing the previous lab machines');
         await stream(bin, ['stop', '--time', '10', ...previous.names], log);
       }
-      const mediaPorts = courseMediaPublishArgs(await this.configuration(record));
+      const configuration = await this.configuration(record);
+      const mediaPorts = courseMediaPublishArgs(configuration);
       const fingerprint = digest(JSON.stringify([release.source_sha256, selection, 'preview-ports-v1', ...mediaPorts]));
       let name:string;
       const activeNames:string[] = [];
@@ -541,6 +549,13 @@ export class CourseWorkspaces {
       this.started.set(engine.name, engine);
       this.activeMachines.set(record.key, {selection:selectionKey,names:activeNames});
       this.engines.set(record.key, engine);
+      this.appPreviews.get(record.key)?.dispose();
+      this.appPreviews.delete(record.key);
+      if (!selection.compose) {
+        const watchers = PREVIEW_PORTS.filter(p => configuration.ports.some(item => item.port === p && item.protocol === 'tcp'))
+          .map(p => watchAppRuns(engine, p, () => this.check(record), message => this.output.appendLine(message)));
+        if (watchers.length) this.appPreviews.set(record.key, vscode.Disposable.from(...watchers));
+      }
       const port = selection.compose ? undefined : await courseDebugPort(engine).catch(() => undefined);
       await this.context.globalState.update(this.recordPrefix + record.key, {...record,machine,prepared:true,
         debugger:port ? {bin,port} : undefined});
@@ -569,15 +584,26 @@ export class CourseWorkspaces {
     const engines = [...this.engines.values(), ...this.started.values()];
     this.engines.clear();
     this.started.clear();
+    for (const preview of this.appPreviews.values()) preview.dispose();
+    this.appPreviews.clear();
     this.activeMachines.clear();
     this.activeProjects.clear();
     if (engines.length) await stopCourseRuntime(engines[0].bin, [...new Set(engines.map(engine => engine.name))]);
   }
 
-  /** Whether running here needs only a container start, not the one-time Podman install and image build. */
+  /** Read saved setup results without starting a runtime. */
+  preparedCourses(environment: EnvironmentName, account: string): Set<string> {
+    return new Set(this.records.filter(record => record.environment === environment && record.account === account
+      && !record.project && !record.runtime && this.prepared(record)).map(record => record.course));
+  }
+
+  private prepared(record: CourseRecord): boolean {
+    return this.engines.has(record.key) || record.prepared === true;
+  }
+
   isSetUp(uri: vscode.Uri): boolean {
     const record = this.enabled ? this.executionRecord(uri) : undefined;
-    return !!record && (this.engines.has(record.key) || record.prepared === true);
+    return !!record && this.prepared(record);
   }
 
   private projectBinds(record: CourseRecord) {

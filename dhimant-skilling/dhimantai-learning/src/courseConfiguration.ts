@@ -1,3 +1,4 @@
+import type {EditorTool} from './courseEditorTools';
 import {createHash} from 'node:crypto';
 import {courseRecipe, COURSE_LANGUAGES, Recipe} from './courseRecipe';
 import type {GpuLabRequirement} from './sshRuntimeConfig';
@@ -13,6 +14,7 @@ export interface CourseConfiguration {
   datasets:Record<string,{sql:string;sha256:string;about:About}>;
   scenarios:{version:1;scenarios:{id:string;setup:string;setup_sha256:string}[]};
   ports:{port:number;protocol:'tcp'|'udp'}[];
+  editor_extensions?:EditorTool[];
   notebooks?:{id:string;name:string}[];
 }
 export interface CourseRuntimeResponse {runtime:RuntimeRelease|null;configuration:CourseConfiguration}

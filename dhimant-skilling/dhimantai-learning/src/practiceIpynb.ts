@@ -21,6 +21,7 @@ const KERNELS: Record<string, {name: string; display_name: string; extension: st
 const CELL_LANGUAGE: Record<string, string> = {pglab: 'shellscript'};
 
 export interface PracticeLink {
+  course?: string;
   version: 1;
   questionId: string;
   account: string;
@@ -71,7 +72,7 @@ export function practiceIpynb(practice: PracticeNotebook, environment: Environme
 export function practiceMetadata(practice: PracticeNotebook, environment: EnvironmentName) {
   return {
     dhimantai_coach: {version: 1, environment, question: practice.question.slice(0, 6000), path: practice.path},
-    dhimantai_practice: {version: 1, question_id: practice.id, account: practice.account, environment,
+    dhimantai_practice: {version: 1, question_id: practice.id, account: practice.account, environment, ...(practice.course ? {course:practice.course} : {}),
       code_assistance_allowed: practice.assistance, title: practice.title, language: practice.language,
       tests: practice.tests.slice(0, 20), ...(practice.dataset ? {dataset: practice.dataset.slice(0, 64000)} : {})},
   };
@@ -84,7 +85,7 @@ export function practiceMetadata(practice: PracticeNotebook, environment: Enviro
 export function taskChanged(metadata: any, practice: PracticeNotebook, environment: EnvironmentName): boolean {
   const fresh = practiceMetadata(practice, environment);
   const stored = {coach: metadata?.dhimantai_coach, practice: metadata?.dhimantai_practice};
-  const pick = (m: any) => JSON.stringify([m.coach?.question ?? '', m.coach?.path ?? '', m.practice?.title ?? '', m.practice?.tests ?? [],
+  const pick = (m: any) => JSON.stringify([m.coach?.question ?? '', m.coach?.path ?? '', m.practice?.title ?? '', m.practice?.course ?? '', m.practice?.tests ?? [],
     m.practice?.dataset ?? '', m.practice?.code_assistance_allowed ?? null]);
   return pick(stored) !== pick({coach: fresh.dhimantai_coach, practice: fresh.dhimantai_practice});
 }
@@ -103,6 +104,7 @@ export function practiceLink(metadata: any, environments: readonly string[]): Pr
     && ['stdio', 'cli', 'function', 'sql', 'lab'].includes(t.kind));
   return {version: 1, questionId: link.question_id, account: link.account, environment: link.environment,
     title: link.title.slice(0, 180), language: link.language, tests,
+    ...(typeof link.course === 'string' && link.course.trim() && link.course.length <= 300 ? {course:link.course} : {}),
     dataset: typeof link.dataset === 'string' ? link.dataset.slice(0, 64000) : ''};
 }
 

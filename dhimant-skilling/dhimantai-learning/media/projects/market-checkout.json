@@ -1,0 +1,32 @@
+{
+  "id": "market-checkout",
+  "version": 1,
+  "title": "Checkout previews",
+  "files": [
+    "README.md",
+    "pricing.py"
+  ],
+  "architecture": {
+    "prediction": "After one preview and one purchase, how many receipts does the starter add?",
+    "focusFile": "pricing.py",
+    "boundaryHint": "Which part decides the price using only the cart inputs? Which caller should own writing a receipt?"
+  },
+  "steps": [
+    {
+      "id": "investigate",
+      "title": "Investigate and repair",
+      "goal": "A shopper can preview a price before buying. Only a purchase belongs in the receipts ledger. Members receive a ten percent discount rounded down to whole cents. Keep the existing preview and checkout call signatures, amounts and receipt format. Both operations must use the same pricing decision. A preview must also work with no ledger available.",
+      "opening": "Inspect the original behavior before changing it.",
+      "task": "Investigate how a price preview reaches the receipts ledger. Read pricing.py. Record your prediction about the original program before editing. Then repair it and run the behavior check.",
+      "files": [
+        "README.md",
+        "pricing.py"
+      ],
+      "check": "architecture:market-checkout",
+      "expected": "Both entry points preserve the documented result. A preview leaves no record and confirmation writes once.",
+      "hint": "Trace what preview calls. Find the first statement whose effect lasts after the price has been returned.",
+      "reflection": "How did you verify the change?",
+      "evidencePrompt": "What did you observe before and after your repair?"
+    }
+  ]
+}

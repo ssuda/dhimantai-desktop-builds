@@ -7,9 +7,8 @@ import { Auth } from './auth';
 import { Environment, EnvironmentName } from './environments';
 import { contextFor, jupyterMetadata, learnerCell } from './notebookCommands';
 import { bindDictation } from './dictation';
-import { messageComposer } from './learningComposer';
 import { attachmentNote, practiceAttachments } from './practiceAttachments';
-import { CoachAudio, audioControls, audioPolicy } from './coachAudio';
+import { CoachAudio, instructorComposer, audioPolicy } from './coachAudio';
 import { CoachSurface, CoachRenderer } from './coachSurface';
 import { comparePrediction, predictionFeedback } from './learningLoop';
 import { teachBackInvitation } from './teachBack';
@@ -186,7 +185,7 @@ export class NotebookCoach implements vscode.Disposable {
 <p id="empty-chat" class="empty">Ask about your code, an error, or an idea. Instructor uses the selected cell and its latest run when you ask.</p>
 <div id="conversation" class="log" role="log" aria-label="Conversation with Instructor" aria-live="polite" aria-relevant="additions"></div>
 <p id="turn-status" role="status"></p>
-${messageComposer({assistant:'Instructor', maxlength:600, sendId:'ask', audio:audioControls(webview, this.media, nonce), camera:vscode.env.appName === 'dhimantAI'})}</main><script nonce="${nonce}" src="${asset('dictation.js')}"></script><script nonce="${nonce}" src="${asset('coachMarkdown.js')}"></script><script nonce="${nonce}" src="${asset('learning-room/composer.js')}"></script><script nonce="${nonce}" src="${asset('notebookCoach.js')}"></script></body></html>`;
+${instructorComposer(webview, this.media, nonce, {maxlength:600, sendId:'ask'})}</main><script nonce="${nonce}" src="${asset('coachMarkdown.js')}"></script><script nonce="${nonce}" src="${asset('learning-room/composer.js')}"></script><script nonce="${nonce}" src="${asset('notebookCoach.js')}"></script></body></html>`;
     const dictation = bindDictation(webview, () => {
       const target = this.selection(), account = this.account;
       if (!target || !account || !this.surface.visible || !enabled()) return;

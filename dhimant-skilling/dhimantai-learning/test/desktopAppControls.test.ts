@@ -9,7 +9,13 @@ class Emitter<T> {
 }
 const commands = new Map<string, (...args: any[]) => any>(), executed: any[][] = [];
 const authChanged = new Emitter<void>(), configChanged = new Emitter<any>();
-let pickedItems: any[] = [], choice: string | undefined;
+const messages: any[] = [], received = new Emitter<any>();
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const panel: any = {visible:true, reveal() {}, dispose() {}, onDidDispose:new Emitter().event, onDidChangeViewState:new Emitter().event,
+  webview:{onDidReceiveMessage:received.event, postMessage:async (message: any) => { messages.push(message); }}};
+const view = () => messages.at(-1)?.view;
+const click = async (action: string, id = view()?.id) => { received.fire({type:'desktopControlAction', id, action}); await tick(); };
+const catalog = {activeControlPanel:panel, continueLearning:async () => { executed.push(['resumeCourse']); }};
 let nativeInstance: any, checks = 0, installs = 0;
 let nativeBar = true;
 const store = new Map<string, unknown>();
@@ -25,12 +31,8 @@ const vscode = {
   workspace: {getConfiguration: () => ({inspect: () => ({globalValue: undefined}), get: () => false, update: async () => {}}),
     onDidChangeConfiguration: configChanged.event},
   window: {onDidChangeWindowState: () => ({dispose() {}}), showErrorMessage: async () => {},
-    showQuickPick: async (items: any[]) => { pickedItems = items; return items.find(item => item.label === choice); },
-    createQuickPick: () => {
-      const accepted = new Emitter<void>(), hidden = new Emitter<void>();
-      return {items: [], selectedItems: [], onDidAccept: accepted.event, onDidHide: hidden.event,
-        show() { pickedItems = this.items; }, hide() { hidden.fire(); }, dispose() {}};
-    }},
+    createWebviewPanel: () => panel},
+  ViewColumn:{Active:-1},
 };
 const native = {installedDesktop: async () => ({version: '1.0.0', environment: 'staging'}), DesktopUpdates: class {
   state = {status: 'current', installed: '1.0.0', message: 'Up to date'};
@@ -51,7 +53,7 @@ test('desktop controls bridge only public account fields, update on auth changes
   const auth: any = {session: async () => session, onDidChange: authChanged.event};
   const learning: any = {state: {status: 'ready', installed: '0.1.0', message: 'Installed; reload when ready'}};
   const controls = new DesktopAppControls(context, auth, () => 'staging', learning,
-    async () => { checks++; }, async () => { installs++; }, true);
+    async () => { checks++; }, async () => { installs++; }, true, undefined, catalog);
   try {
     await new Promise(resolve => setImmediate(resolve));
     const state = () => executed.filter(call => call[0] === '_dhimantai.setAppBarState').at(-1)?.[1];
@@ -62,17 +64,31 @@ test('desktop controls bridge only public account fields, update on auth changes
     assert.equal(checks, 0, 'test activation makes no background requests');
     assert.equal(store.get('desktopAppBarIntroduced'), true, 'internal command detection supports upgrade migration');
     await commands.get('dhimantai.showUpdates')!();
-    assert.ok(pickedItems.some(item => /Reload to apply/.test(item.label)));
-    assert.ok(pickedItems.some(item => item.label === 'Desktop 1.0.0'));
-    assert.ok(pickedItems.some(item => item.label === 'Learning extension 0.1.0'));
-    assert.ok(!pickedItems.some(item => /Download desktop|Open desktop installer/.test(item.label)),
-      'an extension-only update never offers an app download or installer');
-    session = undefined; authChanged.fire(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(view().extension.action, 'reload');
+    assert.equal(view().extension.installed, '0.1.0');
+    assert.equal(view().desktop.installed, '1.0.0');
+    assert.equal(view().desktop.action, undefined);
+    await click('install'); await click('openInstaller');
+    assert.equal(installs, 0);
+    nativeInstance.state = {status:'downloading', progress:42, installed:'1.0.0', available:'1.1.0', message:'Downloading'};
+    controls.refresh();
+    assert.equal(view().desktop.progress, 42);
+    nativeInstance.state = {status:'available', retry:true, installed:'1.0.0', available:'1.1.0', message:'Download failed'};
+    controls.refresh();
+    assert.equal(view().desktop.label, 'Retry download');
+    const stale = view().id;
+    session = undefined; authChanged.fire(); await tick();
+    assert.equal(view(), undefined);
+    await click('reload', stale);
+    assert.ok(!executed.some(call => call[0] === 'workbench.action.reloadWindow'));
     assert.equal(state().initials, ''); assert.equal(state().profile, 'Sign in to dhimantAI');
-    choice = '$(sign-in) Sign in'; await commands.get('dhimantai.profile')!();
+    await commands.get('dhimantai.profile')!();
+    assert.equal(view().contact, undefined);
+    await click('signOut'); await click('signIn');
     assert.ok(executed.some(call => call[0] === 'dhimantai.signIn'));
-    assert.ok(!pickedItems.some(item => /Sign out/.test(item.label)));
-    nativeInstance.state.status = 'unavailable'; learning.state.status = 'current'; controls.refresh();
+    assert.ok(!executed.some(call => call[0] === 'dhimantai.signOut'));
+    assert.ok(!JSON.stringify(messages).includes('secret-'));
+    nativeInstance.state = {status:'unavailable', installed:'1.0.0', message:'Offline'}; learning.state.status = 'current'; controls.refresh();
     assert.equal(state().status, 'unavailable');
     assert.equal(installs, 0);
   } finally { controls.dispose(); }
@@ -103,20 +119,20 @@ test('the profile avatar uses recognisable initials and the menu leads with lear
   nativeBar = true;
   const context: any = {globalStorageUri: {fsPath: '/test'}, secrets: {onDidChange: () => ({dispose() {}})},
     globalState: {get: () => true, update: async () => {}}};
-  const auth: any = {session: async () => ({access_token: 'secret', user: {id: 'learner', email: 'asha.k@example.test'}}), onDidChange: authChanged.event};
+  const auth: any = {session: async () => ({access_token: 'secret', user: {id: 'learner', email: 'asha.k@example.test', displayName:'Asha Kumar'}}), onDidChange: authChanged.event};
   const learning: any = {state: {status: 'current', installed: '0.1.0', message: 'Up to date'}};
-  const controls = new DesktopAppControls(context, auth, () => 'staging', learning, async () => {}, async () => {}, true);
+  const controls = new DesktopAppControls(context, auth, () => 'staging', learning, async () => {}, async () => {}, true, undefined, catalog);
   try {
     await new Promise(resolve => setImmediate(resolve));
     const state = executed.filter(call => call[0] === '_dhimantai.setAppBarState').at(-1)?.[1];
     assert.equal(state.initials, 'AK');
-    choice = '$(mortar-board) My courses'; await commands.get('dhimantai.profile')!();
-    const rows = pickedItems.filter(item => item.kind !== -1).map(item => item.label);
-    assert.deepEqual(rows.slice(0, 4), ['$(book) Continue with Instructor', '$(mortar-board) My courses', '$(verified) My certificates', '$(library) Course Catalog']);
-    assert.equal(rows.at(-1), '$(sign-out) Sign out');
-    assert.ok(!rows.includes('asha.k@example.test'), 'the identity is the title, not a row that does nothing');
+    await commands.get('dhimantai.profile')!();
+    assert.equal(view().name, 'Asha Kumar'); assert.equal(view().service, 'Staging service');
+    assert.equal(view().contact, 'asha.k@example.test');
+    await click('continue'); assert.deepEqual(executed.at(-1), ['resumeCourse']);
+    await commands.get('dhimantai.profile')!(); await click('courses');
     assert.deepEqual(executed.at(-1), ['dhimantai.browsePractice']);
-    choice = '$(account) Manage profile'; await commands.get('dhimantai.profile')!();
+    await commands.get('dhimantai.profile')!(); await click('manage');
     assert.deepEqual(executed.at(-1), ['external', 'https://app-staging.dhimant.ai/#/profile?signin=email']);
     assert.ok(!JSON.stringify(executed.at(-1)).includes('asha.k'), 'profile URLs do not carry identity or session tokens');
   } finally { controls.dispose(); }

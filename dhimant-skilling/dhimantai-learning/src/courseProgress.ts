@@ -44,3 +44,10 @@ export function nextChapter<T extends {progress?: ChapterCoverage}>(chapters: T[
     .sort((a, b) => (Date.parse(b.progress?.updated_at ?? '') || 0) - (Date.parse(a.progress?.updated_at ?? '') || 0))[0]
     ?? open.find(ch => ch.progress?.status !== 'covered');
 }
+
+/** Share the catalog's recency order with the desktop Resume shortcut. */
+export function compareCourseActivity(a: {chapters:{progress?: ChapterCoverage}[]}, b: typeof a) {
+  const latest = (course: typeof a) => Math.max(0, ...course.chapters.map(ch => Date.parse(ch.progress?.updated_at ?? '') || 0));
+  const started = (course: typeof a) => Number(course.chapters.some(ch => ch.progress && ch.progress.status !== 'not_started' && ch.progress.status !== 'unavailable'));
+  return latest(b) - latest(a) || started(b) - started(a);
+}

@@ -61,8 +61,8 @@ assessment operations, preview ports and validation.
 Run **dhimantAI: Search Commands** to open the Command Palette filtered to
 available dhimantAI actions, then type part of the command name. New commands
 appear automatically, with VS Code's normal availability rules and shortcuts.
-You can also choose **Search commands** under **How courses, access and code help work**
-at the bottom of Course Catalog, even before signing in. The extension's built-in
+In Course Catalog, open **Help & Course Guide → Learning → Find a Command**
+from the sticky navigation, even before signing in. The extension's built-in
 **Features → Commands** table is supplied by VS Code; this search uses its
 existing Command Palette.
 
@@ -402,8 +402,7 @@ examples from Instructor are editable too. **Run** executes only when you reques
 using the course container.
 Python cells share executed definitions until **Restart runtime**, closing the
 notebook, or an account change. JavaScript, TypeScript, C, Java, Go and Rust run complete programs
-per embedded cell. Include the definitions each such program needs. Execution uses the
-extension's language tools, independently of a native Jupyter kernel selection.
+per embedded cell. Include the definitions each such program needs. On every desktop OS, learner code runs in the course container or on the remote runtime selected for the lesson. If that runtime is unavailable, execution stops.
 
 Cells share a local notebook folder. Start a cell with `%%writefile src/helper.py`
 followed by its contents to create a project file; use Bash or Zsh cells for builds,
@@ -885,9 +884,9 @@ before authentication or transport.
 
 ## Development and validation
 
-- `npm test`: local runner, rendering, evidence, coaching and update tests.
+- `npm test` covers runners, rendering, evidence, coaching and updates. On macOS, Windows and Linux it runs the tests in a Linux container using Podman. Start the Podman machine first. Set `DHIMANTAI_TEST_IMAGE` to use a prepared Linux image with Node.js, Python, Git and C++ tools.
 - `npm run compile && node out/test/integration/runTest.js suiteSkillPractice`: real extension-host checks for learner cases, native test-code execution, skill routing and rejection of forged debugger observations, using a contract-only notebook-help service.
-- `node out/test/integration/runTest.js suiteNativeDebugger`: real JavaScript/TypeScript adapters, breakpoints, stdin, locals, call stack, stepping, stale-observation rejection and conflict-safe import. Set `VSCODE_TEST_DEBUG_EXTENSIONS` to an isolated adapter directory; add `DHIMANTAI_NATIVE_PYTHON=1` and optionally `DHIMANTAI_NATIVE_PYTHON_PATH` for Python. `DHIMANTAI_NATIVE_COURSE_CONFIG` may name a JSON fixture containing `bin`, `name` and `root` for an already prepared, disposable course container with loopback port mapping. These are real runtime checks, not live Instructor acceptance.
+- `node out/test/integration/runTest.js suiteNativeDebugger`: real JavaScript/TypeScript adapters, breakpoints, stdin, locals, call stack, stepping, stale-observation rejection and conflict-safe import. Set `VSCODE_TEST_DEBUG_EXTENSIONS` to an isolated adapter directory; add `DHIMANTAI_NATIVE_PYTHON=1` and optionally `DHIMANTAI_NATIVE_PYTHON_PATH` for Python. Set `DHIMANTAI_NATIVE_COURSE_CONFIG` to a JSON fixture containing `bin`, `name` and `root` for an already prepared, disposable course container with loopback port mapping. These are real runtime checks, not live Instructor acceptance.
 - `npm run compile && node out/test/integration/runTest.js suiteLearningVideo`: automated native check using the production room bundle and live Token Embeddings YouTube player. Asserts decoded audio/video, both question/pause paths, explicit resume, and server-requested pause. Catalog, auth and Instructor transport are fixtures; real Instructor answers need a signed-in staging check. For acceptance with the sandbox enabled, use `scripts/check-vscode-video-runtime.cjs` with an explicit native executable; `@vscode/test-electron` adds sandbox-disabling flags. In the source checkout, see `scripts/video-runtime.md` for runtime repair and distribution notes and `test/integration/learningVideo-check.md` for acceptance results.
 - `npm run compile && node out/test/integration/runTest.js suiteCoachPlayback`: real WebRTC/worklet playback in a VS Code test host. Select **Start audio check** in its panel to satisfy the browser's user-gesture requirement. The probe compares the unattached track with the fixed playback path, then checks pause, buffered resume, completion, replay and silent-stream rejection without an account or microphone.
 - `npm run test:b2c`: individual signup, confirmation, recovery and catalog enrollment in a real VS Code test host.

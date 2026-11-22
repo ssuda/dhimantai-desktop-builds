@@ -23,19 +23,24 @@ test('invalid or unrelated release metadata is rejected', () => {
     assert.throws(() => releaseVersion(invalid), /invalid/);
   }
 });
-test('checks the chosen service without credentials and offers only its download URL', async () => {
-  let url = '', options: RequestInit | undefined;
-  const updates = new ExtensionUpdates(() => 'staging', '0.13.0', () => {}, (async (input, init) => {
-    url = String(input); options = init; return new Response(JSON.stringify(release));
-  }) as typeof fetch);
-  await updates.check();
-  assert.equal(url, 'https://app-staging.dhimant.ai/downloads/dhimantai-learning.json');
-  assert.equal(options?.credentials, 'omit');
-  assert.equal(options?.redirect, 'error');
-  assert.equal(updates.state.status, 'available');
-  assert.equal(updates.downloadUrl, 'https://app-staging.dhimant.ai/downloads/dhimantai-learning.vsix');
-  assert.equal(updates.state.installed, '0.13.0', 'checking is not installation');
-});
+for (const [channel, origin] of [
+  ['staging', 'https://app-staging.dhimant.ai'],
+  ['production', 'https://app.dhimant.ai'],
+] as const) {
+  test(`the ${channel} VSIX feed offers updates only from its own host`, async () => {
+    let url = '', options: RequestInit | undefined;
+    const updates = new ExtensionUpdates(() => channel, '0.13.0', () => {}, (async (input, init) => {
+      url = String(input); options = init; return new Response(JSON.stringify(release));
+    }) as typeof fetch);
+    await updates.check();
+    assert.equal(url, origin + '/downloads/dhimantai-learning.json');
+    assert.equal(options?.credentials, 'omit');
+    assert.equal(options?.redirect, 'error');
+    assert.equal(updates.state.status, 'available');
+    assert.equal(updates.downloadUrl, origin + '/downloads/dhimantai-learning.vsix');
+    assert.equal(updates.state.installed, '0.13.0', 'checking is not installation');
+  });
+}
 test('missing manifest is unavailable, never up to date; a late response cannot cross environments', async () => {
   const failed = new ExtensionUpdates(() => 'staging', '0.13.0', () => {}, (async () => new Response('', { status: 404 })) as typeof fetch);
   await failed.check();
@@ -166,4 +171,36 @@ test('shutdown aborts owned requests and cannot publish a late release', async (
   complete(new Response(JSON.stringify(release)));
   await checking;
   assert.notEqual(updates.state.status, 'available');
+});
+
+test('checks the minimum editor version before downloading an incompatible VSIX', async () => {
+  const requests: string[] = [];
+  const updates = new ExtensionUpdates(() => 'staging', '0.13.0', () => {}, async input => {
+    requests.push(String(input)); return new Response(JSON.stringify({...release, minimumEditorVersion:'1.120.0'}));
+  }, '1.118.0');
+  await updates.check();
+  assert.equal(updates.state.status, 'incompatible');
+  assert.match(updates.state.message, /1\.120\.0/);
+  await updates.install(async () => assert.fail('incompatible extension installed'));
+  assert.equal(requests.length, 1);
+});
+
+test('extension progress uses streamed bytes only when the response size is known', async () => {
+  const {createHash} = await import('node:crypto');
+  const bytes = Buffer.from('1234'), sha256 = createHash('sha256').update(bytes).digest('hex');
+  for (const known of [true, false]) {
+    const percentages: number[] = [];
+    const updates = new ExtensionUpdates(() => 'staging', '0.13.0', state => {
+      if (state.progress !== undefined) percentages.push(state.progress);
+    }, async input => {
+      if (String(input).endsWith('.json')) return Response.json({...release, sha256});
+      return new Response(new ReadableStream({start(controller) {
+        controller.enqueue(bytes.subarray(0,1)); controller.enqueue(bytes.subarray(1)); controller.close();
+      }}), {headers:known ? {'content-length':'4'} : undefined});
+    });
+    await updates.check(); await updates.install(async () => {});
+    assert.equal(updates.state.status,'ready');
+    assert.deepEqual(percentages, known ? [25,100] : []);
+    updates.dispose();
+  }
 });

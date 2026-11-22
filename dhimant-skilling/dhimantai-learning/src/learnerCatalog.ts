@@ -2,12 +2,12 @@ import type { Environment } from './environments';
 
 export interface CatalogCourse {
   id: string; title: string; summary: string; level: string; prerequisites: string;
-  can_join: boolean; enrolled: boolean; unlocked?: boolean; is_free?: boolean;
+  can_join: boolean; enrolled: boolean; unlocked?: boolean; is_free?: boolean; company_training?: boolean;
   /** Days of access from joining or the latest purchase; after access_until every chapter locks (expired). */
   access_days?: number; access_until?: string | null; expired?: boolean;
   /** Database-managed catalog grouping; access rules are independent of this category. */
   category?: string;
-  chapters: { id: string; name: string; lesson?: string; free?: boolean; progress?: import('./courseProgress').ChapterCoverage }[];
+  chapters: { id: string; name: string; lesson?: string; free?: boolean; locked?: boolean; progress?: import('./courseProgress').ChapterCoverage }[];
 }
 export interface LearningOffer { id: string; title: string; amount: number; currency: string; course_ids: string[]; owned: boolean }
 /** Courses arrive in database category/course display order; clients preserve that order. */

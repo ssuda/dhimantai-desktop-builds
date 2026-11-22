@@ -1,0 +1,32 @@
+{
+  "id": "trail-log",
+  "version": 1,
+  "title": "Trail log",
+  "files": [
+    "README.md",
+    "trips.py"
+  ],
+  "architecture": {
+    "focusFile": "trips.py",
+    "prediction": "In a fresh process, record one stop with no list and then another with no list. How many stops does the second call return?",
+    "boundaryHint": "Which object belongs to one trip? How could you tell whether two trips are using the same one?"
+  },
+  "steps": [
+    {
+      "id": "investigate",
+      "title": "Investigate a reported bug",
+      "goal": "A walking guide saw a stop from a previous trip on a fresh itinerary. Each call to record_stop(name) starts a separate trip. When a list is supplied as stops, append the stop to that list. Return a list of the stops in order.",
+      "opening": "Read the incident and inspect the original behavior.",
+      "task": "Read README.md and trips.py. Record your prediction, repair the bug and write a regression in test_regression.py.",
+      "files": [
+        "README.md",
+        "trips.py"
+      ],
+      "check": "debug:trail-log",
+      "expected": "The public behavior checks pass and your test catches the original failure.",
+      "hint": "Use two different names. What do you expect each trip to contain?",
+      "reflection": "What behavior does your test protect?",
+      "evidencePrompt": "What changed between the failing and passing runs?"
+    }
+  ]
+}

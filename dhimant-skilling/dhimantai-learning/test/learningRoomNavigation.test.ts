@@ -75,6 +75,7 @@ test('Instructor and Doubt Solver switch in one tab, preserve separate drafts an
     const dom = new JSDOM(panel.webview.html, {runScripts:'outside-only', url:'https://webview.example', pretendToBeVisual:true});
     windows.push(dom);
     const w = dom.window, outbound: any[] = [], rooms: Room[] = [];
+    w.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
     const worker = {identity:'worker', isAgent:true, trackPublications:new Map()};
     class Room {
       listeners = new Map<string, Function>();

@@ -44,7 +44,11 @@ def main():
         assert package['version'] == receipt['extensionVersion']
         defaults = package['contributes']['configurationDefaults']
         assert defaults['dhimantai.environment'] == environment
-        assert defaults['workbench.colorTheme'] == 'Light Modern'
+        assert defaults['workbench.colorTheme'] == 'dhimantAI Light'
+        assert defaults['window.commandCenter'] is False
+        assert defaults['workbench.layoutControl.enabled'] is False
+        themes = json.loads((app / 'extensions/theme-defaults/package.json').read_text())
+        assert any(theme['id'] == 'dhimantAI Light' for theme in themes['contributes']['themes'] if 'id' in theme)
         assert defaults['workbench.activityBar.location'] == 'default'
         assert defaults['workbench.activityBar.compact'] is True
         assert defaults['chat.disableAIFeatures'] is True

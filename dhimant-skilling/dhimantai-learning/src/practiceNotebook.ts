@@ -15,7 +15,7 @@ export interface SupplementalExercise {
 }
 /** Authored transfer/interview prompts use the existing notebook without inventing verified tests. */
 export function supplementalPractice(task:SupplementalExercise,id:string,account:string):PracticeNotebook {
-  const language=codeLanguage(task.language);
+  const language=codeLanguage(task.language, true);
   if(!language||task.assessment!=='practice_only'||!task.title?.trim()||task.title.length>300||!task.question?.trim()||task.question.length>6000||!task.course?.trim())
     throw new Error('Choose a published supplementary practice task.');
   return {id,account,language,title:task.title,question:task.question,course:task.course,starter:'',assistance:true,path:'/notebook-coach/tutor',tests:[]};
@@ -104,7 +104,7 @@ export function savedPractice(notebook: TutorNotebook, account: string): Practic
   if (!id || !/^(?:generated-[0-9a-f]{24}|[0-9a-f-]{36})$/i.test(id)) return;
   const packet = notebook.cells.find(cell => cell.id === 'practice-question')?.packet;
   const task = packet?.tutor_practice_editor as Record<string, unknown> | undefined;
-  const language = typeof task?.language === 'string' ? codeLanguage(task.language) : undefined;
+  const language = typeof task?.language === 'string' ? codeLanguage(task.language, true) : undefined;
   if (!language || task?.question_id !== id || typeof task.question !== 'string' || !task.question.trim() || task.question.length > 6000) return;
   return {id, account, language, question:task.question, title:notebook.title, starter:'', assistance:true,
     course:typeof packet?.practice_course === 'string' ? packet.practice_course : undefined,

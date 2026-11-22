@@ -1,0 +1,32 @@
+{
+  "id": "meter-blocks",
+  "version": 1,
+  "title": "Parking meter",
+  "files": [
+    "README.md",
+    "meter.py"
+  ],
+  "architecture": {
+    "focusFile": "meter.py",
+    "prediction": "How many blocks does the starter bill for a 45-minute session?",
+    "boundaryHint": "Which expected count follows from the billing contract? Could your assertion distinguish that count from the original result?"
+  },
+  "steps": [
+    {
+      "id": "investigate",
+      "title": "Investigate a reported bug",
+      "goal": "A driver finished a parking session and questioned the number of billed blocks. blocks(minutes) returns the number of half-hour blocks started. Zero minutes costs zero blocks. Inputs are nonnegative whole minutes.",
+      "opening": "Read the incident and inspect the original behavior.",
+      "task": "Read README.md and meter.py. Record your prediction, repair the bug and write a regression in test_regression.py.",
+      "files": [
+        "README.md",
+        "meter.py"
+      ],
+      "check": "debug:meter-blocks",
+      "expected": "The public behavior checks pass and your test catches the original failure.",
+      "hint": "Compare a full block with a session that continues one more minute.",
+      "reflection": "What behavior does your test protect?",
+      "evidencePrompt": "What changed between the failing and passing runs?"
+    }
+  ]
+}

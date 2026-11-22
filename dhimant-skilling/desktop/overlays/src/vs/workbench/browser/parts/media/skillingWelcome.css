@@ -1,0 +1,41 @@
+.monaco-workbench .dhimantai-welcome {
+	gap: 10px;
+	padding: 12px;
+	box-sizing: border-box;
+}
+.dhimantai-welcome h2 {
+	color: var(--vscode-foreground);
+	font-size: 18px;
+	font-weight: 600;
+	text-align: center;
+}
+.dhimantai-welcome .monaco-button { max-width: 190px; }
+.dhimantai-welcome .monaco-button[hidden] { display: none; }
+.dhimantai-wordmark {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding-inline: 12px;
+	flex-shrink: 0;
+	font: 700 16px/1 system-ui, sans-serif;
+	letter-spacing: -.045em;
+	white-space: nowrap;
+}
+.dhimantai-mark, .dhimantai-welcome-mark {
+	display: block;
+	background: url('./dhimantai-mark.png') center / contain no-repeat;
+}
+.monaco-workbench:not(.fullscreen) .dhimantai-wordmark.after-window-controls { margin-left: calc(72px / var(--zoom-factor, 1)); }
+/* Keep the native application icon's system-menu behavior on Windows and Linux. */
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .window-appicon:not(.codicon) {
+	background-image: url('./dhimantai-mark.png');
+}
+.window-appicon ~ .dhimantai-wordmark { padding-inline-start: 0; }
+.window-appicon ~ .dhimantai-wordmark .dhimantai-mark { display: none; }
+.dhimantai-mark { width: 24px; height: 24px; }
+.dhimantai-name b { color: #ff914d; }
+.dhimantai-welcome-mark { width: 84px; height: 84px; }
+.dhimantai-welcome h2 { letter-spacing: -.035em; margin: 4px 0 10px; }
+.monaco-workbench .dhimantai-welcome .monaco-button { border-radius: 8px; min-height: 32px; }
+@media (max-width: 700px) { .dhimantai-wordmark .dhimantai-name { display: none; } }
+@media (forced-colors: active) { .dhimantai-name b { color: CanvasText; } }

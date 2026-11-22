@@ -50,7 +50,7 @@ async function launch(options: {choice?: string; existing?: boolean; failure?: '
       },
     };
     const sandbox = {exports: {}, Error, require: (name: string) => name === 'vscode' ? vscode
-      : name === './projectCore' ? {createProject: prepare, createReadingProject: prepare, createShelfProject: prepare}
+      : name === './projectCore' ? {createProject: prepare, createGitProject: (media:string, project:string, dest:string) => prepare(join(media,'projects',project+'.bundle'),dest), createReadingProject: prepare, createShelfProject: prepare}
       : name === './capstoneRepo' ? {cloneCapstone: prepare, restoreEmptyCapstone: async () => { restorations++; return true; }}
       : name === './projectSetup' ? {...require('../src/projectSetup'), validateProjectWorkspace: async () => {}}
       : name.startsWith('./') ? require('../src/' + name.slice(2)) : require(name)};

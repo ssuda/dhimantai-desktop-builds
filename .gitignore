@@ -2,6 +2,7 @@ node_modules/
 **/out/
 **/__pycache__/
 *.vsix
+!content/courses/full-stack-web/editor-extensions/*.vsix
 .env*
 desktop-flutter.json
 *.p8

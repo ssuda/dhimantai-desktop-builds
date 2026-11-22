@@ -11,7 +11,33 @@ export interface Session {
   access_token: string;
   refresh_token: string;
   expires_at: number;
-  user: { id: string; email?: string; phone?: string };
+  user: { id: string; email?: string; phone?: string; displayName?: string };
+}
+
+function profileName(metadata?: {name?: unknown; full_name?: unknown; given_name?: unknown}) {
+  for (const value of [metadata?.name, metadata?.full_name, metadata?.given_name]) {
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 120);
+  }
+}
+
+/** Older stored sessions retain the GoTrue profile claims in the access token. */
+export function learnerDisplayName(session: Session): string | undefined {
+  if (session.user.displayName) return session.user.displayName;
+  try {
+    const payload = session.access_token.split('.')[1];
+    return profileName(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')).user_metadata);
+  } catch { return undefined; }
+}
+
+export function learnerInitial(session: Session): string {
+  for (const name of [learnerDisplayName(session), session.user.email?.split('@')[0]]) {
+    if (typeof name !== 'string') continue;
+    const start = name.search(/\p{L}/u);
+    if (start < 0) continue;
+    const first = new Intl.Segmenter().segment(name.slice(start)).containing(0);
+    if (first) return first.segment.toLocaleUpperCase();
+  }
+  return 'Y';
 }
 
 export class SignInRequired extends Error {
@@ -76,7 +102,7 @@ function toSession(data: any): Session {
     access_token: data.access_token,
     refresh_token: data.refresh_token,
     expires_at: expiresAt,
-    user: { id: data.user.id, email: data.user.email || undefined, phone: data.user.phone || undefined },
+    user: { id: data.user.id, email: data.user.email || undefined, phone: data.user.phone || undefined, displayName: profileName(data.user.user_metadata) },
   };
 }
 

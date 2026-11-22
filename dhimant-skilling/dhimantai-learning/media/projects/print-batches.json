@@ -1,0 +1,32 @@
+{
+  "id": "print-batches",
+  "version": 1,
+  "title": "Print batches",
+  "files": [
+    "README.md",
+    "labels.py"
+  ],
+  "architecture": {
+    "focusFile": "labels.py",
+    "prediction": "In a fresh process, add two labels to one batch. Add one label to a new batch. What count does that last call return?",
+    "boundaryHint": "Where does each new batch get its collection? What would a second batch observe after the first changes?"
+  },
+  "steps": [
+    {
+      "id": "investigate",
+      "title": "Investigate a reported bug",
+      "goal": "A print operator opened a new batch and saw an unexpected label count. A new Batch starts empty. Its add(label) method adds one label, keeps repeats and returns the number of labels in this batch. The labels attribute lists them in order.",
+      "opening": "Read the incident and inspect the original behavior.",
+      "task": "Read README.md and labels.py. Record your prediction, repair the bug and write a regression in test_regression.py.",
+      "files": [
+        "README.md",
+        "labels.py"
+      ],
+      "check": "debug:print-batches",
+      "expected": "The public behavior checks pass and your test catches the original failure.",
+      "hint": "Compare the counts from one batch used twice with two batches used once each.",
+      "reflection": "What behavior does your test protect?",
+      "evidencePrompt": "What changed between the failing and passing runs?"
+    }
+  ]
+}

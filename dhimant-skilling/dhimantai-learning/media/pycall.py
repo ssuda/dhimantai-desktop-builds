@@ -7,6 +7,11 @@ import ast
 import json
 import runpy
 import sys
+from pathlib import Path
+
+if sys.platform != 'linux' or not any(Path(marker).is_file() for marker in ('/run/.containerenv', '/.dockerenv')):
+    raise SystemExit('Host execution is disabled. Use the course container or a remote runtime.')
+
 
 def expand_test_rows(value):
     """Expand a bounded literal test fixture before passing ordinary lists to student code."""

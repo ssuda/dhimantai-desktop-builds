@@ -103,6 +103,16 @@ export async function run() {
       assert.equal(shown.course, 'Python');
       assert.equal(shown.question, title);
       if (index === 0) {
+        const logoLoaded = await webview(`async d => {
+          const avatar = d.querySelector('[data-cell-id="practice-question"] .speaker-avatar');
+          const image = avatar && d.defaultView.getComputedStyle(avatar).backgroundImage;
+          if (!image?.startsWith('url(')) return false;
+          const img = new d.defaultView.Image();
+          img.src = JSON.parse(image.slice(4, -1));
+          await img.decode();
+          return img.naturalWidth > 0;
+        }`);
+        assert.equal(logoLoaded, true, 'the desktop webview can load the packaged Instructor logo');
         await webview(`d => { d.querySelector('[data-room="practice"]').click(); return true; }`);
         await until(() => webview(`d => d.querySelector('#practice-questions button')?.textContent`), Boolean, 'browse exercises from standalone Practice');
         await webview(`d => { d.getElementById('practice-back').click(); return true; }`);

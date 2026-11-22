@@ -1,0 +1,45 @@
+{
+  "id": "festival-desk",
+  "version": 1,
+  "title": "Festival desk",
+  "files": [
+    "README.md",
+    "hours.json",
+    "meeting.json"
+  ],
+  "gitPractice": {
+    "base": "52ab96ff012a4b01b9ffc873065ce992bee3f3b7",
+    "team": "b8a9223f1b3b3d46129da7506f84c9f7c36ea284",
+    "policy": "hours.json",
+    "local": {
+      "opens": "08:00",
+      "closes": "16:00"
+    },
+    "combined": {
+      "opens": "08:00",
+      "closes": "18:00"
+    },
+    "other": "meeting.json",
+    "otherValue": {
+      "gate": "North"
+    }
+  },
+  "steps": [
+    {
+      "id": "integrate",
+      "title": "Prepare the change for review",
+      "goal": "The volunteer desk must open at 08:00. Separately, volunteers will meet at the North gate. The operations team has revised the closing time.",
+      "opening": "Read the team brief in README.md.",
+      "task": "The volunteer desk must open at 08:00. Separately, volunteers will meet at the North gate. The operations team has revised the closing time. Work on your own branch from main. Keep each request in its own focused commit with a subject that describes the change. After both commits, merge team/operations into your branch. Reconcile the overlapping changes and finish with a clean working tree. Leave main at the starting point.",
+      "files": [
+        "README.md",
+        "hours.json",
+        "meeting.json"
+      ],
+      "check": "git:festival-desk",
+      "expected": "The branch contains focused commits and a merge that preserves both changes.",
+      "hint": "Compare your current branch and its starting point with main.",
+      "reflection": "What would a reviewer learn from each commit?"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+<?php
+
+use Symfony\Component\Console\Input\ArgvInput;
+
+require __DIR__.'/vendor/autoload.php';
+$app = require __DIR__.'/bootstrap/app.php';
+$input = new ArgvInput;
+if ($input->getFirstArgument() === 'serve'
+    && (int) $input->getParameterOption('--port', 8000) === 8000
+    && is_dir('/course/.dhimantai')) {
+    file_put_contents('/course/.dhimantai/preview-8000', bin2hex(random_bytes(8)));
+}
+exit($app->handleCommand($input));

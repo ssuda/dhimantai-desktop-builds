@@ -1,46 +1,61 @@
 import * as vscode from 'vscode';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import type { Auth } from './auth';
+import { randomUUID } from 'node:crypto';
+import type { CourseCatalog } from './courseCatalog';
+import { type Auth, learnerDisplayName } from './auth';
+import { type ControlKind, type ControlView, standaloneControls, updateCard } from './desktopControlView';
 import { WEB_APP_ORIGINS } from './appLinks';
 import type { EnvironmentName } from './environments';
 import { DesktopUpdates, installedDesktop } from './desktopUpdates';
 import { automaticUpdates, ExtensionUpdates } from './updates';
 import { migrateDesktopAppBar } from './desktopConfiguration';
 
-interface Choice extends vscode.QuickPickItem { action?: () => Promise<unknown> }
+interface OpenControl {
+  id: string;
+  kind: ControlKind;
+  panel: vscode.WebviewPanel;
+  standalone: boolean;
+  account?: string;
+  environment: EnvironmentName;
+  listeners: vscode.Disposable[];
+}
 
-/** Avatar letters a person recognises: name parts of the email (sambasiva.rao → SR, learner → L), or a phone's last two digits. */
-export function profileInitials(identity: string | undefined) {
-  if (!identity) return '';
-  if (!identity.includes('@')) return identity.replace(/\D/g, '').slice(-2);
-  const parts = identity.split('@')[0].split(/[^\p{L}]+/u).filter(Boolean);
-  return (parts.length > 1 ? parts[0][0] + parts[1][0] : parts[0]?.[0] ?? '').toUpperCase();
+export function profileInitials(identity: string | undefined, name?: string) {
+  const words = (name || identity?.split('@')[0] || '').match(/[\p{L}][\p{L}\p{M}]*/gu) ?? [];
+  const graphemes = new Intl.Segmenter();
+  return words.slice(0, 2).map(word => graphemes.segment(word).containing(0)!.segment).join('').toLocaleUpperCase()
+    || identity?.replace(/\D/g, '').slice(-2) || '';
 }
 const CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 
 /** One place for both update layers and the learner account, backed by existing auth. */
 export class DesktopAppControls implements vscode.Disposable {
   private native?: DesktopUpdates;
-  private nativeError = 'Reading desktop release information…';
+  private nativeError?: string;
+  private loadingNative?: Promise<void>;
+  private openControl?: OpenControl;
+  private account?: string;
+  private displayName?: string;
+  private opening = 0;
   private identity?: string;
   private accountRequest = 0;
   private disposed = false;
   private lastCheck = 0;
   private nativeBar = false;
   private readonly disposables: vscode.Disposable[] = [];
-  private readonly changed = new vscode.EventEmitter<void>();
   constructor(private readonly context: vscode.ExtensionContext, private readonly auth: Auth,
     private readonly environment: () => EnvironmentName, private readonly learning: ExtensionUpdates,
     private readonly checkLearning: () => Promise<void>, private readonly installLearning: () => Promise<void>,
-    private readonly testing: boolean, private readonly legacyStatus?: vscode.StatusBarItem) {
-    this.disposables.push(this.changed,
-      vscode.commands.registerCommand('dhimantai.showUpdates', () => this.showUpdates()),
-      vscode.commands.registerCommand('dhimantai.profile', () => this.showProfile()),
+    private readonly testing: boolean, private readonly legacyStatus?: vscode.StatusBarItem,
+    private readonly catalog?: Pick<CourseCatalog, 'activeControlPanel' | 'continueLearning'>) {
+    this.disposables.push(
+      vscode.commands.registerCommand('dhimantai.showUpdates', () => this.show('updates')),
+      vscode.commands.registerCommand('dhimantai.profile', () => this.show('profile')),
       auth.onDidChange(() => { void this.refreshProfile(); }),
       context.secrets.onDidChange(() => { void this.refreshProfile(); }),
       vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('dhimantai.environment')) void this.refreshProfile();
+        if (e.affectsConfiguration('dhimantai.environment')) { this.close(); void this.refreshProfile(); }
         if (e.affectsConfiguration('dhimantai.autoUpdate') && !testing) void this.checkNative();
       }),
       vscode.window.onDidChangeWindowState(e => {
@@ -62,38 +77,55 @@ export class DesktopAppControls implements vscode.Disposable {
         await migrateDesktopAppBar(this.context.globalState, { inspect: key => settings.inspect(key),
           update: (key, value) => settings.update(key, value, vscode.ConfigurationTarget.Global) });
       }
+    } catch { /* The existing status bar remains available on older shells. */ }
+    await this.loadNative();
+    if (!this.testing && this.native) await this.checkNative();
+  }
+  private loadNative() {
+    if (this.native || this.disposed) return;
+    return this.loadingNative ??= this.readNative().finally(() => { this.loadingNative = undefined; });
+  }
+  private async readNative() {
+    this.nativeError = undefined;
+    this.render();
+    try {
       const target = await installedDesktop(vscode.env.appRoot);
       if (this.disposed) return;
       this.native = new DesktopUpdates(target, join(this.context.globalStorageUri.fsPath, 'desktop-updates'), () => this.refresh());
-      this.refresh();
-      if (!this.testing) await this.checkNative();
-    } catch { this.nativeError = 'Desktop updates are unavailable for this installation.'; this.refresh(); }
+    } catch {
+      this.nativeError = 'Could not read the desktop installation details. Check that you are using a supported dhimantAI desktop build.';
+    }
+    this.refresh();
   }
   private async refreshProfile() {
     const request = ++this.accountRequest, environment = this.environment();
     const session = await this.auth.session().catch(() => undefined);
     if (this.disposed || request !== this.accountRequest || environment !== this.environment()) return;
+    if (this.openControl && (this.openControl.account !== session?.user.id || this.openControl.environment !== environment)) this.close();
+    this.account = session?.user.id;
+    this.displayName = session && learnerDisplayName(session);
     this.identity = session ? session.user.email ?? session.user.phone ?? 'Your account' : undefined;
     this.refresh();
   }
   refresh() {
     if (this.disposed) return;
-    this.changed.fire();
+    this.render();
     const learning = this.learning.state, native = this.native?.state;
     const busy = learning.status === 'installing' || native?.status === 'downloading';
     const learningReady = learning.status === 'ready', desktopReady = native?.status === 'ready';
     const ready = learningReady || desktopReady;
     const available = learning.status === 'available' || native?.status === 'available';
     const checking = learning.status === 'checking' || native?.status === 'checking';
-    const failed = learning.status === 'unavailable' || native?.status === 'unavailable' || (!native && this.nativeError.startsWith('Desktop updates'));
+    const incompatible = learning.status === 'incompatible' || native?.status === 'incompatible';
+    const failed = incompatible || learning.retry || native?.retry || learning.status === 'unavailable' || native?.status === 'unavailable' || this.nativeError;
     const current = learning.status === 'current' && native?.status === 'current';
-    const state = busy ? 'downloading' : ready ? 'ready' : available ? 'available' : checking ? 'checking' : failed ? 'unavailable' : current ? 'current' : 'unchecked';
+    const state = busy ? 'downloading' : ready ? 'ready' : failed ? 'unavailable' : available ? 'available' : checking ? 'checking' : current ? 'current' : 'unchecked';
     const message = busy ? (native?.status === 'downloading' ? native.message : `Learning extension: ${learning.message}`)
       : learningReady && desktopReady ? 'Learning extension and desktop app updates are ready'
         : learningReady ? 'Learning extension updated — reload when you are ready'
           : desktopReady ? 'Desktop update downloaded — open the installer when you are ready'
-            : available ? 'Update available' : checking ? 'Checking for updates…'
-        : failed ? 'Updates — check connection or retry' : current ? 'Updates — up to date' : 'Check for updates';
+            : incompatible ? 'Updates — review compatibility warning' : failed ? 'Updates — check details or retry'
+            : available ? 'Update available' : checking ? 'Checking for updates…' : current ? 'Updates — up to date' : 'Check for updates';
     if (this.legacyStatus) {
       const attention = !this.nativeBar && (busy || ready || available);
       const readyLabel = learningReady && desktopReady ? 'Updates ready' : learningReady ? 'Learning update ready' : 'App update ready';
@@ -104,10 +136,11 @@ export class DesktopAppControls implements vscode.Disposable {
     // Older desktops keep working until the learner installs the new native shell.
     void vscode.commands.executeCommand('_dhimantai.setAppBarState', {
       status: state, message, profile: this.identity ? `${this.identity} — courses, profile and sign out` : 'Sign in to dhimantAI',
-      initials: profileInitials(this.identity),
+      initials: profileInitials(this.identity, this.displayName),
     }).then(undefined, () => {});
   }
   private async checkNative() {
+    await this.loadNative();
     if (!this.native || this.disposed) return;
     await this.native.check();
     const config = vscode.workspace.getConfiguration('dhimantai');
@@ -135,82 +168,106 @@ export class DesktopAppControls implements vscode.Disposable {
       child.once('spawn', () => { child.unref(); resolve(); });
     });
   }
-  private updateChoices(): Choice[] {
-    const learning = this.learning.state, native = this.native?.state;
-    const choices: Choice[] = [
-      { label: 'Learning extension', kind: vscode.QuickPickItemKind.Separator },
-      { label: `Learning extension ${learning.installed}`, description: learning.status, detail: learning.message },
-    ];
-    if (learning.status === 'ready') choices.push({ label: '$(debug-restart) Reload to apply learning update',
-      detail: 'Ends this window’s active lesson. You can also leave the update for your next normal restart.',
-      action: async () => vscode.commands.executeCommand('workbench.action.reloadWindow') });
-    if (learning.status === 'available') choices.push({ label: '$(cloud-download) Install learning update', action: this.installLearning });
-    choices.push({ label: 'Desktop app', kind: vscode.QuickPickItemKind.Separator },
-      { label: native ? `Desktop ${native.installed}` : 'Desktop update', description: native?.status, detail: native?.message ?? this.nativeError });
-    if (native?.status === 'available') choices.push({ label: '$(cloud-download) Download desktop update', action: () => this.native!.download() });
-    if (native?.status === 'ready') choices.push({ label: '$(desktop-download) Open desktop installer',
-      detail: 'Finish your lesson first, then follow the installer to update the app. Your course files and profile are kept.',
-      action: () => this.openInstaller() });
-    choices.push({ label: '', kind: vscode.QuickPickItemKind.Separator },
-      { label: '$(refresh) Check for updates', action: () => this.check() },
-      { label: '$(settings-gear) Update settings', action: async () => vscode.commands.executeCommand('dhimantai.updateSettings') });
-    return choices;
+  private view(open: OpenControl): ControlView {
+    const native = this.native?.state ?? {status: this.nativeError ? 'unavailable' : 'checking', installed: '',
+      message: this.nativeError ?? 'Reading desktop installation details…'};
+    const env = this.environment();
+    return {kind: open.kind, id: open.id, name: this.displayName, contact: this.identity,
+      initials: profileInitials(this.identity, this.displayName), service: env[0].toUpperCase() + env.slice(1) + ' service',
+      manageProfile: !!this.account && !!WEB_APP_ORIGINS[env],
+      extension: updateCard('extension', this.learning.state), desktop: updateCard('desktop', native)};
   }
-  private showUpdates() {
-    const picker = vscode.window.createQuickPick<Choice>();
-    picker.title = 'dhimantAI updates'; picker.placeholder = 'Updates never restart an active lesson automatically';
-    picker.matchOnDetail = true;
-    const render = () => {
-      picker.items = this.updateChoices();
-      picker.busy = ['checking', 'installing'].includes(this.learning.state.status)
-        || ['checking', 'downloading'].includes(this.native?.state.status ?? '');
-    };
-    const listener = this.changed.event(render);
-    const accept = picker.onDidAccept(() => {
-      const action = picker.selectedItems[0]?.action;
-      if (!action) return;
-      void action().catch(() => vscode.window.showErrorMessage('Could not complete the update action. Please try again.'));
-      picker.hide();
-    });
-    picker.onDidHide(() => { listener.dispose(); accept.dispose(); picker.dispose(); });
-    render(); picker.show();
-    if (this.learning.state.status === 'unchecked' || this.native?.state.status === 'unchecked') void this.check();
+  get isOpen() { return !!this.openControl; }
+  private render() {
+    const open = this.openControl;
+    if (open) void open.panel.webview.postMessage({type:'desktopControlView', view:this.view(open)});
   }
-  private async showProfile() {
+  private close(disposed = false) {
+    const open = this.openControl;
+    this.openControl = undefined;
+    if (!open) return;
+    open.listeners.forEach(listener => listener.dispose());
+    if (disposed) return;
+    if (open.standalone) open.panel.dispose();
+    else void open.panel.webview.postMessage({type:'desktopControlView'});
+  }
+  private async show(kind: ControlKind) {
+    const opening = ++this.opening;
     await this.refreshProfile();
-    const environment = this.environment(), identity = this.identity;
-    const command = (id: string) => async () => vscode.commands.executeCommand(id);
-    const separator = (label: string): Choice => ({ label, kind: vscode.QuickPickItemKind.Separator });
-    // Learning first (what people open the menu for), account housekeeping next, Sign out last and apart.
-    // The identity is the title, not a row: every row does something.
-    const choices: Choice[] = identity ? [
-      separator('Learning'),
-      { label: '$(book) Continue with Instructor', detail: 'Pick up a lesson where you left off', action: command('dhimantai.openLearningRoom') },
-      { label: '$(mortar-board) My courses', detail: 'Your courses, chapters and practice', action: command('dhimantai.browsePractice') },
-      { label: '$(verified) My certificates', action: async () => vscode.commands.executeCommand('dhimantai.courseGrade', '__certificates__') },
-      { label: '$(library) Course Catalog', action: command('dhimantai.courseCatalog') },
-      separator('Account'),
-      ...(WEB_APP_ORIGINS[environment] ? [{ label: '$(account) Manage profile', detail: 'Name, photo and account details. Sign in separately on the web.',
-        action: async () => vscode.env.openExternal(vscode.Uri.parse(`${WEB_APP_ORIGINS[environment]}/#/profile${identity.includes('@') ? '?signin=email' : ''}`)) }] : []),
-      { label: '$(settings-gear) Settings', action: command('workbench.action.openSettings') },
-      separator(''),
-      { label: '$(sign-out) Sign out', detail: 'Signs out on this computer only. Your course files stay here', action: command('dhimantai.signOut') },
-    ] : [
-      { label: '$(sign-in) Sign in', detail: 'Continue your courses and Instructor sessions', action: command('dhimantai.signIn') },
-      { label: '$(add) Create account', detail: 'The first chapter of every course is free', action: command('dhimantai.signUp') },
-      separator(''),
-      { label: '$(library) Browse courses', detail: 'No account needed to look around', action: command('dhimantai.courseCatalog') },
-      { label: '$(settings-gear) Settings', action: command('workbench.action.openSettings') },
-    ];
-    const service = environment === 'production' ? '' : ` · ${environment} service`;
-    const choice = await vscode.window.showQuickPick(choices, { title: (identity ?? 'dhimantAI · not signed in') + service,
-      placeHolder: identity ? 'Courses, profile and sign out' : 'Sign in to continue learning' });
-    if (environment !== this.environment() || identity !== this.identity) return;
-    try { await choice?.action?.(); }
-    catch { void vscode.window.showErrorMessage('Could not open your profile action. Please try again.'); }
+    if (this.disposed || opening !== this.opening) return;
+    this.close();
+    const catalog = this.catalog?.activeControlPanel;
+    const panel = catalog ?? vscode.window.createWebviewPanel('dhimantai.desktopControls',
+      kind === 'updates' ? 'dhimantAI Updates' : 'Your profile', vscode.ViewColumn.Active,
+      { enableScripts:true, localResourceRoots:[] });
+    const open: OpenControl = {kind, id:randomUUID(), panel, standalone:!catalog,
+      environment:this.environment(), account:this.account, listeners:[]};
+    this.openControl = open;
+    open.listeners.push(panel.onDidDispose(() => this.close(true)),
+      panel.onDidChangeViewState(() => { if (!panel.visible) this.close(); }),
+      panel.webview.onDidReceiveMessage(message => {
+        if (this.openControl !== open) return;
+        if (message?.type === 'desktopControlReady') this.render();
+        if (message?.type === 'desktopControlAction' && message.id === open.id)
+          void this.act(open, message.action).catch(() => vscode.window.showErrorMessage('Could not complete that action. Please try again.'));
+      }));
+    if (catalog) {
+      panel.reveal(panel.viewColumn);
+      await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+      if (this.openControl !== open) return;
+      this.render();
+    }
+    else panel.webview.html = standaloneControls(randomUUID());
+    if (kind === 'updates' && (this.learning.state.status === 'unchecked' || this.native?.state.status === 'unchecked')) void this.check();
+  }
+  private async act(open: OpenControl, action: string) {
+    if (action === 'close') { this.close(); return; }
+    const session = await this.auth.session();
+    if (open !== this.openControl || open.environment !== this.environment() || open.account !== session?.user.id) return;
+    const command = (id: string, ...args: unknown[]) => vscode.commands.executeCommand(id, ...args);
+    if (open.kind === 'profile') {
+      const origin = WEB_APP_ORIGINS[open.environment];
+      const actions = new Map<string, () => Thenable<unknown>>([
+        ['settings', () => command('workbench.action.openSettings')], ['catalog', () => command('dhimantai.courseCatalog')],
+      ]);
+      if (session) {
+        actions.set('continue', () => this.catalog ? this.catalog.continueLearning(session.user.id) : command('dhimantai.openLearningRoom'));
+        actions.set('courses', () => command('dhimantai.browsePractice'));
+        actions.set('certificates', () => command('dhimantai.courseGrade', '__certificates__'));
+        actions.set('signOut', () => command('dhimantai.signOut'));
+        if (origin) actions.set('manage', () => vscode.env.openExternal(vscode.Uri.parse(`${origin}/#/profile${session.user.email ? '?signin=email' : ''}`)));
+      } else {
+        actions.set('signIn', () => command('dhimantai.signIn'));
+        actions.set('signUp', () => command('dhimantai.signUp'));
+      }
+      const run = actions.get(action);
+      if (run) { this.close(); await run(); }
+      return;
+    }
+    const {extension, desktop} = this.view(open);
+    if (action === 'check' && !extension.busy && !desktop.busy) return this.check();
+    if (action === 'updateSettings') { this.close(); return command('dhimantai.updateSettings'); }
+    if (action === 'extensionNotes') {
+      this.close();
+      return command('markdown.showPreview', vscode.Uri.joinPath(this.context.extensionUri, 'changelog.md'));
+    }
+    if (action === 'desktopNotes') {
+      const version = desktop.available;
+      const releases = 'https://github.com/ssuda/dhimantai-downloads/releases';
+      return vscode.env.openExternal(vscode.Uri.parse(version ? releases + '/tag/v' + encodeURIComponent(version) : releases));
+    }
+    if (action !== extension.action && action !== desktop.action) return;
+    switch (action) {
+      case 'checkExtension': return this.checkLearning();
+      case 'checkDesktop': return this.checkNative();
+      case 'install': return this.installLearning();
+      case 'download': return this.native?.download();
+      case 'openInstaller': return this.openInstaller();
+      case 'reload': return command('workbench.action.reloadWindow');
+    }
   }
   dispose() {
-    this.disposed = true; ++this.accountRequest;
+    this.disposed = true; ++this.accountRequest; this.close();
     this.native?.dispose(); this.disposables.forEach(item => item.dispose());
   }
 }

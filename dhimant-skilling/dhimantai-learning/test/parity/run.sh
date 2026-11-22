@@ -18,7 +18,8 @@ for language in "${languages[@]}"; do
   fi
   # Same isolation as the worker: no network, unprivileged user, writable /tmp only.
   if ! "$engine" run --rm --network=none --user 1000:1000 --read-only --tmpfs /tmp:exec -e HOME=/tmp -e PARITY_SLOW="${PARITY_SLOW:-0}" \
-      -v "$PWD:/ext:ro" -v "$PWD/.parity/node:/opt/node:ro" --entrypoint /opt/node/bin/node \
+      -v "$PWD:/ext:ro" -v "$PWD/media/course/runner.cjs:/opt/dhimantai/runner.cjs:ro" \
+      -v "$PWD/.parity/node:/opt/node:ro" --entrypoint /opt/node/bin/node \
       "$image" /ext/out/test/parity/parity.js "$language" >> "$report"; then
     echo "ERROR $language: harness failed"; status=1
   fi

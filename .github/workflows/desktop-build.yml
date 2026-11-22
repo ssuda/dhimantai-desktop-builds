@@ -115,6 +115,7 @@ jobs:
         run: python dhimant-skilling/desktop/macos_credentials.py prepare
       - name: Package and verify native installer
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           CLIENT_ENVIRONMENT: ${{ inputs.environment }}
           TARGET_ARCH: ${{ inputs.arch }}
           MACOS_SIGNING: ${{ inputs.macos_signing || 'developer-id' }}

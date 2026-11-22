@@ -14,6 +14,24 @@ export function runInputs(snapshot: CodeSnapshot) {
   return parts.filter(Boolean).map(text => text.length > 160 ? text.slice(0, 159) + '…' : text).join(' · ');
 }
 
+/** Older Instructor boards label an expected exception beside the runnable example. */
+function expectedException(block: Element, code: Element) {
+  const tag = code.getAttribute('data-expected-error');
+  if (tag) return tag;
+  const previous = block.previousElementSibling, next = block.nextElementSibling;
+  const prose = (el: Element | null) => el?.matches('p,h3,h4') ? el.textContent?.trim() ?? '' : '';
+  const before = prose(previous), after = prose(next);
+  // A caption between two runnable cells introduces the next one if it ends in a colon.
+  const intro = previous?.previousElementSibling?.matches('pre') && !before.endsWith(':') ? '' : before;
+  const caption = next?.nextElementSibling?.matches('pre') && after.endsWith(':') ? '' : after;
+  const predicts = /\b(?:[Ee]xpected (?:error|exception)(?: is)?\s*[:—-]?|(?:[Tt]his (?:code|example|cell|call|line|version)|[Ii]t) (?:intentionally |deliberately |will )?(?:raises?|throws?))\s+(?:an? )?([A-Z]\w*(?:Error|Exception))\b/;
+  const expectedOutput = next?.querySelector('code.language-output') ??
+    (/^(?:(?:predicted|expected|sample|example) )?(?:output|result)\b/i.test(after) ?
+      next?.nextElementSibling?.querySelector('code.language-output, code.language-text') : null);
+  return caption.match(predicts)?.[1] ?? intro.match(predicts)?.[1]
+    ?? expectedOutput?.textContent?.trim().match(/(?:^|\n)([A-Z]\w*(?:Error|Exception)):/)?.[1];
+}
+
 /** Bind a printed example to the authored cell before it becomes editable. */
 export function labelLessonOutputs(body: HTMLElement) {
   const calls = new Map<Element, string>();
@@ -22,6 +40,8 @@ export function labelLessonOutputs(body: HTMLElement) {
     const code = block.matches('pre') ? block.querySelector('code') : null;
     const language = code?.className.match(/\blanguage-(\S+)/)?.[1] ?? '';
     if (code && cellLanguage(language)) {
+      const expected = expectedException(block, code);
+      if (expected) block.setAttribute('data-demo-error', expected);
       calls.set(parent, exampleCall(code.textContent ?? ''));
       continue;
     }

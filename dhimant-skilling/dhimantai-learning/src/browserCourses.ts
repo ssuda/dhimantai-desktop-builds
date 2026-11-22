@@ -5,6 +5,7 @@ import { Auth } from './auth';
 import { Environment, EnvironmentName } from './environments';
 import { ensurePodman, ERP_MEMORY_MIB } from './podman';
 import { ErpSandbox, sandboxKey } from './browserSandbox';
+import {courseAction, type SkillingTarget} from './skillingMenu';
 import {BrowserLearning, BrowserTask, ERP_COURSE, VerifiedTask} from './browserLearning';
 import {FrappeServer} from './apps/frappe';
 import {openInjectedTab, InjectedTab} from './apps/desktopBrowser';
@@ -23,6 +24,15 @@ export const ERP_TAB_FILTER='http://127.0.0.1:*/{desk,desk/**,app/**,login,asset
 export class BrowserCourses {
   private runtime?: ErpSandbox;
   private tab?: InjectedTab;
+  private readonly menuChanged = new vscode.EventEmitter<void>();
+  readonly onMenuChange = this.menuChanged.event;
+  menuTarget(): SkillingTarget | undefined {
+    const scope = this.scope;
+    if (!this.tab?.active || !scope || scope.environment !== this.environment()) return;
+    const chapter = this.learning?.latest(scope.account, scope.environment)?.chapter;
+    return {course: courseAction('erpnext-essentials', chapter),
+      ask: () => vscode.commands.executeCommand('dhimantai.openLearningRoom', ERP_COURSE, chapter)};
+  }
   private pending?: Promise<void>;
   private generation = 0;
   private scope?: {account:string; environment:EnvironmentName; learner:string};
@@ -215,7 +225,8 @@ export class BrowserCourses {
       const learnerServer = new FrappeServer(url, `learner-${id}@training.invalid`, password);
       try {
         await this.tab?.dispose();
-        this.tab = await openInjectedTab({url, home:'/desk', media, adapter:'frappe', learner:id, bridge, server:learnerServer});
+        this.tab = await openInjectedTab({url, home:'/desk', media, adapter:'frappe', learner:id, bridge, server:learnerServer, onFocusChange: () => this.menuChanged.fire()});
+        this.menuChanged.fire();
         if (this.tab) return;
       } catch (error) { this.output.appendLine('Desktop browser injection unavailable: '+(error instanceof Error?error.message:String(error))); }
     }
@@ -241,7 +252,7 @@ export class BrowserCourses {
   }
   stop() {
     this.generation++;
-    void this.tab?.dispose(); this.tab=undefined;
+    void this.tab?.dispose(); this.tab=undefined; this.menuChanged.fire();
     void this.learning?.stop();
     const runtime=this.runtime, scope=this.scope, starting=this.starting;
     return this.stopping=this.stopping.then(async()=>{
@@ -256,5 +267,5 @@ export class BrowserCourses {
     const runtime=this.runtime;this.runtime=undefined;
     await runtime?.shutdown();
   }
-  dispose() {this.subscriptions.forEach(s=>s.dispose());this.verifiedChanged.dispose();void this.stop();}
+  dispose() {this.subscriptions.forEach(s=>s.dispose());this.verifiedChanged.dispose();void this.stop();this.menuChanged.dispose();}
 }

@@ -21,6 +21,7 @@ const {registerLearningRoom}=require('../out/src/learningRoom');
 const {CourseCatalog}=require('../out/src/courseCatalog');
 const {courseGradeHtml}=require('../out/src/courseGradeHtml');
 const {writtenHtml}=require('../out/src/writtenPractice');
+const {authPageHtml}=require('../out/src/authPageHtml');
 Module._load=load;
 const names=['Course overview','Set up your environment','Gradients and parameter updates','Tensors and shapes','Train on real speech','Evaluate recognition'];
 const chapters=names.map((name,i)=>({id:'chapter-'+i,name,lesson:name,free:true,progress:{status:i<2?'covered':i===2?'in_progress':'not_started',covered:i<2?2:0,total:2,topics:[{id:'topic',title:'Understand '+name.toLowerCase(),status:i<2?'covered':'in_progress'}]}}));
@@ -30,8 +31,26 @@ const courses=[{id:'speech',title:'Developing Speech-to-Text Models',summary:'Bu
 const grade={course_id:'speech',course_title:courses[0].title,score:70,grade:'B',eligible:false,passed_count:4,required_count:6,exercise_score:80,project_score:60,policy:{description:'Complete the required independent course activities.',scope:'Coursework'},blockers:['Complete the speech evaluation project.','Review the independent transcription exercise.'],topics:[],requirements:[]};
 const pages={};
 const theme=`<style>:root{--vscode-font-family:Arial,sans-serif;--vscode-font-size:15px;--vscode-foreground:#242338;--vscode-editor-foreground:#242338;--vscode-editor-background:#fbfbfe;--vscode-editorWidget-background:#fff;--vscode-descriptionForeground:#626176;--vscode-panel-border:#dcdbea;--vscode-widget-border:#dcdbea;--vscode-button-background:#6042cb;--vscode-button-foreground:#fff;--vscode-button-hoverBackground:#5033b9;--vscode-button-secondaryBackground:#eeebf7;--vscode-button-secondaryForeground:#302b49;--vscode-input-background:#fff;--vscode-input-foreground:#242338;--vscode-input-border:#ccc9df;--vscode-dropdown-background:#fff;--vscode-dropdown-foreground:#242338;--vscode-focusBorder:#7653df;--vscode-progressBar-background:#3a9468;--vscode-testing-iconPassed:#268051;--vscode-badge-background:#eeebf7;--vscode-badge-foreground:#5033b9;--vscode-textLink-foreground:#6042cb;--vscode-editor-font-family:monospace;--vscode-editor-font-size:14px;--vscode-editor-selectionBackground:#dcd4fa;--vscode-editor-inactiveSelectionBackground:#ece6fa;--vscode-editorWarning-foreground:#a26513;--vscode-textBlockQuote-background:#f1eef8}body{margin:0}*{box-sizing:border-box}</style>`;
-const server=createServer((req,res)=>{const path=decodeURIComponent(req.url.split('?')[0]);if(pages[path]){res.setHeader('Content-Type','text/html');res.end(pages[path]);return;}if(path.startsWith('/media/')&&!path.includes('..')){try{const file=join(root,path);res.setHeader('Content-Type',({'.js':'text/javascript','.css':'text/css','.woff2':'font/woff2','.svg':'image/svg+xml'})[extname(file)]||'application/octet-stream');res.end(readFileSync(file));return;}catch{}}res.statusCode=404;res.end();});
-async function startFixtures(){
+async function startFixtures(assetRoot = root){
+ const server=createServer((req,res)=>{
+   const path=decodeURIComponent(req.url.split('?')[0]);
+   if(pages[path]){
+     res.setHeader('Content-Type','text/html');
+     res.end(pages[path]);
+     return;
+   }
+   if(path.startsWith('/media/')&&!path.includes('..')){
+     try {
+       const file=join(assetRoot,path);
+       const content=readFileSync(file);
+       res.setHeader('Content-Type',({'.js':'text/javascript','.css':'text/css','.woff2':'font/woff2','.svg':'image/svg+xml','.png':'image/png'})[extname(file)]||'application/octet-stream');
+       res.end(content);
+       return;
+     } catch {}
+   }
+   res.statusCode=404;
+   res.end();
+ });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));origin='http://127.0.0.1:'+server.address().port;
  const storage=mkdtempSync(join(tmpdir(),'b2c-layout-'));
  const context={subscriptions: [], extensionUri:{fsPath:root},extensionPath:root,globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:()=>undefined,update:async()=>{}}};
@@ -39,12 +58,19 @@ async function startFixtures(){
  registerLearningRoom(context,()=> 'staging',()=>({apiUrl:'https://fixture.invalid'}),{session:async()=>session,signIn:async()=>session,accessToken:async()=> 'fixture'});
  await commands.get('dhimantai.openLearningRoom')('Developing Speech-to-Text Models');
  const prepare=html=>html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/,'').replace('</head>',theme+'</head>').replace(/<body(?: class="([^"]*)")?/,(_body,classes)=>'<body class="'+(classes?classes+' ':'')+'vscode-light"');
+ for (const mode of ['signIn','signUp']) {
+   pages['/'+mode]=prepare(authPageHtml(mode,'nonce','staging',{root:origin+'/media/auth',source:origin}));
+ }
  pages['/room']=prepare(panels.at(-1).webview.html).replace(/<script[^>]*src="[^"]*livekit-client\.umd\.js"[^>]*><\/script>/,'');
  pages['/written']=prepare(writtenHtml({id:'trace',title:'Trace a recursive call',question:'Explain when each call returns.',course:'Algorithms with Python'},
-   {answer:'',assistance:'',usedTutor:false},'nonce',undefined,undefined,'',undefined,true));
+   {answer:'',assistance:'',usedTutor:false},'nonce',undefined,file=>origin+'/media/'+file,origin,undefined,true));
  vscode.env.appName='dhimantAI';
  await commands.get('dhimantai.openDoubtSolver')();
  pages['/doubt']=prepare(panels.at(-1).webview.html).replace(/<script[^>]*src="[^"]*livekit-client\.umd\.js"[^>]*><\/script>/,'');
+ const practice = {assessment:'practice_only', title:'Inspect a training batch', question:'Print the first batch.',
+   course:'Developing Speech-to-Text Models', language:'python'};
+ await commands.get('dhimantai.openPracticeNotebook')('', 'fixture', practice.course, practice);
+ pages['/practice']=prepare(panels.at(-1).webview.html);
  const catalog=Object.create(CourseCatalog.prototype);Object.assign(catalog,{panel:{webview:{html:''}},sequence:0,awaitingPayment:false,projects:[],studyCourses:new Set(),companions:[],environment:()=> 'production',selection:{account:'fixture',environment:'production',catalog:{individual:true,courses,offers:[]}}});catalog.render(catalog.selection.catalog,'');pages['/catalog']=prepare(catalog.panel.webview.html);
  const previewCourses=require('../../../website/upskill/catalog.json').courses
    .filter(c=>['algorithms-python','python-backend-fastapi'].includes(c.id))
@@ -63,12 +89,15 @@ async function startFixtures(){
    window.notebookScroller=()=>{const panel=document.getElementById('learning-document');return panel&&getComputedStyle(panel).overflowY==='auto'?panel:document.scrollingElement;};
    const send=data=>window.dispatchEvent(new MessageEvent('message',{data,origin:location.origin}));window.fixturePost=send;
    window.acquireVsCodeApi=()=>({getState:()=>window.saved,setState:s=>window.saved=s,postMessage:m=>{window.posts.push(m);setTimeout(()=>{
-     if(m.type==='ready')send({type:'openTutor',mode:document.body.dataset.notebookMode});
-     if(m.type==='tutorLessons')send({type:'tutorLessons',attempt:m.attempt,browse:m.browse,courses:[{name:'Developing Speech-to-Text Models',chapters},
+     const practice = document.body.dataset.notebookMode === 'practice';
+     if(m.type==='ready')send(practice ? {type:'openPractice'} : {type:'openTutor',mode:document.body.dataset.notebookMode});
+     if(m.type==='tutorLessons' && !new URLSearchParams(location.search).has('holdLessons'))send({type:'tutorLessons',attempt:m.attempt,browse:m.browse,courses:[{name:'Developing Speech-to-Text Models',chapters},
        ...(document.body.dataset.notebookMode==='doubt_solver'?[{name:'Python',chapters:[{id:'python-lists',name:'Lists'},{id:'locked',name:'Locked chapter',locked:true},{id:'expired',name:'Expired chapter',expired:true}]}]:[])]});
      if(m.type==='join'){
        send({type:'restoreNotebook',attempt:m.attempt,documentKey:'fixture',notebook:{version:1,title:'Learning notebook',cells:[],drafts:[],textDraft:''}});
-       send({type:'grant',attempt:m.attempt,url:'unused',token:'unused',chapterId:m.chapterId});
+       if(practice)send({type:'practiceReady',attempt:m.attempt,aiEnabled:true,codeRuntime:'Course container',
+         practice:{id:'exercise',title:'Inspect a training batch',language:'python'}});
+       else send({type:'grant',attempt:m.attempt,url:'unused',token:'unused',chapterId:m.chapterId});
      }
      if(m.type==='codeAction')send({...m,type:'codeResult',execution:{status:'exited',exit_code:0,stdout:m.source.includes('learning_rate')?'1.95':'tensor([4., 5., 6.])',stderr:'',truncated:false}});
    },0);}});

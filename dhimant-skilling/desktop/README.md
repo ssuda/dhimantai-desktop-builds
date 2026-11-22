@@ -12,7 +12,9 @@ Copilot is optional and disabled by default. The custom desktop permits it only 
 
 Provider/authentication/API configuration is retained for an optional compatible Copilot Chat installation. The pinned VSCodium preview does not bundle that extension; installing and signing into Copilot is separate, and live Copilot responses have not been validated here. No automatic extension download, sign-in, or model request is introduced. Stock VS Code receives the disabled default but no forced course override.
 
-Light Modern is the whole editor's default theme. Learning panels inherit the editor theme; there is no separate extension appearance setting or palette. Users can still select a different editor theme.
+The native window carries the dhimantAI book and wordmark. New profiles use **dhimantAI Light**, with a navy header and activity rail, orange selection accents and a light reading surface. The learning panels follow the chosen editor theme. Existing profiles can select **dhimantAI Light** in Color Theme.
+
+**Skilling** follows the active tab. In a lesson it focuses Instructor, in Practice it offers the checks and submissions supported by that exercise, and in a project it can discuss selected lines. Written challenges use Submit for Feedback. Course Grade & Certificate opens the current course. Learning pages show Skilling and basic Edit actions. Opening a source file or notebook also shows File and View. The desktop omits the general-purpose Go, Selection, Run, Terminal and Help menus. Closing the last tab shows Browse Courses and, for learners with recorded course progress, Continue Learning.
 
 `lock.json` pins VSCodium, Code OSS, Electron and Node. `customize.py` applies narrow source changes and fails when upstream context changes. `build.py` produces a macOS DMG, Windows user setup EXE, or Linux tarball and Debian package on native x64/ARM64 runners. Pushing the exported build repository to `main` builds the four supported targets sequentially; it neither publishes releases nor updates a running service.
 
@@ -44,7 +46,7 @@ The source checkout and the build checkout have separate Git remotes:
 | Location | Remote / destination | Contents |
 | --- | --- | --- |
 | Main `dhimantai` checkout | `origin`: `git@bitbucket.org:optficial/dhimantai.git` | Full project source and history. |
-| Separate build checkout | `origin`: `https://github.com/ssuda/dhimantai-desktop-builds.git` | Private, exported desktop build inputs only. |
+| Separate build checkout | `origin`: `https://github.com/ssuda/dhimantai-desktop-builds.git` | Public repository containing the allowlisted desktop build inputs. |
 | Public downloads | [ssuda/dhimantai-downloads Releases](https://github.com/ssuda/dhimantai-downloads/releases) | Verified installer binaries and `SHA256SUMS`, uploaded with `gh`; no Git push from the main checkout. |
 
 The main checkout normally has **no GitHub remote**. Run the GitHub push from
@@ -178,9 +180,9 @@ increment the desktop release when changing its payload.
 
 ## macOS Developer ID signing and notarization
 
-The published staging desktop version is **1.143.10007-preview.7**, with new artifact filenames.
-Published preview 3 and preview 5 downloads remain unchanged. Both native
-macOS runners use the same signing path. The automatic staging pipeline sets
+Staging preview **1.143.10013-preview.13** bundles learning extension **0.39.71**.
+The [release receipt](../../deploy/releases/2026-11-22-staging-skilling-desktop-preview13.json) records the verified installers and download checks.
+Both native macOS runners use the same signing path. The automatic staging pipeline sets
 `macos_signing: ad-hoc` in both macOS jobs, so these previews still trigger
 Gatekeeper warnings. After configuring the Apple secrets below, change both
 callers in `.github/workflows/desktop-preview.yml` to `macos_signing: developer-id`
@@ -314,6 +316,15 @@ Native test launchers use disposable profiles, in-memory secret storage and a ma
 ## Updates
 
 There are two independent release paths. An extension-only change publishes the VSIX and its learning release manifest; leave the desktop version in `lock.json` and the desktop installer manifest unchanged. The desktop download gate compares only the native app version, never `extensionVersion`. The client fetches the small manifests to check both paths, but downloads an app installer only when a newer native app version exists. Native shell or Electron changes require a desktop release.
+
+Staging and production publish the learning VSIX independently. Each manifest names its version, filename and SHA-256 digest.
+
+| VSIX channel | Public release manifest |
+| --- | --- |
+| Staging | [Staging learning updates](https://app-staging.dhimant.ai/downloads/dhimantai-learning.json) |
+| Production | [Production learning updates](https://app.dhimant.ai/downloads/dhimantai-learning.json) |
+
+Publish the candidate to staging first. When promoting it to production, publish the verified VSIX bytes and matching manifest on the production host. Each service serves its own archive at `/downloads/dhimantai-learning.vsix`.
 
 The learning extension updates silently from the selected dhimantAI service when the app starts. Downloads are
 checked against the published SHA-256 before installation. The current lesson keeps running; the new version

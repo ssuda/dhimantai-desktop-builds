@@ -3,7 +3,7 @@
  * Instructor and Doubt Solver notebooks, and Study. Each page inlines this in
  * its <head>, so all of them share spacing, shape, chips and progress bars.
  * It defines no palette: every colour is a variable of the app's active color
- * theme (Light Modern by default in the dhimantAI desktop), so a theme change or
+ * theme (dhimantAI Light by default in the dhimantAI desktop), so a theme change or
  * high contrast restyles the learning panels with the rest of the app.
  */
 export const UI_TOKENS = `:root{

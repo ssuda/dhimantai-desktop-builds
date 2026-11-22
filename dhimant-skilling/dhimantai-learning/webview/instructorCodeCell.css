@@ -1,0 +1,30 @@
+.practice-code-editor>small { display: block; color: var(--vscode-descriptionForeground); }
+.practice-code-editor { border: 1px solid var(--vscode-panel-border); border-radius: 5px; padding: 12px; margin: 12px 0; }
+.practice-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.practice-editor-heading select { font: inherit; max-width: 100%; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 3px 6px; }
+.practice-buffer { margin: 10px 0; overflow: hidden; border: 1px solid var(--vscode-panel-border); }
+.practice-buffer.is-enlarged .cm-scroller { height: clamp(28em, 65vh, 48em); max-height: none; }
+.practice-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.practice-actions button[data-action=run] { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.practice-status { color: var(--vscode-descriptionForeground); font-size: .9em; }
+.practice-output { max-height: 22em; white-space: pre-wrap; }
+.practice-code-editor { border-radius: 9px; padding: 14px; }
+.practice-editor-heading { font-size: 12px; }
+.practice-editor-heading button { font-size: 11px; padding: 3px 8px; background: transparent; border-color: transparent; color: var(--vscode-descriptionForeground); }
+.practice-buffer { border-radius: 6px; }
+.practice-code-editor > small { font-size: 11px; }
+.practice-output { border-radius: 6px; padding: 12px; font-size: max(14px, var(--vscode-editor-font-size, 14px)); line-height: 1.6; max-height: 26rem; overflow: auto; }
+.editor-resize svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.practice-editor-heading .editor-resize { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 6px; }
+body { --syntax-keyword: #c586c0; --syntax-variable: #9cdcfe; --syntax-function: #dcdcaa; --syntax-type: #4ec9b0; --syntax-string: #ce9178; --syntax-number: #b5cea8; --syntax-comment: #8eae7d; --syntax-operator: #d4d4d4; }
+body.vscode-light, body.vscode-high-contrast-light { --syntax-keyword: #7f238c; --syntax-variable: #175e85; --syntax-function: #795e00; --syntax-type: #167363; --syntax-string: #a31515; --syntax-number: #126b3e; --syntax-comment: #486b3b; --syntax-operator: #383838; }
+.cm-content .syntax-keyword { color: var(--syntax-keyword); }
+.cm-content .syntax-variable { color: var(--syntax-variable); }
+.cm-content .syntax-function { color: var(--syntax-function); }
+.cm-content .syntax-type { color: var(--syntax-type); }
+.cm-content .syntax-string { color: var(--syntax-string); }
+.cm-content .syntax-number { color: var(--syntax-number); }
+.cm-content .syntax-comment { color: var(--syntax-comment); font-style: italic; }
+.cm-content .syntax-operator { color: var(--syntax-operator); }
+.execution-result > strong, .execution-result > code:not([hidden]) { display: block; overflow-wrap: anywhere; }
+.execution-result > code { margin-block: 4px; }

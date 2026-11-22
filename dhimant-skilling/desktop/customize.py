@@ -37,7 +37,9 @@ def customize(root):
         raise RuntimeError('Untested Electron version')
     customize_navigation(root)
     customize_appearance(root)
+    configure_brand(root)
     configure_app_bar(root)
+    configure_skilling_shell(root)
     # The catalog or chapter click starts the lesson. Its WebRTC audio element
     # attaches later, after the grant and agent handoff, often in a new webview.
     replace(root, 'src/vs/platform/windows/electron-main/windows.ts',
@@ -139,17 +141,12 @@ def customize_navigation(root):
     replace(root, 'src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts',
         "'default': 'welcomePage',", "'default': 'none',")
     explorer = 'src/vs/workbench/contrib/files/browser/explorerViewlet.ts'
-    # Replace the two registered Explorer titles, retaining the existing view ID,
-    # keyboard shortcut, file tree, workspace state and user view customizations.
-    replace(root, explorer, '\n\ttitle: localize2(\'explore\', "Explorer"),', '\n\ttitle: localize2(\'dhimantaiLearning\', "Learning"),')
-    replace(root, explorer, '\n\t\ttitle: localize2(\'explore\', "Explorer"),', '\n\t\ttitle: localize2(\'dhimantaiLearning\', "Learning"),')
-    replace(root, explorer, '"&&Explorer"', '"&&Learning"')
+    # The extension owns the Learning sidebar. Keep Explorer as the native file browser.
     replace(root, explorer, 'name: localize2(\'folders\', "Folders"),', 'name: localize2(\'courseFiles\', "Course Files"),')
     replace(root, explorer, 'name: EmptyView.NAME,', 'name: localize2(\'courseFiles\', "Course Files"),\n\t\t\tcollapsed: true,')
     views = 'src/vs/workbench/api/browser/viewsExtensionPoint.ts'
     replace(root, views, 'collapsed: this.showCollapsed(container) || initialVisibility === InitialVisibility.Collapsed,',
-        "collapsed: item.id === 'dhimantai.learningNavigation' ? false : item.id === 'dhimantai.practice' || this.showCollapsed(container) || initialVisibility === InitialVisibility.Collapsed,")
-    replace(root, views, '\t\t\t\t\t\torder: order,', "\t\t\t\t\t\torder: item.id === 'dhimantai.learningNavigation' ? -10 : order,")
+        "collapsed: item.id === 'dhimantai.practice' || this.showCollapsed(container) || initialVisibility === InitialVisibility.Collapsed,")
 
 
 # Developer tool containers a new learner does not need on the Activity Bar.
@@ -196,7 +193,73 @@ def customize_appearance(root):
         'default: isWeb ? ThemeSettingDefaults.COLOR_THEME_LIGHT : ThemeSettingDefaults.COLOR_THEME_DARK,',
         'default: ThemeSettingDefaults.COLOR_THEME_LIGHT,')
     replace(root, 'src/vs/workbench/services/themes/common/workbenchThemeService.ts',
-        "export const COLOR_THEME_LIGHT = 'Light 2026';", "export const COLOR_THEME_LIGHT = 'Light Modern';")
+        "export const COLOR_THEME_LIGHT = 'Light 2026';", "export const COLOR_THEME_LIGHT = 'dhimantAI Light';")
+
+
+def configure_brand(root):
+    themes = root / 'extensions/theme-defaults/package.json'
+    manifest = json.loads(themes.read_text())
+    manifest['contributes']['themes'].append({'id': 'dhimantAI Light', 'label': 'dhimantAI Light',
+        'uiTheme': 'vs', 'path': './themes/dhimantai-light.json'})
+    themes.write_text(json.dumps(manifest, indent=2) + '\n')
+    titlebar = 'src/vs/workbench/browser/parts/titlebar/titlebarPart.ts'
+    anchor = "this.leftContent = append(this.rootContainer, $('.titlebar-left'));"
+    replace(root, titlebar, anchor, anchor + """
+        const brand = append(this.leftContent, $('.dhimantai-wordmark'));
+        append(brand, $('span.dhimantai-mark'));
+        append(brand, $('span.dhimantai-name', undefined, 'dhimant', $('b', undefined, 'AI')));""".replace('    ', '\t'))
+    anchor = "if (isMacintosh && isNative && primaryWindowControlsLocation === 'left') {"
+    replace(root, titlebar, anchor, anchor + "\n\t\t\t\tbrand.classList.add('after-window-controls');")
+    # Use the book artwork bundled with the learning extension.
+    mark = root / 'src/vs/workbench/browser/parts/media/dhimantai-mark.png'
+    mark.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT.parent / 'dhimantai-learning/media/auth/dhimantai.png', mark)
+
+
+def configure_skilling_shell(root):
+    menu = 'src/vs/workbench/browser/parts/titlebar/menubar.contribution.ts'
+    replace(root, menu, "import { IsMacNativeContext }",
+        "import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';\nimport '../../../contrib/dhimantai/browser/skillingMenus.contribution.js';\nimport { IsMacNativeContext }")
+    for name in ('File', 'Edit', 'View'):
+        # Keep upstream titles and mnemonics. Only a file or notebook needs file and view commands.
+        condition = "" if name == 'Edit' else "\n\twhen: ContextKeyExpr.has('dhimantai.editingFiles'),"
+        replace(root, menu, f'submenu: MenuId.Menubar{name}Menu,', f"submenu: MenuId.for('dhimantai.learning{name}')," + condition)
+    for name in ('Selection', 'Go', 'Terminal', 'Help'):
+        anchor = f'submenu: MenuId.Menubar{name}Menu,'
+        replace(root, menu, anchor, anchor + '\n\twhen: ContextKeyExpr.false(),')
+    replace(root, 'src/vs/workbench/contrib/debug/browser/debug.contribution.ts',
+        "order: 6,\n\twhen: IsSessionsWindowContext.negate()", "order: 6,\n\twhen: ContextKeyExpr.false()")
+    replace(root, 'src/vs/workbench/contrib/debug/browser/debug.contribution.ts',
+        'import { FocusedViewContext, IsSessionsWindowContext }', 'import { FocusedViewContext }')
+    # A focused teaching iframe can leave the workbench document without DOM focus.
+    # Use Electron's window identity to decide which window owns the application menu.
+    renderer = 'src/vs/workbench/electron-browser/parts/titlebar/menubarControl.ts'
+    replace(root, renderer, '\t\t// Since the native menubar is shared between windows (main process)\n'
+        '\t\t// only allow the focused window to update the menubar\n\t\tif (!this.hostService.hasFocus) {\n\t\t\treturn;\n\t\t}\n\n', '')
+    native = 'src/vs/platform/menubar/electron-main/menubar.ts'
+    anchor = 'updateMenu(menubarData: IMenubarData, windowId: number) {'
+    replace(root, native, anchor, anchor + """
+        const active = this.windowsMainService.getFocusedWindow() ?? this.windowsMainService.getLastActiveWindow();
+        if (active?.id !== windowId) { return; }""".replace('    ', '\t'))
+    # Electron has its own top-level list in addition to the renderer's menu registry.
+    anchor = "\t\t// File\n\t\tif (this.shouldDrawMenu('File'))"
+    replace(root, native, anchor, """
+        if (this.shouldDrawMenu('Skilling')) {
+            const menu = new Menu();
+            this.setMenuById(menu, 'Skilling');
+            menubar.append(new MenuItem({ label: this.mnemonicLabel(nls.localize('mSkilling', "S&&killing")), submenu: menu }));
+        }
+""".lstrip('\n').replace('    ', '\t') + '\n' + anchor)
+    replace(root, 'src/vs/workbench/browser/parts/editor/editorGroupView.ts',
+        "import { EditorGroupWatermark } from './editorGroupWatermark.js';",
+        "import { SkillingWelcome as EditorGroupWatermark } from '../skillingWelcome.js';")
+    replace(root, 'src/vs/workbench/browser/workbench.contribution.ts', "'default': defaultWindowTitle,",
+        "'default': defaultWindowTitle + '${separator}Skilling',")
+    # Keep the normal folder chooser and its warning about closing existing editors.
+    explorer = 'src/vs/workbench/contrib/files/browser/explorerViewlet.ts'
+    replace(root, explorer, "const openFolderButton = `[${openFolder}]", "const openFolderButton = `[${localize('openProjectFolder', 'Open Project Folder')}]")
+    replace(root, explorer, '"You have not yet opened a folder.\\n{0}", openFolderButton',
+        '"Open a project to see its files here.\\n{0}", openFolderButton')
 
 
 def configure_app_bar(root):

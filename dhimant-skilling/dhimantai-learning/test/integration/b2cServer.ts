@@ -117,6 +117,20 @@ export class B2cServer {
       user.joined = true;
       return send(200, { course_id: this.course.id, enrolled: true });
     }
+    if (path === '/course-projects/certificates') return send(200, {certificates:[]});
+    if (user?.joined && (path === '/coursework/courses/python' || path === '/skilling/courses/python')) {
+      const profile = {course_id:'python',title:'Python',role:'Junior Python Developer',level:'Entry level',certifiable:true,
+        technology_stack:['Python'],prerequisites:[],recommended_next:[],outcomes:['Build a tested application.'],criteria:{core:'Test boundary cases.'},scope:'Independent assessment.'};
+      const reason='Unlock 1 required lesson in Python.';
+      const pathway = {eligible:false,score:null,profile,lesson_access:{reason,lessons:['For loops']},blockers:[reason],
+        milestones:['Micro','Minor','Major','Practical','Defence'].map((title,i,a)=>({id:title.toLowerCase(),title,status:'locked',
+          unlocked:false,lock_reason:i ? 'Pass the '+a[i-1]+' assessment first.' : reason,review:null}))};
+      if (path.startsWith('/skilling/')) return send(200,{pathway,weekly:[],topics:[],current_week:'2026-11-16'});
+      return send(200,{gradebook:{course_id:'python',course_title:'Python',score:null,grade:null,eligible:false,passed_count:0,required_count:37,
+        exercise_score:null,project_score:null,policy:{description:'Each assessed activity needs a passing score.',scope:profile.scope},
+        requirements:Array.from({length:37},(_,i)=>({id:'exercise-'+i,kind:'exercise',title:'Python exercise '+(i+1),gradable:true,passed:false,score:null})),
+        topics:[],blockers:['All course lessons must be available to your account.'],readiness:pathway},certificate:null});
+    }
     if (path === '/learning-billing/purchases') return send(200, {payments_ready:true,purchases:[]});
     if (path === '/notebook-coach/study') return send(200, {courses:user?.joined && !this.settings.institute
       ? [{id:'python',title:'Python',chapters:[{id:'10000000-0000-0000-0000-000000000001',title:'Lists'}]}] : []});

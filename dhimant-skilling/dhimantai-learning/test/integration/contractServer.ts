@@ -200,6 +200,32 @@ export class ContractServer {
       return send(res, 200, { access_token: token, refresh_token: 'refresh-' + randomUUID(), expires_in: 3600, user: { id: (ACCOUNTS[email] ?? ACCOUNTS[EMAIL]).id, email } });
     }
 
+    const courseworkUrl = process.env.DHIMANTAI_TEST_COURSEWORK_URL;
+    if (courseworkUrl && url.pathname === '/rest/v1/rpc/public_learning_catalog') {
+      return send(res, 200, {individual:true, courses:[{id:'python', title:'Python', enrolled:true, unlocked:true, chapters:[]}]});
+    }
+    if (courseworkUrl && (url.pathname.startsWith('/coursework/') || url.pathname === '/course-projects/certificates' || url.pathname === '/notebook-coach/project')) {
+      if (!this.tokens.has((req.headers.authorization ?? '').replace(/^Bearer /,''))) return send(res,401,{error:'Sign in'});
+      const target = new URL(url.pathname + url.search, courseworkUrl);
+      if (target.hostname !== '127.0.0.1') throw new Error('Use the disposable local gradebook.');
+      const response = await fetch(target, {method:req.method, headers:{'Content-Type':'application/json', Authorization:'Bearer '+process.env.DHIMANTAI_TEST_GRADE_LEARNER},
+        body:req.method === 'POST' ? JSON.stringify(body) : undefined});
+      const value = await response.json();
+      if (url.pathname.endsWith('/result') && response.ok && this.state.requests.filter(r=>r==='POST '+url.pathname).length <= 2)
+        return send(res,503,{error:'Simulated lost acknowledgement after the ledger commit.'});
+      return send(res,response.status,value);
+    }
+
+    if (['/notebook-coach/project','/notebook-coach/project/architecture-memory','/notebook-coach/project/architecture-memory/practice'].includes(url.pathname) && process.env.DHIMANTAI_TEST_MEMORY_URL) {
+      if (!this.tokens.has((req.headers.authorization ?? '').replace(/^Bearer /, ''))) return send(res, 401, {error:'Sign in'});
+      const target = new URL(url.pathname + url.search, process.env.DHIMANTAI_TEST_MEMORY_URL);
+      if (target.hostname !== '127.0.0.1') throw new Error('The test memory service must use loopback.');
+      const response = await fetch(target, {method: req.method, headers: {'Content-Type':'application/json',
+        Authorization: 'Bearer ' + process.env.DHIMANTAI_TEST_MEMORY_LEARNER}, body: req.method === 'GET' ? undefined : JSON.stringify(body)});
+      res.writeHead(response.status, {'Content-Type': response.headers.get('Content-Type') ?? 'application/json'});
+      return res.end(await response.text());
+    }
+
     if (url.pathname === '/notebook-coach/labs') {
       if (!this.tokens.has((req.headers.authorization ?? '').replace(/^Bearer /, ''))) return send(res, 401, {error:'Sign in'});
       const directory = join(__dirname, '../../../media/course/labs');
@@ -231,6 +257,10 @@ export class ContractServer {
         ladder_token: nextLadderToken(body.ladder_token, 'statement')});
     }
 
+    if (req.method === 'GET' && url.pathname === '/notebook-coach/written/' + QUESTION_ID) {
+      return send(res, 200, {id:QUESTION_ID, title:'Explain your change', question:'What did you change?', course:'Python',
+        kind:'written', assessment:'feedback_only', preparation:'recommended'});
+    }
     if (url.pathname === '/notebook-coach/tutor' || url.pathname === `/practice-code/${QUESTION_ID}/notebook-coach`) {
       if (!this.tokens.has((req.headers.authorization ?? '').replace(/^Bearer /, ''))) return send(res, 401, { error: 'Sign in' });
       this.state.coach.push(body);

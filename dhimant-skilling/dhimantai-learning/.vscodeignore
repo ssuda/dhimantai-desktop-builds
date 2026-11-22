@@ -1,9 +1,25 @@
 .parity/**
 .vscode-test/**
 .vscode/**
+.gitignore
 **/*.map
 node_modules/**
-out/test/**
+# Only these executable entry points and the browser authoring runtime ship from out/.
+out/**
+!out/src/extension.js
+!out/src/apps/cli.js
+!out/vendor/ws.js
+!out/vendor/ws.LICENSE
+!out/vendor/playwright-core/index.js
+!out/vendor/playwright-core/package.json
+!out/vendor/playwright-core/browsers.json
+!out/vendor/playwright-core/LICENSE
+!out/vendor/playwright-core/NOTICE
+!out/vendor/playwright-core/ThirdPartyNotices.txt
+!out/vendor/playwright-core/lib/*.js
+!out/vendor/playwright-core/lib/*.LICENSE
+!out/vendor/playwright-core/lib/*.wasm
+!out/vendor/playwright-core/lib/server/**
 src/**
 staging-acceptance.json
 test/**
@@ -12,6 +28,7 @@ media/course/labs/**
 tsconfig.json
 
 **/*.vsix
+!media/course-extensions/*.vsix
 
 webview/**
 tsconfig.webview.json

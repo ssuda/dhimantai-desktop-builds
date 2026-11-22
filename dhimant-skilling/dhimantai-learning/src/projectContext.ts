@@ -5,12 +5,22 @@ import type { ProjectSource } from './projectCore';
 // Keep this in step with the server's public_path validator. No workspace crawl or
 // model-selected arbitrary path: candidates come from the installed project manifest
 // and bounded public source/test/fixture folders in projectFiles.
+const SOURCE_SUFFIX = '(?:py|pyi|php|java|kt|swift|c|h|cpp|cc|cxx|hpp|hh|hxx|rs|go|js|mjs|cjs|ts|tsx|jsx)';
+// Files named for stored secrets (credentials, secrets, passwords), secret-named folders and data files stay private;
+// a source module such as auth/tokens.py or config/env.py is shared (pasted credentials redacted below) because that is
+// where security teaching happens. Mirrors agent public_path.
+const SECRET_PATH = new RegExp('(?:^|/)(?:credentials?|secrets?|passwords?)(?:\\.[^/]*)?(?:/|$)'
+  + '|(?:^|/)(?:tokens?|private|env|keys?)(?:/|(?:\\.(?!' + SOURCE_SUFFIX + '$)[^/]*)?$)'
+  + '|\\.env[^/]*(?:/|$)|[^/]*\\.(?:pem|key)(?:/|$)|id_rsa[^/]*(?:/|$)|service_account[^/]*(?:/|$)'
+  + '|[^/]*_(?:credentials|token|secret|key)\\.(?!' + SOURCE_SUFFIX + '$)[^/.]+$', 'i');
+/** CI workflows are the deployment evidence most projects have; the only dot-folder accepted. */
+const WORKFLOW_PATH = /^\.github\/workflows\/[A-Za-z0-9_][A-Za-z0-9_.-]*\.ya?ml$/;
 export function publicContextPath(path: string) {
   return path.length <= 160 && !path.includes('\\') && !path.includes(':') &&
-    path.split('/').every(part => /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(part)) &&
-    (/\.(py|java|kt|kts|swift|xml|c|h|cpp|cc|cxx|hpp|hh|hxx|rs|go|js|mjs|cjs|ts|tsx|jsx|html|css|sql|md|json|toml|txt|rst|csv|tsv|yaml|yml)$/.test(path) ||
-      /(?:^|\/)(?:Dockerfile(?:\.(?!(?:pem|key|env)$)[A-Za-z0-9_-]+)?|Caddyfile|alembic\.ini)$/i.test(path)) &&
-    !/(?:^|\/)(?:(?:credentials?|secrets?|tokens?|passwords?|private|env|keys?)(?:\.[^/]*)?(?:\/|$)|\.env[^/]*(?:\/|$)|[^/]*\.(?:pem|key)(?:\/|$)|id_rsa[^/]*(?:\/|$)|service_account[^/]*(?:\/|$)|[^/]*_(?:credentials|token|secret|key)\.(?!py$)[^/.]+$)/i.test(path);
+    (WORKFLOW_PATH.test(path) || path.split('/').every(part => /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(part))) &&
+    (/\.(py|php|java|kt|kts|swift|xml|c|h|cpp|cc|cxx|hpp|hh|hxx|rs|go|js|mjs|cjs|ts|tsx|jsx|html|css|sql|md|json|toml|txt|rst|csv|tsv|yaml|yml)$/.test(path) ||
+      /(?:^|\/)(?:Dockerfile(?:\.(?!(?:pem|key|env)$)[A-Za-z0-9_-]+)?|Caddyfile|Makefile|Procfile|alembic\.ini)$/i.test(path)) &&
+    !SECRET_PATH.test(path);
 }
 
 // Path filtering cannot see a key pasted into a learner's file or unsaved buffer. Redact
@@ -34,29 +44,30 @@ export function redactSecrets(text: string) {
 /** Explain, in plain words and naming the file where possible, why the project snapshot failed. */
 export async function projectContextProblem(error: unknown, root: string, paths: string[] | undefined, open = new Map<string, string>(), fileLimit = 64) {
   const message = error instanceof Error ? error.message : String(error);
-  const lead = 'Coach cannot read this project right now, so shared files and milestone evidence are paused. ';
+  const lead = 'The Instructor cannot read this project right now, so shared files and milestone evidence are paused. ';
   const find = async (test: (path: string) => Promise<boolean>) => {
     for (const path of paths ?? []) if (await test(path).catch(() => false)) return path;
   };
   if (/too many public project/i.test(message))
-    return lead + `The project has more public source, test and data files than Coach can read (${fileLimit}). Move extra files out of the source, test and data folders.`;
+    return lead + `The project has more public source, test and data files than the Instructor can read (${fileLimit}). Move extra files out of the source, test and data folders.`;
   if (/too deeply nested/i.test(message))
     return lead + 'A source folder is nested more than 8 levels deep. Move those files closer to the project folder.';
   if (/linked files/i.test(message)) {
     const canonical = await realpath(root).catch(() => root);
     const linked = await find(async path => await realpath(join(root, path)) !== resolve(canonical, path));
     return lead + (linked ? `${linked} is a link to another file. ` : 'A project file is a link to another file. ')
-      + 'Coach only reads regular files; replace the link with a copy of the file.';
+      + 'The Instructor reads regular files. Replace the link with a copy of the file.';
   }
   if (/smaller than 512 KB|too large/i.test(message)) {
     const large = await find(async path => (open.get(path)?.length ?? 0) > 512000 || (await stat(join(root, path))).size > 512000);
-    if (large) return lead + `${large} is larger than 512 KB. Coach cannot share a file that large; move large data out of the project folders or shorten the file.`;
+    if (large) return lead + `${large} is larger than 512 KB. Move large data out of the project folders or shorten the file.`;
     if (/too large/i.test(message)) return lead + 'Together, the project files are larger than 8 MB. Move large data files out of the project folders.';
   }
   return lead + message;
 }
 
 export interface ProjectStructure { files: string[]; total_files: number; truncated: boolean }
+export interface ProjectLineSelection { path: string; start: number; end: number }
 const stopWords = new Set(('the this that these those what which where when why how does do can could would should '
   + 'please help explain understand file files source code project test tests data function current with from into '
   + 'and are for have has not about here there then their them your using used result line '
@@ -70,7 +81,7 @@ const mentions = (text: string, value: string) => new RegExp('(?<![\\w/])' + esc
 
 /** Deterministic local retrieval: paths/symbols, then callers, matching tests and fixtures. */
 export function selectProjectContext(all: Map<string, string>, focus: string[], question = '',
-    locations: Record<string, number | string> = {}) {
+    locations: Record<string, number | string> = {}, selection?: ProjectLineSelection) {
   const paths = [...all.keys()].filter(publicContextPath).sort(), terms = words(question);
   const tokens = new Map(paths.map(path => [path, new Set(words(path))]));
   const matches = new Map(paths.map(path => [path, terms.filter(term =>
@@ -100,6 +111,12 @@ export function selectProjectContext(all: Map<string, string>, focus: string[], 
   // Related files support the strongest direct match; they must not replace it
   // simply because several seed files import the same helper or test subject.
   if (seeds[0]) { ordered.splice(ordered.indexOf(seeds[0]), 1); ordered.unshift(seeds[0]); }
+  const selected = selection && ordered.includes(selection.path) ? selection : undefined;
+  if (selected) {
+    if (selected.start > 100000) throw new Error('The selected lines are beyond the project excerpt limit.');
+    ordered.splice(ordered.indexOf(selected.path), 1);
+    ordered.unshift(selected.path);
+  }
   // README accompanies every question, while the question's strongest match stays first.
   const readme = paths.find(path => /^README\.(md|rst|txt)$/i.test(path));
   if (readme && ordered.indexOf(readme) > 2) { ordered.splice(ordered.indexOf(readme), 1); ordered.splice(2, 0, readme); }
@@ -116,12 +133,13 @@ export function selectProjectContext(all: Map<string, string>, focus: string[], 
     const target = reference ? Number(reference[1]) - 1 : best > 0 ? lineScores.indexOf(best)
       : typeof location === 'string' ? Math.max(0, lines.findIndex(line => line.includes(location)))
       : (location ?? 1) - 1;
-    let start = Math.max(0, Math.min(target, lines.length - 1, 99999) - 8);
+    const highlighted = selected?.path === path ? selected : undefined;
+    let start = highlighted ? highlighted.start - 1 : Math.max(0, Math.min(target, lines.length - 1, 99999) - 8);
     const allowance = Math.min(6500, budget - (chosen.length - index - 1) * 1000);
-    let text = lines.slice(start).join('\n').slice(0, 6000);
+    let text = lines.slice(start, highlighted?.end).join('\n').slice(0, 6000);
     const file = () => ({path, text, truncated: start > 0 || text.length < source.length, start_line: start + 1});
     while (Buffer.byteLength(JSON.stringify(file())) > allowance) text = text.slice(0, -100);
-    if (target < lines.length && target <= 99999 && text.split('\n').length <= target - start) {
+    if (!highlighted && target < lines.length && target <= 99999 && text.split('\n').length <= target - start) {
       // Long preceding lines must not displace the symbol the learner asked about.
       start = Math.max(0, target); text = lines.slice(start).join('\n').slice(0, 6000);
       while (Buffer.byteLength(JSON.stringify(file())) > allowance) text = text.slice(0, -100);
@@ -139,5 +157,20 @@ export function selectProjectContext(all: Map<string, string>, focus: string[], 
     overview.push(path);
   }
   const structure: ProjectStructure = {files: overview.sort(), total_files: paths.length, truncated: overview.length < paths.length};
-  return {files, omitted: omitted.slice(0, 30), omitted_count: omitted.length, structure};
+  const first = files[0];
+  const sharedSelection = selected && first ? {...selected, end: first.start_line + first.text.split('\n').length - 1} : undefined;
+  return {files, omitted: omitted.slice(0, 30), omitted_count: omitted.length, structure, selection:sharedSelection};
+}
+
+/** Only turn citations into navigation when the cited line was actually shared on this turn. */
+export function projectReferences(answer: string, line: number | null, files: ProjectSource[]) {
+  const references: {path:string; line:number}[] = [];
+  const add = (path: string, line: number) => {
+    const file = files.find(file => file.path === path);
+    if (file && Number.isSafeInteger(line) && line >= file.start_line && line < file.start_line + file.text.split('\n').length &&
+        references.length < 8 && !references.some(ref => ref.path === path && ref.line === line)) references.push({path, line});
+  };
+  for (const match of answer.matchAll(/(?<![\w./-])([\w.-]+(?:\/[\w.-]+)*):([1-9]\d*)\b/g)) add(match[1], Number(match[2]));
+  if (line && files[0]) add(files[0].path, line);
+  return references;
 }

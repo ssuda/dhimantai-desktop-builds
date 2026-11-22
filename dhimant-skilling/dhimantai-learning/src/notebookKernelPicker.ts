@@ -1,16 +1,17 @@
 import * as vscode from 'vscode';
 
 /** Focus the requested notebook and pass a real options object across the command bridge. */
-export async function openNotebookKernelPicker(doc: vscode.NotebookDocument) {
+export async function openNotebookKernelPicker(doc: vscode.NotebookDocument, provider: 'jupyter' | 'colab' = 'jupyter') {
   if (doc.isClosed || doc.notebookType !== 'jupyter-notebook') throw new Error('Open a notebook first.');
-  await vscode.window.showNotebookDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
-  try {
-    // VS Code 1.106 converts an omitted argument to null; its picker then tests
-    // `notebookEditorId in context`. An empty object keeps the public picker safe.
-    const selected = await vscode.commands.executeCommand<boolean>('notebook.selectKernel', {});
-    return selected === false ? 'No kernel was selected. Use Select Kernel above the notebook to try again.'
-      : 'Check the kernel shown above the notebook, then use Run Cell. Choosing a runtime alone does not run code.';
-  } catch {
-    throw new Error('Could not open the kernel picker. Use Select Kernel above the notebook. For local Python, enable the Python and Jupyter extensions and choose an environment with ipykernel.');
-  }
+  const editor = await vscode.window.showNotebookDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
+  const jupyter = vscode.extensions.getExtension('ms-toolsai.jupyter');
+  if (!jupyter) throw new Error('Enable Microsoft Jupyter to connect a remote kernel.');
+  await jupyter.activate();
+  // Jupyter's remote source action returns the controller ID for the chosen server.
+  const collection = provider === 'colab' ? ['google.colab', 'colab'] : ['ms-toolsai.jupyter', '_builtin.jupyterServerUrlProvider'];
+  const id = await vscode.commands.executeCommand<string>('jupyter.kernel.selectJupyterServerKernel', ...collection, doc);
+  if (typeof id !== 'string' || !id.trim()) return 'No kernel was selected. Choose the remote runtime again to retry.';
+  const selected = await vscode.commands.executeCommand<boolean>('notebook.selectKernel', {notebookEditor: editor, id, extension: 'ms-toolsai.jupyter'});
+  if (selected !== true) throw new Error('The remote kernel could not be selected. Choose the runtime again.');
+  return 'Remote kernel selected. Use Run Cell to execute on the selected server.';
 }

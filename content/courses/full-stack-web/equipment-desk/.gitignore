@@ -1,0 +1,7 @@
+.env
+.lab/
+vendor/
+node_modules/
+public/build/
+bootstrap/cache/
+storage/

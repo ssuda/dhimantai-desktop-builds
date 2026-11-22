@@ -8,7 +8,7 @@ export const microphoneControl = '<button type="button" id="audio-microphone" di
 export const dictationStatus = '<small id="dictation-status" role="status"></small>';
 
 /** Only the visible, current draft may receive the result of a recording. */
-export function bindDictation(view: vscode.Webview, current: () => {key: string; api: Api; language?: string} | undefined) {
+export function bindDictation(view: vscode.Webview, current: () => {key: string; api: Pick<Api, 'dictate'>; language?: string} | undefined) {
   let pending: {id:string; controller:AbortController} | undefined;
   const listener = view.onDidReceiveMessage(async message => {
     if (message?.type === 'cancelDictation') {
@@ -25,7 +25,8 @@ export function bindDictation(view: vscode.Webview, current: () => {key: string;
     const controller = new AbortController();
     pending = {id:message.id, controller};
     try {
-      const {text} = await target.api.dictate(message.pcm, coachingLanguage(target.language), controller.signal);
+      const language = target.language === 'auto' ? undefined : coachingLanguage(target.language);
+      const {text} = await target.api.dictate(message.pcm, language, controller.signal);
       if (!controller.signal.aborted && current()?.key === target.key) await view.postMessage({type:'dictated', id:message.id, text});
     } catch (error) {
       if (!controller.signal.aborted) await view.postMessage({type:'dictated', id:message.id,

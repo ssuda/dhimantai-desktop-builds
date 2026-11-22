@@ -1,26 +1,71 @@
-import { skillingHtml, SkillingPathway } from './skilling';
+import type { SkillingPathway } from './skilling';
 import type { CourseCertificate, CourseGrade } from './courseworkProgress';
-import { CertificateCourse, certificateStatus } from './certificateDashboard';
-import { desktopProjectEnabled } from './desktopFeatures';
-import { progressBar, UI_TOKENS } from './uiTheme';
-const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
+import { CertificateCourse, CertificateStatus, certificateStatus } from './certificateDashboard';
+import { activityProgress, attention, escape, gradingGuide, icon, type ActionButton } from './gradeComponents';
+import { courseGradeDetail, gradeTabsClient } from './courseGradeDetail';
+import { GRADE_DETAIL_STYLES } from './courseGradeStyles';
+import { UI_TOKENS } from './uiTheme';
+import { courseHue, courseHueStyles } from './courseColors';
+import { CERTIFICATE_STYLES } from './certificateStyles';
 
-export function courseGradeHtml(nonce: string, grade: CourseGrade | undefined, certificates: CourseCertificate[], notice: string, pending: number, busy = false, library = false, learning?:SkillingPathway, scope='', courses: CertificateCourse[] = []) {
-  const button = (text: string, action: string, id = '', disabled = false) => `<button data-action="${action}" data-id="${escape(id)}" ${busy || disabled ? 'disabled' : ''}>${escape(text)}</button>`;
+function courseCard(course: CertificateCourse, status: CertificateStatus, button: ActionButton) {
+  const grade = course.grade;
+  const issues = grade ? [...grade.blockers] : [course.error || 'Requirements could not be loaded. Refresh to try again.'];
+  const readiness = grade?.readiness;
+  if (readiness && !readiness.milestones.length) issues.push(...readiness.blockers);
+  if (grade && course.expired) issues.push('Course access has ended. Renew access to continue.');
+  if (grade && !grade.required_count && !issues.length) issues.push('Required activities are awaiting publication.');
+  const label = status === 'eligible' ? 'Eligible to claim' : status === 'progress' ? 'In progress' : 'Status unavailable';
+  return `<section class="certificate-course" data-course-hue="${courseHue(course.id)}" data-certificate-status="${status}" data-needs-attention="${issues.length > 0}">
+    <span class="dh-chip">${label}</span><h2>${escape(course.title)}</h2>
+    ${grade ? activityProgress(grade) : ''}
+    ${issues.length ? attention(issues) : ''}
+    ${grade?.eligible ? '<p><strong>Next step</strong> · Review your results and claim your certificate.</p>'
+      : !issues.length ? '<p><strong>Next step</strong> · Review your roadmap for the remaining independent assessments.</p>' : ''}
+    <div class="actions">${button('View requirements','courseRequirements',course.id)}${course.expired ? button('Renew course access','catalog') : ''}</div></section>`;
+}
+
+function issuedCard(c: CourseCertificate, button: ActionButton, library: boolean) {
+  const status = c.revoked_at ? 'Revoked' : 'Completed · Certificate issued';
+  const mark = `Grade ${escape(c.grade)} · ${escape(c.score)}/100`;
+  const date = escape(c.issued_at.slice(0,10));
+  const summary = library || c.revoked_at
+    ? `<span class="dh-chip">${status}</span><h2>${escape(c.course_title)} · ${mark}</h2>
+      <p>${escape(c.recipient_name)} · Issued ${date}</p><small>${escape(c.id)}</small>`
+    : `<div class="earned-paper"><span>dhimantAI</span>${icon('medal')}<h3>Certificate of achievement</h3>
+      <strong>${escape(c.recipient_name)}</strong><p>${escape(c.course_title)}</p><b>${mark}</b><small>Issued ${date} · ${escape(c.id)}</small></div>`;
+  return `<section ${library ? `class="certificate-course" data-course-hue="${courseHue(c.course_id)}"` : ''} data-certificate-status="${c.revoked_at ? 'unavailable' : 'completed'}" data-needs-attention="${!!c.revoked_at}">
+    ${summary}
+    ${c.revoked_at ? attention(['Certificate revoked. Contact course support.'])
+      : `<div class="actions">${button('View / save as PDF','certificate',c.id)}${button('Copy verification link','copy',c.id)}</div><p class="muted">The verification page previews your certificate. Use your browser’s Print → Save as PDF to download it. Share the link to let others verify the current record.</p>`}</section>`;
+}
+
+function certificateLibrary(courses: CertificateCourse[], certificates: CourseCertificate[], button: ActionButton) {
   const completed = certificates.filter(c => !c.revoked_at).length;
-  const eligible = courses.filter(c => certificateStatus(c, certificates) === 'eligible').length;
-  const inProgress = courses.filter(c => certificateStatus(c, certificates) === 'progress').length;
-  const dashboard = library ? `<p class="muted">Your earned credentials and the next steps for each course.</p>
-    <div class="certificate-filters" role="group" aria-label="Filter certificates"><button data-filter="all" aria-pressed="true">All</button><button data-filter="completed" aria-pressed="false">Completed (${completed})</button><button data-filter="eligible" aria-pressed="false">Eligible (${eligible})</button><button data-filter="progress" aria-pressed="false">In progress (${inProgress})</button><button data-filter="unavailable" aria-pressed="false">Needs attention</button></div>
+  const active = courses.map(course => ({course, status: certificateStatus(course, certificates)})).filter(item => item.status !== 'completed');
+  const eligible = active.filter(item => item.status === 'eligible').length;
+  const inProgress = active.filter(item => item.status === 'progress').length;
+  return `<div class="certificate-filters" role="group" aria-label="Filter certificates">
+    <button data-filter="all" aria-pressed="true">All</button>
+    <button data-filter="completed" aria-pressed="false">Completed <strong>${completed}</strong></button>
+    <button data-filter="eligible" aria-pressed="false">Eligible to claim <strong>${eligible}</strong></button>
+    <button data-filter="progress" aria-pressed="false">In progress <strong>${inProgress}</strong></button>
+    <button data-filter="unavailable" aria-pressed="false">${icon('warning')}Needs attention</button></div>
     ${eligible ? `<p class="eligibility-notice" role="status">${eligible} course${eligible === 1 ? ' is' : 's are'} ready for a certificate. Open the requirements to review and claim.</p>` : ''}
-    ${!certificates.length ? `<section class="certificate-guidance"><h2>Your first certificate starts with your coursework</h2><ol><li>Join a course and continue its guided lessons.</li><li>Complete the required exercises, projects and independent assessments in your course roadmap.</li><li>Review the remaining requirements, then claim your certificate when eligible.</li></ol><p>Lesson coverage alone does not establish eligibility. Your course results determine what remains.</p>${button('Browse courses','catalog')}</section>` : ''}
-    <div class="certificate-grid">${courses.filter(course => certificateStatus(course, certificates) !== 'completed').map(course => {
-      const status = certificateStatus(course, certificates), result = course.grade;
-      const remaining = result?.blockers ?? [];
-      return `<section class="certificate-course" data-certificate-status="${status}"><span class="dh-chip">${status === 'eligible' ? 'Eligible to claim' : status === 'progress' ? 'In progress' : 'Status unavailable'}</span><h2>${escape(course.title)}</h2>
-        ${result ? `${progressBar(result.passed_count, result.required_count, `${result.passed_count} of ${result.required_count} required activities passed`)}<p>${result.passed_count}/${result.required_count} required activities passed</p><p>${escape(result.policy.description)}</p>${remaining.length ? `<ul>${remaining.slice(0,3).map(item=>`<li>${escape(item)}</li>`).join('')}</ul>${remaining.length > 3 ? '<p>Open requirements for all remaining steps.</p>' : ''}` : `<p>${result.eligible ? 'Your course requirements are complete. Review and claim your certificate.' : 'Review your roadmap for the remaining independent assessments.'}</p>`}` : `<p role="status">${escape(course.error || 'Requirements are not available yet.')}</p>`}
-        <div class="actions">${button('View requirements','courseRequirements',course.id)}${course.expired ? button('Renew course access','catalog') : ''}</div></section>`;
-    }).join('')}</div><p id="certificate-empty" hidden>No items in this section yet. Choose All to see your courses and next steps.</p>` : '';
+    <div class="certificate-intro">${!certificates.length ? `<section class="certificate-guidance">
+      <h2>${icon('medal')}Your first certificate starts with your coursework</h2>
+      <ol role="list"><li><strong>Learn</strong><span>Join a course and follow its guided lessons.</span></li>
+        <li><strong>Pass the required work</strong><span>Complete the exercises, projects and independent assessments in your roadmap.</span></li>
+        <li><strong>Claim it</strong><span>Open your course requirements and claim your certificate when eligible.</span></li></ol>
+      <div class="guidance-actions">${button('Browse courses','catalog')}<p>Your course results show what you have passed and what remains.</p></div></section>` : ''}
+    ${gradingGuide(courses.find(c => c.grade)?.grade?.policy)}</div>
+    <div class="certificate-grid">${active.map(({course,status}) => courseCard(course,status,button)).join('')}
+      ${certificates.map(c => issuedCard(c,button,true)).join('')}</div>
+    <p id="certificate-empty" hidden>No items in this section yet. Choose All to see your courses and next steps.</p>`;
+}
+
+export function courseGradeHtml(nonce: string, grade: CourseGrade | undefined, certificates: CourseCertificate[], notice: string, pending: number, busy = false, library = false, learning?:SkillingPathway, scope='', courses: CertificateCourse[] = [], lessons?: {open:number; total:number}, syncReady = true) {
+  const button: ActionButton = (text, action, id = '', disabled = false) => `<button data-action="${action}" data-id="${escape(id)}" ${busy || disabled ? 'disabled' : ''}>${disabled && text.includes('Locked') ? icon('lock') : action === 'refresh' && library ? icon('refresh') : ''}${escape(text)}${action === 'courseRequirements' ? ' <span aria-hidden="true">→</span>' : ''}</button>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'">
     <title>Course grade & certificate</title><style nonce="${nonce}">${UI_TOKENS}
@@ -32,30 +77,34 @@ export function courseGradeHtml(nonce: string, grade: CourseGrade | undefined, c
     table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--vscode-panel-border);overflow-wrap:anywhere}
     button{font:inherit;white-space:normal;min-height:38px;padding:6px 12px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:0;border-radius:6px;cursor:pointer}button:disabled{opacity:.5;cursor:default}
     button:focus-visible,summary:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:3px}summary{cursor:pointer}#notice{white-space:pre-wrap}small{display:block}
-    .certificate-filters{display:flex;flex-wrap:wrap;gap:8px;margin:24px 0}.certificate-filters button[aria-pressed=false]{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--dh-button-border)}.certificate-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px}.certificate-grid section{margin:0}.certificate-course{display:flex;flex-direction:column}.certificate-course .actions{margin-top:auto;padding-top:16px}.certificate-course h2{margin-top:12px}.certificate-guidance{background:var(--dh-surface)}.eligibility-notice{padding:16px;border-left:4px solid var(--dh-success)}[hidden]{display:none!important}small{overflow-wrap:anywhere}
+    .certificate-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px}.certificate-grid section{margin:0}[hidden]{display:none!important}small{overflow-wrap:anywhere}
     @media(max-width:480px){body{padding:14px}th,td{padding:8px 3px;font-size:.9em}.actions button{flex:1 1 auto}}
-    </style></head><body><header><h1>${escape(grade?.course_title ?? (library ? 'My certificates' : 'Course grade & certificate'))}</h1>${button('Refresh','refresh')}</header>
+    ${library ? courseHueStyles([...courses.map(c => c.id), ...certificates.map(c => c.course_id)]) + CERTIFICATE_STYLES : GRADE_DETAIL_STYLES}
+    </style></head><body class="${library ? 'certificate-library' : 'grade-detail'}">
+    ${library ? `<header><div><h1>My certificates</h1><p class="muted">Your earned credentials and the next steps for each course.</p></div>${button('Refresh','refresh')}</header>` : ''}
     <p id="notice" role="status">${escape(notice)}</p>
-    ${!library ? `<div class="actions">${button('My certificates','certificateLibrary')}</div>` : dashboard}
-    ${pending ? `<p>${pending} assessment result${pending === 1 ? '' : 's'} waiting to sync. ${button('Sync pending results','sync')}</p>` : ''}
-    ${skillingHtml(learning,grade?.readiness,busy)}
-    ${grade ? `<section><h2>${grade.score === null ? 'Practice grade pending' : `Practice grade ${escape(grade.grade ?? 'Not passed')} · ${escape(grade.score)}/100`}</h2>
-      <p>${grade.passed_count}/${grade.required_count} required activities passed</p>
-      <p>Exercises: ${escape(grade.exercise_score ?? 'Pending')}${grade.requirements.some(r => r.kind === 'project') ? ` · Projects: ${escape(grade.project_score ?? 'Pending')}` : ''}</p>
-      <p>${escape(grade.policy.description)}</p>${grade.blockers.map(b => `<p>${escape(b)}</p>`).join('')}</section>
-      <h2>Topic mastery</h2><p class="muted">An estimate from your latest assessed work, difficulty and reported help. Later independent attempts can improve it. Repeating the same assisted solution does not erase its help history.</p>
-      <table><thead><tr><th>Topic</th><th>Mastery</th><th>Independent exercises</th></tr></thead><tbody>${grade.topics.map(t => `<tr><td>${escape(t.topic)}</td><td>${t.score}% · ${t.ready ? 'Ready' : 'Keep practising'}</td><td>${t.independent}/${t.required_independent} needed</td></tr>`).join('')}</tbody></table>
-      <details><summary>Required exercises and projects</summary><table><thead><tr><th>Activity</th><th>Best score</th><th></th></tr></thead><tbody>${grade.requirements.map(r => `<tr><td>${escape(r.title)}</td><td>${r.gradable ? r.score === null ? 'Pending' : escape(r.score) + '/100' : 'Assessment pending'}</td><td>${r.kind === 'project' && !desktopProjectEnabled(r.id) ? 'Paused on desktop' : button('Open',r.kind,r.id)}</td></tr>`).join('')}</tbody></table></details>
-      <h2>Course certificate</h2>${!grade.certificate_id ? `<p>${grade.eligible ? 'Your independent job-readiness assessments are complete.' : 'Complete the role prerequisites and independent readiness assessments shown in the roadmap to unlock your certificate.'}</p>
-      <p class="muted">The certificate uses your account name. Anyone with its verification link can see your name, role, assessed skills, ratings, dates and assessment conditions.</p>
-      ${button('Claim certificate','claim','',!grade.eligible)}` : ''}
-      <p class="muted">${escape(grade.readiness?.profile?.scope??grade.policy.scope)}</p>` : ''}
-    <div class="certificate-grid">${certificates.map(c => `<section data-certificate-status="${c.revoked_at ? 'unavailable' : 'completed'}"><span class="dh-chip">${c.revoked_at ? 'Revoked' : 'Completed · Certificate issued'}</span><h2>${escape(c.course_title)} · Grade ${escape(c.grade)} · ${escape(c.score)}/100</h2>
-      <p>${escape(c.recipient_name)} · Issued ${escape(c.issued_at.slice(0,10))}</p><small>${escape(c.id)}</small>
-      ${c.revoked_at ? '<p>Certificate revoked. Contact course support.</p>' : `<div class="actions">${button('View / save as PDF','certificate',c.id)}${button('Copy verification link','copy',c.id)}</div><p class="muted">The verification page previews your certificate. Use your browser’s Print → Save as PDF to download it. Share the link to let others verify the current record.</p>`}</section>`).join('')}</div>
+    ${pending ? `<p>${pending} assessment result${pending === 1 ? '' : 's'} waiting to sync. ${button('Sync pending results','sync','',!syncReady)}</p>` : ''}
+    ${library ? certificateLibrary(courses, certificates, button)
+      : courseGradeDetail(grade, learning, certificates, certificates.map(c => issuedCard(c,button,false)).join(''), button, lessons)}
     <script nonce="${nonce}">const vscode=acquireVsCodeApi();const scope=${JSON.stringify(scope).replaceAll('<','\\u003c')};let state=vscode.getState();if(!state||state.scope!==scope)state={scope,fields:{},requests:{}};
+    (${gradeTabsClient.toString()})(state,()=>vscode.setState(state));
     for(const el of document.querySelectorAll('[data-field]'))if(state.fields[el.dataset.field]!==undefined)el.value=state.fields[el.dataset.field];
-    const filterCertificates=value=>{let count=0;for(const el of document.querySelectorAll('[data-certificate-status]')){el.hidden=value!=='all'&&el.dataset.certificateStatus!==value;if(!el.hidden)count++;}for(const b of document.querySelectorAll('[data-filter]'))b.setAttribute('aria-pressed',String(b.dataset.filter===value));const empty=document.getElementById('certificate-empty');if(empty)empty.hidden=count>0||value==='all';state.filter=value;vscode.setState(state);};
+    const filterCertificates = value => {
+      let count = 0;
+      for (const card of document.querySelectorAll('[data-certificate-status]')) {
+        card.hidden = value === 'unavailable'
+          ? card.dataset.needsAttention !== 'true'
+          : value !== 'all' && card.dataset.certificateStatus !== value;
+        if (!card.hidden) count++;
+      }
+      for (const filter of document.querySelectorAll('[data-filter]')) {
+        filter.setAttribute('aria-pressed', String(filter.dataset.filter === value));
+      }
+      const empty = document.getElementById('certificate-empty');
+      if (empty) empty.hidden = count > 0 || value === 'all';
+      state.filter = value;
+      vscode.setState(state);
+    };
     for(const b of document.querySelectorAll('[data-filter]'))b.addEventListener('click',()=>filterCertificates(b.dataset.filter));
     filterCertificates(['all','completed','eligible','progress','unavailable'].includes(state.filter)?state.filter:'all');
     const collect=()=>Object.fromEntries([...document.querySelectorAll('[data-field]')].map(el=>[el.dataset.field,el.value]));

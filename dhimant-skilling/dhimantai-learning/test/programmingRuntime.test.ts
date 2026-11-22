@@ -17,7 +17,7 @@ test('programming workspaces isolate account and environment, preserve course id
   const vscode={Uri:{file:(fsPath:string)=>({scheme:'file',fsPath})},env:{},
     workspace:{isTrusted:true,getConfiguration:()=>({get:()=>parent})},ProgressLocation:{Notification:1},
     window:{withProgress:async()=>{throw stop;}}};
-  const stubs=new Map<string,unknown>([['vscode',vscode],...['./podman','./courseEngine','./courseDebug',
+  const stubs=new Map<string,unknown>([['vscode',vscode],...['./courseAppPreview', './podman','./courseEngine','./courseDebug',
     './courseReadiness','./courseTerminal','./colab','./colabNotebooks','./notebookKernelPicker'].map(name=>[name,{}] as [string,unknown])]);
   runInNewContext(readFileSync(filename,'utf8'),{exports,process,require:(name:string)=>stubs.has(name)?stubs.get(name):nativeRequire(name)});
   const context={extensionPath:resolve(__dirname,'../..'),globalState:{keys:()=>[...state.keys()],get:(key:string)=>state.get(key),

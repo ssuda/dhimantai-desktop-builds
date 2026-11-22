@@ -105,12 +105,10 @@ export async function run() {
   const metadata = {startedAt: new Date().toISOString(), vscode: vscode.version, extension: ext.packageJSON.version,
     os: `${process.platform} ${release()} ${process.arch}`, extensionPath: ext.extensionPath, artifactHashes,
     interfaces: ['Practice Python .ipynb / Ask Instructor', 'ordinary Python .ipynb / Ask about This Notebook'],
-    runtime: 'explicit local-Python fixture override; course container remains the product default',
+    runtime: 'course container',
     transport: 'local controlled fixture; not staging acceptance'};
   assert.equal(ext.packageJSON.contributes.viewsContainers?.secondarySidebar, undefined, 'no right-side assistant contribution');
   assert.equal(vscode.workspace.getConfiguration('dhimantai').get('courseContainers'), true, 'course container is the default');
-  // This UI fixture explicitly opts into local Python. Course startup/repair has separate tests.
-  await vscode.workspace.getConfiguration('dhimantai').update('courseContainers', false, vscode.ConfigurationTarget.Global);
   try {
     let nativeReply = 0;
     const requests: any[] = [];

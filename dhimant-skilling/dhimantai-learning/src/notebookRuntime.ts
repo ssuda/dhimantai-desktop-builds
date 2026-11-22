@@ -76,7 +76,7 @@ export function bindNotebookRuntime(webview: vscode.Webview, podman: (doc: vscod
         else if (message.type === 'newNotebook') await newNotebook();
         else if (message.runtime === 'colab') status = await useColabForNotebook(doc) ?? '';
         else if (['cloud', 'jupyter'].includes(message.runtime)) {
-          void vscode.window.showInformationMessage('Choose Select Another Kernel → Existing Jupyter Server for your GPU machine, or select its local Python environment. Run the course GPU preflight to verify execution.');
+          void vscode.window.showInformationMessage('Connect to your GPU machine using Existing Jupyter Server. Run the course GPU preflight to verify execution.');
           status = await openNotebookKernelPicker(doc!);
         }
         else if (message.runtime === 'podman') await podman(doc!);

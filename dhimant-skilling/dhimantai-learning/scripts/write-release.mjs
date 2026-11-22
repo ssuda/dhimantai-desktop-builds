@@ -16,5 +16,7 @@ await writeFile(temporary, vsix);
 await rename(temporary, resolve(output, 'dhimantai-learning.vsix'));
 await writeFile(resolve(output, 'dhimantai-learning.json'), JSON.stringify({
   extension: `${pkg.publisher}.${pkg.name}`, version: pkg.version, file: 'dhimantai-learning.vsix',
+  // The package uses a caret engine range. Older feeds omit this optional preflight hint.
+  minimumEditorVersion: /^\^(\d+\.\d+\.\d+)$/.exec(pkg.engines?.vscode)?.[1],
   sha256: createHash('sha256').update(vsix).digest('hex'),
 }, null, 2) + '\n');

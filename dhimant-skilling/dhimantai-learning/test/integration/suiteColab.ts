@@ -36,10 +36,16 @@ export async function run() {
         assert.equal(args[0], COLAB_EXTENSION); installs++; installed = true; return;
       }
       if (id === 'dhimantai.newCourseNotebook') return;
+      if (id === 'jupyter.kernel.selectJupyterServerKernel') {
+        assert.equal(args[2], vscode.window.activeNotebookEditor?.notebook);
+        return 'fixture-remote-kernel';
+      }
       if (id === 'notebook.selectKernel') {
-        kernelPicks++; assert.deepEqual(args, [{}]);
+        kernelPicks++;
+        assert.equal(args[0].id, 'fixture-remote-kernel');
+        assert.equal(args[0].extension, 'ms-toolsai.jupyter');
         if (kernelFailure) throw new TypeError("Cannot use 'in' operator to search for 'notebookEditorId' in null");
-        return;
+        return true;
       }
       return original.execute(id, ...args);
     };
@@ -188,6 +194,9 @@ export async function run() {
     await check('real VS Code kernel picker opens and cancels without the null-context error', async () => {
       // This call crosses the real extension-host bridge, unlike the provider contract checks above.
       (vscode.commands as any).executeCommand = original.execute;
+      // This fixture has no remote provider. Exercise cancellation without opening a local picker.
+      const remoteSource = !(await vscode.commands.getCommands(true)).includes('jupyter.kernel.selectJupyterServerKernel')
+        ? vscode.commands.registerCommand('jupyter.kernel.selectJupyterServerKernel', () => undefined) : undefined;
       const doc = vscode.window.activeNotebookEditor!.notebook;
       const dismiss = setInterval(() => { void original.execute('workbench.action.closeQuickOpen'); }, 250);
       let timeout: ReturnType<typeof setTimeout>;
@@ -196,7 +205,7 @@ export async function run() {
           timeout = setTimeout(() => reject(new Error('Kernel picker did not settle')), 10000);
         })]);
         assert.match(result, /No kernel was selected|Check the kernel shown/);
-      } finally { clearInterval(dismiss); clearTimeout(timeout!); }
+      } finally { clearInterval(dismiss); clearTimeout(timeout!); remoteSource?.dispose(); }
     });
   } finally {
     (vscode.extensions as any).getExtension = original.get;

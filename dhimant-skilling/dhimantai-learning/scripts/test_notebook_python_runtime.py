@@ -1,4 +1,4 @@
-"""Run with Python + IPython, locally or in a course image; uses disposable sessions."""
+"""Run with Python and IPython inside the course image using disposable sessions."""
 import json
 import importlib.util
 import os
@@ -53,6 +53,8 @@ class Session:
         if self.process.returncode: raise AssertionError(diagnostic)
 
 
+@unittest.skipUnless(sys.platform == 'linux' and any(Path(marker).is_file() for marker in ('/run/.containerenv', '/.dockerenv')),
+                     'Run notebook runtime fixtures inside the Linux course container.')
 class PythonNotebookTests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()

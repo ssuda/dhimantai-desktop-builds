@@ -1,3 +1,4 @@
+@import './instructorCodeCell.css';
 @import 'katex/dist/katex.min.css';
 
 :root {
@@ -29,7 +30,6 @@ h1 {
 
 #tutor-lessons { margin: 10px 0; }
 #tutor-lessons > label { display: block; margin-bottom: var(--dh-space-1); font-size: 12px; color: var(--vscode-descriptionForeground); }
-#lesson-course { min-width: min(100%, 320px); max-width: 100%; margin-bottom: var(--dh-space-3); }
 #tutor-lessons p { margin: 8px 0; color: var(--vscode-descriptionForeground); }
 #lesson-list { display: flex; flex-direction: column; gap: var(--dh-space-2); max-height: 50vh; overflow-y: auto; margin-bottom: 8px; padding: 2px; }
 .lesson-outline { padding: var(--dh-space-2) var(--dh-space-3); border: 1px solid var(--dh-border); border-radius: var(--dh-radius); }
@@ -231,23 +231,10 @@ article summary:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
 }
 
-#latest {
-  float: right;
-}
-
 .code-follow { margin-top: 8px; font-size: .9em; }
-#code-observer-status, .practice-code-editor>small { display: block; color: var(--vscode-descriptionForeground); }
-.practice-code-editor { border: 1px solid var(--vscode-panel-border); border-radius: 5px; padding: 12px; margin: 12px 0; }
-.practice-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.practice-editor-heading select { font: inherit; max-width: 100%; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 3px 6px; }
+#code-observer-status { display: block; color: var(--vscode-descriptionForeground); }
 .cell-language-mismatch { padding: 8px; border-left: 2px solid var(--vscode-editorWarning-foreground); margin: 8px 0; }
 .cell-language-mismatch button { margin-left: 8px; }
-.practice-buffer { margin: 10px 0; overflow: hidden; border: 1px solid var(--vscode-panel-border); }
-.practice-buffer.is-enlarged .cm-scroller { height: clamp(28em, 65vh, 48em); max-height: none; }
-.practice-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.practice-actions button[data-action=run] { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-.practice-status { color: var(--vscode-descriptionForeground); font-size: .9em; }
-.practice-output { max-height: 22em; white-space: pre-wrap; }
 .practice-feedback { padding: 10px; border-left: 3px solid var(--vscode-focusBorder); }
 
 .notebook-tools, .lesson-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
@@ -292,7 +279,7 @@ button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px
 .notebook-tools { border-bottom: 1px solid var(--vscode-panel-border); padding: 10px 0 12px; margin: 0; gap: 6px; }
 /* The page scrolls as one document; adding cells and Jump to latest stay at the top of the view. */
 .notebook-toolbar { position: sticky; top: 0; z-index: 10; padding: 0 28px; background: var(--vscode-editor-background); }
-.notebook-toolbar > .notebook-tools { max-width: 984px; margin: 0 auto; }
+.notebook-toolbar > .notebook-tools { margin: 0; }
 .notebook-index { min-width: 7rem; max-width: min(24rem, 100%); }
 .notebook-progress { max-width: 984px; margin: 0 auto; padding: 5px 0; font-size: .9em; color: var(--vscode-descriptionForeground); }
 .add-code-group { display: flex; align-items: center; border: 1px solid var(--vscode-panel-border); border-radius: 6px; overflow: hidden; }
@@ -305,12 +292,6 @@ article[data-cell-id] { border-radius: 10px; padding: 20px; margin: 14px 0; }
 .conversation-body > p, .conversation-body > ul, .conversation-body > ol { max-width: 78ch; }
 .execution-followup { margin: 14px 0; padding: 12px 16px; border-left: 3px solid var(--vscode-editorWarning-foreground, #b8860b); background: var(--vscode-textBlockQuote-background); }
 article > small { font-size: 11px; letter-spacing: .02em; }
-.practice-code-editor { border-radius: 9px; padding: 14px; }
-.practice-editor-heading { font-size: 12px; }
-.practice-editor-heading button { font-size: 11px; padding: 3px 8px; background: transparent; border-color: transparent; color: var(--vscode-descriptionForeground); }
-.practice-buffer { border-radius: 6px; }
-.practice-code-editor > small { font-size: 11px; }
-.practice-output { border-radius: 6px; padding: 12px; font-size: max(14px, var(--vscode-editor-font-size, 14px)); line-height: 1.6; max-height: 26rem; overflow: auto; }
 .practice-actions { gap: 6px; }
 .practice-actions button { font-size: 12px; }
 #composer { padding: 12px 28px 18px; border: 0; }
@@ -321,7 +302,6 @@ article > small { font-size: 11px; letter-spacing: .02em; }
   .workspace-header { padding: 14px 16px 0; }
   .notebook-toolbar { padding: 0 16px; }
   .workspace-topline { flex-wrap: wrap; gap: 8px; }
-  .workspace-actions { width: 100%; }
   #course-runtime { flex: 0 1 auto; min-width: 0; }
   #feed { padding: 8px 16px 20px; }
   #composer { padding: 10px 16px 14px; }
@@ -346,9 +326,7 @@ article > small { font-size: 11px; letter-spacing: .02em; }
 [data-lesson-action][hidden] { display: none; }
 #composer-context { display: block; color: var(--vscode-descriptionForeground); padding: 0 0 8px; overflow-wrap: anywhere; }
 #composer-context[hidden] { display: none; }
-.editor-resize svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 #message-bar .workspace-menu { border: 0; padding: 0; margin: 0; }
-.practice-editor-heading .editor-resize { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 6px; }
 @media (max-width: 700px) { #message-bar { padding: 0 16px 20px; } }
 @media (max-width: 540px) { #composer-shortcut { display: none; } }
 
@@ -424,7 +402,7 @@ article img, article svg { max-width: 100%; }
 .skill-picker [hidden] { display: none; }
 .delete-confirmation { margin-top: 10px; padding: 10px; border: 1px solid var(--vscode-focusBorder); border-radius: 6px; flex-basis: 100%; }
 .delete-confirmation button { margin-right: 6px; }
-.focus-view .workspace-title, .focus-view .notebook-tools > :not(#latest), .focus-view #tutor-lessons { display: none; }
+.focus-view .workspace-title, .focus-view #tutor-lessons { display: none; }
 .focus-view .notebook-tools { border: 0; padding: 4px 0; }
 .focus-view .notebook-toolbar { padding: 0 20px; } .focus-view .notebook-toolbar > .notebook-tools { max-width: none; }
 .focus-view .workspace-header { max-width: none; padding: 8px 20px 0; }
@@ -439,17 +417,6 @@ article img, article svg { max-width: 100%; }
 }
 
 /* Explicit token categories stay legible in VS Code light, dark and contrast themes. */
-body { --syntax-keyword: #c586c0; --syntax-variable: #9cdcfe; --syntax-function: #dcdcaa; --syntax-type: #4ec9b0; --syntax-string: #ce9178; --syntax-number: #b5cea8; --syntax-comment: #8eae7d; --syntax-operator: #d4d4d4; }
-body.vscode-light, body.vscode-high-contrast-light { --syntax-keyword: #7f238c; --syntax-variable: #175e85; --syntax-function: #795e00; --syntax-type: #167363; --syntax-string: #a31515; --syntax-number: #126b3e; --syntax-comment: #486b3b; --syntax-operator: #383838; }
-.cm-content .syntax-keyword { color: var(--syntax-keyword); }
-.cm-content .syntax-variable { color: var(--syntax-variable); }
-.cm-content .syntax-function { color: var(--syntax-function); }
-.cm-content .syntax-type { color: var(--syntax-type); }
-.cm-content .syntax-string { color: var(--syntax-string); }
-.cm-content .syntax-number { color: var(--syntax-number); }
-.cm-content .syntax-comment { color: var(--syntax-comment); font-style: italic; }
-.cm-content .syntax-operator { color: var(--syntax-operator); }
-
 
 /* Ended course access: a clear next step instead of a raw error. */
 .access-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 18px; padding: 8px 12px;
@@ -508,7 +475,7 @@ body.vscode-light, body.vscode-high-contrast-light { --syntax-keyword: #7f238c; 
 @media (max-width:700px) { #workspace-practice { padding:16px; } }
 #practice-questions { display:grid; gap:8px; margin:16px 0; }
 #practice-questions button { text-align:left; padding:10px 12px; }
-.browsing-practice #feed, .browsing-practice #message-bar, .browsing-practice .notebook-toolbar,
+.browsing-practice #feed, .browsing-practice #message-bar, .browsing-practice .notebook-tools, .browsing-practice .notebook-jumps, .browsing-practice #saved-task-actions,
 .browsing-practice #tutor-lessons { display:none; }
 
 /* The same live notebook and composer share the desktop workspace. */
@@ -516,7 +483,6 @@ body.vscode-light, body.vscode-high-contrast-light { --syntax-keyword: #7f238c; 
 #learning-workspace { padding: 12px 24px 28px; }
 #learning-document { min-width: 0; container-type: inline-size; }
 #learning-document #feed { padding: 8px 0 24px; }
-#learning-document .notebook-toolbar { padding: 0 0 8px; top: 0; }
 #learning-document .notebook-tools, #learning-document .notebook-progress { max-width: none; }
 #learning-document #workspace-practice { padding: 16px 0; max-width: none; }
 #learning-document #message-bar { padding: 0 0 8px; max-width: none; }
@@ -538,8 +504,7 @@ body.vscode-light, body.vscode-high-contrast-light { --syntax-keyword: #7f238c; 
     grid-template-columns: minmax(250px, .8fr) minmax(0, 1.4fr);
   }
 }
-.execution-result > strong, .execution-result > code:not([hidden]), .lesson-output-label { display: block; overflow-wrap: anywhere; }
-.execution-result > code { margin-block: 4px; }
+.lesson-output-label { display: block; overflow-wrap: anywhere; }
 .lesson-output-label { border-inline-start: 3px solid var(--vscode-descriptionForeground); padding-inline-start: 8px; margin-block-start: 12px; }
 @container (min-width: 700px) {
   .practice-code-editor { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); column-gap: 16px; align-items: start; }
@@ -559,9 +524,20 @@ body.vscode-light, body.vscode-high-contrast-light { --syntax-keyword: #7f238c; 
 
 /* Course selection has its own page. The notebook and composer share one column. */
 body[data-notebook-mode] { padding: 0; }
+#lesson-loading:not([hidden]) {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  gap: 12px; padding: 24px; font-size: 1.1rem;
+}
+.loading-spinner {
+  width: 1.2em; height: 1.2em; border: 2px solid var(--vscode-panel-border);
+  border-top-color: var(--vscode-progressBar-background, currentColor); border-radius: 50%;
+  animation: lesson-loading-turn 1s linear infinite;
+}
+@keyframes lesson-loading-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }
 #course-selection { width: 100%; max-width: 920px; margin: 0 auto; padding: 32px 24px; }
 #course-selection[hidden], .browsing-practice #course-selection,
-.selecting-course:not(.browsing-practice) > .workspace-header, .selecting-course:not(.browsing-practice) #learning-workspace { display: none; }
+.selecting-course:not(.browsing-practice) > .notebook-toolbar, .selecting-course:not(.browsing-practice) > .workspace-header, .selecting-course:not(.browsing-practice) #learning-workspace { display: none; }
 #course-selection header { padding: 0; border: 0; }
 #course-selection h1 { margin: 8px 0; font-size: clamp(22px, 3vw, 30px); }
 #course-selection header p { margin: 0 0 24px; color: var(--vscode-descriptionForeground); }
@@ -569,7 +545,19 @@ body[data-notebook-mode] { padding: 0; }
 #selection-back[hidden], #reload-lessons[hidden] { display: none; }
 #course-selection #tutor-lessons { margin: 0; }
 .focus-view #course-selection #tutor-lessons:not([hidden]) { display: block; }
-#course-selection :is(#lesson-course, #lesson-search) { display: block; width: 100%; min-width: 0; padding: 10px 12px; margin: 0 0 16px; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 6px; }
+#course-selection :is(#course-toggle, #course-query, #lesson-search) { width: 100%; min-width: 0; padding: 10px 12px; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 6px; }
+.chapter-filter { margin-bottom: 16px; }
+.course-picker { position: relative; }
+#course-toggle { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: start; overflow-wrap: anywhere; }
+#course-toggle::after { content: ''; flex: none; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1px 1px 0; transform: translateY(-2px) rotate(45deg); }
+#course-popup { position: absolute; top: 100%; inset-inline: 0; z-index: 5; padding: 6px; border: 1px solid var(--vscode-dropdown-border, var(--dh-border)); border-radius: 6px; background: var(--vscode-dropdown-background, var(--vscode-editor-background)); color: var(--vscode-dropdown-foreground, var(--vscode-foreground)); box-shadow: var(--dh-shadow); }
+#course-options { max-height: min(40vh, 18rem); overflow-y: auto; overscroll-behavior: contain; }
+#course-options:not(:empty) { margin-top: 4px; }
+#course-options [role=option], #course-no-matches { padding: 5px 8px; overflow-wrap: anywhere; }
+#course-options [role=option] { cursor: pointer; }
+#course-options [aria-selected=true] { font-weight: 600; }
+#course-options [role=option]:hover:not(.active) { background: var(--vscode-list-hoverBackground); }
+#course-options .active { background: var(--vscode-list-activeSelectionBackground, var(--dh-accent)); color: var(--vscode-list-activeSelectionForeground, var(--dh-accent-fg)); outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 #course-selection #lesson-list { max-height: none; overflow: visible; gap: var(--dh-space-3); margin: 20px 0; padding: 0; }
 #lesson-list > .course-coverage { margin: 0; }
 .chapter-grid {
@@ -585,9 +573,8 @@ body[data-notebook-mode] { padding: 0; }
 .chapter-grid .chapter-coverage { padding-inline: var(--dh-space-3); }
 .chapter-grid .topic-coverage { padding-inline-end: var(--dh-space-3); }
 @media (max-width: 540px) { #course-selection { padding: 24px 16px; } }
-#stopping-point { display: grid; justify-items: start; gap: 6px; margin: 10px 0; }
-#stopping-point > #runtime-restore { padding: 0; margin: 0; border: 0; }
-#stopping-point span:empty { display: none; }
+#stopping-point { border-bottom: 1px solid var(--dh-border); padding-bottom: 4px; }
+#stopping-point small:empty { display: none; }
 #runtime-restore { margin: 10px 0; padding: 12px 16px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; background: var(--vscode-editor-background); }
 #runtime-restore p { margin: 6px 0; }
 #runtime-restore [role="alert"] {
@@ -648,10 +635,12 @@ body[data-notebook-mode] {
 .chapter-grid:has(.chapter-topics[open]) { grid-auto-rows: auto; align-items: start; }
 
 #learning-workspace { padding-top: 0; }
-#learning-document .notebook-toolbar { padding: 4px 0; background: var(--room-page); }
+@media (min-width: 900px) {
+  body[data-notebook-mode] .workspace-header, #learning-workspace { padding-inline: clamp(40px, 3.5vw, 80px); }
+}
 .notebook-tools { gap: 4px; padding: 4px 0; border: 0; }
 .notebook-tools :is(button, select) { font-size: 13px; }
-.notebook-tools .notebook-index { max-width: min(100%, 17rem); border: 1px solid var(--dh-border); border-radius: 6px; }
+.notebook-jumps .notebook-index { width: 100%; max-width: 100%; border: 1px solid var(--dh-border); border-radius: 6px; }
 #feed article[data-cell-id] { background: var(--vscode-editor-background); }
 #feed article[data-entry-kind="message"] { width: fit-content; max-width: min(85%, 78ch); min-width: min(100%, 16rem); margin-inline-start: auto; background: var(--room-tint); }
 #feed article[data-entry-kind="question"] { border-inline-start: 3px solid var(--dh-accent); }
@@ -689,7 +678,7 @@ body[data-notebook-mode] #feed:empty::before { display: none; }
 #practice-questions small { display: block; margin-top: 4px; color: var(--dh-muted); }
 .browsing-practice .workspace-topline, .browsing-practice .workspace-status, .browsing-practice #lesson-placeholder { display: none; }
 .browsing-practice .workspace-header { padding-bottom: 0; }
-.browsing-practice .room-bar { border-bottom: 0; }
+
 @media (max-width: 580px) {
   .chapter-filters { grid-template-columns: 1fr; gap: 0; }
   .room-bar { gap: 6px; padding-block: 6px; }
@@ -706,7 +695,6 @@ body[data-notebook-mode] #feed:empty::before { display: none; }
    chapter title, and the notebook tools are shorter, so the lesson starts in the top third of a
    laptop window and the composer stays in view for a short first question. */
 .workspace-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; padding-bottom: 6px; }
-.workspace-header > .room-bar { grid-column: 1 / -1; padding-block: 8px; }
 .workspace-header > .workspace-topline { grid-column: 1; margin-top: 8px; }
 .workspace-header > .workspace-status { grid-column: 2; align-self: end; justify-content: flex-end; min-height: 0; padding-bottom: 4px; }
 .workspace-title { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 16px; }
@@ -723,3 +711,65 @@ body[data-notebook-mode] #feed:empty::before { display: none; }
 .add-code-group.course-language #cell-language { display: none; }
 .add-code-group.course-language { border-color: transparent; }
 .help-steps[hidden] { display: none; }
+
+/* Keep only the controls in the sticky strip. The chapter header scrolls with the lesson. */
+.notebook-toolbar.room-bar {
+  justify-content: flex-start;
+  gap: 6px 12px;
+  padding: 5px clamp(12px, 2vw, 24px);
+  border-bottom: 1px solid var(--dh-border);
+}
+.room-settings { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-width: 0; }
+.room-settings .coaching-language { margin: 0; color: var(--dh-muted); }
+.room-settings select { min-height: 30px; }
+.room-settings #course-runtime { width: 11em; }
+.notebook-toolbar .workspace-actions { margin-inline-start: auto; }
+#compact-notebook-tools .notebook-tools { margin: 0 0 4px; padding: 0 0 4px; border-bottom: 1px solid var(--dh-border); }
+#compact-chat-history .history-list { position: static; width: 100%; box-shadow: none; }
+#compact-notebook-tools .add-code-group { width: 100%; }
+#compact-notebook-tools .add-code-group button { width: auto; flex: 1; }
+.notebook-jumps .notebook-index { margin-block: 4px; }
+.notebook-toolbar .menu-content { overscroll-behavior: contain; }
+#notebook-edges:not([hidden]) {
+  position: fixed;
+  z-index: 9;
+  inset-inline-end: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  gap: 4px;
+}
+#notebook-edges button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--dh-border);
+  box-shadow: 0 1px 4px var(--vscode-widget-shadow);
+}
+#notebook-edges button:hover { border-color: var(--vscode-focusBorder); }
+@media (max-width: 899px) {
+  body:has(#notebook-edges:not([hidden])) #learning-document { padding-inline-end: 24px; }
+}
+:is(.browsing-practice, .selecting-course) #notebook-edges { display: none; }
+@media (max-width: 640px) {
+  .notebook-toolbar.room-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 6px; }
+  .notebook-toolbar .room-tabs { justify-self: start; }
+  .notebook-toolbar .workspace-actions { grid-column: 2; grid-row: 1; }
+  .room-settings { grid-column: 1 / -1; gap: 6px; }
+  .room-settings #course-runtime { max-width: 45%; }
+  .notebook-toolbar .room-tabs button { min-height: 28px; padding: 3px 6px; }
+  .room-settings .coaching-language { gap: 4px; }
+  .room-settings .coaching-prefix { display: none; }
+  .room-settings .coaching-language > span::first-letter { text-transform: uppercase; }
+  .workspace-actions .doubt-history { font-size: 12px; }
+}
+
+/* First exercise: the answers are the one obvious action; checking by running follows the prediction. */
+.room-settings #course-runtime[hidden], .starter-run[hidden] { display: none; }
+.starter-answers button { min-width: 4.5em; min-height: 36px; justify-content: center; border-color: var(--vscode-focusBorder, currentColor); }
+.starter-answers + [role="status"]:not(:empty) { margin-block: 10px 4px; }
+.starter-run { margin-top: 8px; }

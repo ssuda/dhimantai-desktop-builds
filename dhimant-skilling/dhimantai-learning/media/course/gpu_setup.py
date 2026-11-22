@@ -302,7 +302,7 @@ def runtime_env(config, record):
 def execute(config):
     root, record = node(config)
     enter_workspace(config)
-    os.execve(record['python'], [record['python'], '-u', str(root / 'cells.py')], runtime_env(config, record))
+    os.execve(record['python'], [record['python'], '-u', str(root / 'cells.py'), '--ssh-runtime'], runtime_env(config, record))
 
 
 def enter_workspace(config):

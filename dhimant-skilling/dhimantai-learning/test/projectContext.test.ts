@@ -3,7 +3,19 @@ import * as assert from 'node:assert/strict';
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { projectContextProblem, publicContextPath, redactSecrets, selectProjectContext } from '../src/projectContext';
+import { projectContextProblem, projectReferences, publicContextPath, redactSecrets, selectProjectContext } from '../src/projectContext';
+
+test('selected lines take precedence over a named companion and citations require shared evidence', () => {
+  const all = new Map([['src/main.py','first\nsecond\nthird\nfourth'], ['tests/test_main.py','one\ntwo'], ['README.md','overview']]);
+  const result = selectProjectContext(all, [], 'How does tests/test_main.py exercise this?', {}, {path:'src/main.py', start:2, end:3});
+  assert.equal(result.files[0].path, 'src/main.py');
+  assert.equal(result.files[0].text, 'second\nthird');
+  assert.deepEqual(result.selection, {path:'src/main.py', start:2, end:3});
+  assert.deepEqual(projectReferences('Inspect tests/test_main.py:2 and src/main.py:1. Ignore ../src/main.py:2.', 2, result.files),
+    [{path:'tests/test_main.py',line:2}, {path:'src/main.py',line:2}]);
+  const privateSelection = selectProjectContext(all, [], '', {}, {path:'.env',start:1,end:2});
+  assert.equal(privateSelection.selection, undefined);
+});
 
 test('native mobile source is reviewable while keys and build artifacts stay excluded', () => {
   for (const path of ['src/Main.kt', 'build.gradle.kts', 'ios/LessonView.swift', 'app/src/main/AndroidManifest.xml'])
@@ -80,9 +92,11 @@ test('private, unsupported and escaping paths never enter the excerpts or projec
 });
 
 test('secret paths are excluded by whole name, matching the server', () => {
-  for (const path of ['token_utils.py', 'tokenizer.py', 'keyword_search.py', 'agent/secret_config.py', 'docs/notes.md'])
+  for (const path of ['token_utils.py', 'tokenizer.py', 'keyword_search.py', 'agent/secret_config.py', 'docs/notes.md',
+    'src/auth/tokens.py', 'src/keys.py', 'src/config/env.py', 'src/private.py', '.github/workflows/ci.yml', 'Makefile', 'Procfile'])
     assert.ok(publicContextPath(path), path);
-  for (const path of ['.env.local', 'secrets.json', 'keys/x.json', 'data/api_token.json', 'service_account.json', 'tokens/a.py', 'data/db_credentials.csv', 'secret.json'])
+  for (const path of ['.env.local', 'secrets.json', 'keys/x.json', 'data/api_token.json', 'service_account.json', 'tokens/a.py', 'data/db_credentials.csv', 'secret.json',
+    'src/config/env.json', 'secrets.yaml', 'src/payments/secrets.ts', 'shelf/credentials.py', 'src/passwords.py', 'token', 'private/notes.py', '.github/secrets.yml', '.github/workflows/../ci.yml', '.git/config'])
     assert.ok(!publicContextPath(path), path);
 });
 
@@ -123,16 +137,16 @@ test('snapshot failures name the file or limit in plain words', async () => {
     assert.match(await projectContextProblem(new Error('Project context is too large.'), root, ['small.py'], new Map([['small.py', 'y'.repeat(600000)]])),
       /small\.py is larger than 512 KB/);
     assert.match(await projectContextProblem(new Error('Project context is too large.'), root, ['small.py']), /larger than 8 MB/);
-    assert.match(await projectContextProblem(new Error('Linked files cannot be shared with Coach.'), root, ['small.py', 'linked.py']),
+    assert.match(await projectContextProblem(new Error('Linked files cannot be shared with the Instructor.'), root, ['small.py', 'linked.py']),
       /linked\.py is a link/);
     assert.match(await projectContextProblem(new Error('Too many public project source, test and fixture files.'), root, undefined),
-      /more public source, test and data files than Coach can read \(64\)/);
+      /more public source, test and data files than the Instructor can read \(64\)/);
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 
 test('web service source and named deployment files are reviewable without admitting private files', () => {
-  for (const path of ['node/server.mjs', 'node/tool.cjs', 'ops/Dockerfile.api', 'Dockerfile', 'ops/Caddyfile', 'api/alembic.ini'])
+  for (const path of ['node/server.mjs', 'node/tool.cjs', 'ops/Dockerfile.api', 'Dockerfile', 'ops/Caddyfile', 'api/alembic.ini', 'app/Models/Item.php', 'resources/views/desk.blade.php'])
     assert.equal(publicContextPath(path), true, path);
-  for (const path of ['ops/.env', 'keys/Dockerfile', 'private/Caddyfile', 'secrets/server.mjs', '../Dockerfile', 'ops/Dockerfile.pem', 'ops/Dockerfile.PEM', 'ops/Dockerfile.ENV', 'config.ini', 'node/server.exe'])
+  for (const path of ['ops/.env', 'keys/Dockerfile', 'private/Caddyfile', 'secrets/server.mjs', '../Dockerfile', 'ops/Dockerfile.pem', 'ops/Dockerfile.PEM', 'ops/Dockerfile.ENV', 'config.ini', 'node/server.exe', 'secrets/settings.php'])
     assert.equal(publicContextPath(path), false, path);
 });

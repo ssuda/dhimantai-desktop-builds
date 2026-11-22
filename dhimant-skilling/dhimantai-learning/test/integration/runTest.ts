@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { runTests } from '@vscode/test-electron';
 import { ContractServer } from './contractServer';
 import { B2cServer } from './b2cServer';
@@ -16,7 +17,7 @@ async function main() {
   const testCourses = ['suiteCourseRuntimes', 'suiteCourseRecovery'].includes(process.argv[2]);
   const testPractice = process.argv[2] === 'suiteExternalProgramming';
   const server = ['suiteFirstLesson','suiteDesktopUx'].includes(process.argv[2]) ? new B2cServer({id:'data-science-python',title:'Data Science with Python'}, [{id:'c-programming',title:'C Programming'}])
-    : ['suiteB2c', 'suiteCatalogWelcome', 'suiteSignup'].includes(process.argv[2]) ? new B2cServer() : new ContractServer(testCourses || process.argv[2] === 'suiteColab' ? ['Python','Build an LLM from Scratch'] : undefined);
+    : ['suiteCertificateNavigation', 'suiteB2c', 'suiteCatalogWelcome', 'suiteSignup', 'suiteDesktopControls'].includes(process.argv[2]) ? new B2cServer() : new ContractServer(testCourses || process.argv[2] === 'suiteColab' ? ['Python','Build an LLM from Scratch'] : undefined);
   const url = await server.start();
   const root = resolve(__dirname, '../../..');
   const results = join(mkdtempSync(join(tmpdir(), 'dhimantai-vscode-')), 'results.json');
@@ -25,17 +26,62 @@ async function main() {
   let projectContainer = '', projectDirectory = '';
   const projectPodman = process.env.DHIMANTAI_PODMAN || 'podman';
   try {
-  if (['suiteProjectCoach', 'suiteProjectCompletion', 'suiteCourseTerminal'].includes(process.argv[2])) {
+  if (process.argv[2] === 'suiteSkillingMenu') {
+    projectDirectory = mkdtempSync(join(tmpdir(),'dhimantai-menu-project-'));
+    writeFileSync(join(projectDirectory,'README.md'), '# Practice project\n');
+    workspaceArgs.push(projectDirectory);
+  }
+  if(process.argv[2]==='suiteBuildStudio'){
+    projectDirectory=mkdtempSync(join(root,'.project-coach-'));
+    const attempt=join(projectDirectory,'equipment-desk');
+    await cloneCapstone(join(root,'media','build-studio','request-v1.bundle'),attempt);
+    writeFileSync(join(attempt,'resources/js/ItemCard.jsx'),'export function ItemCard() { return <article />; }\n');
+    workspaceArgs.push(attempt);
+    mkdirSync(join(userData,'course-extensions'));
+  }
+  if (process.argv[2] === 'suiteCertificateNavigation') {
+    projectDirectory = mkdtempSync(join(tmpdir(), 'dhimantai-sidebar-project-'));
+    const project = join(projectDirectory,'Python course project');
+    mkdirSync(join(project, 'src'),{recursive:true});
+    writeFileSync(join(project, 'src', 'lesson.py'), '# Course project');
+    workspaceArgs.push(project);
+  }
+  if (process.argv[2] === 'suiteGitPractice') {
+    projectDirectory=mkdtempSync(join(root,'.project-coach-'));
+    const own=join(projectDirectory,'student-store');
+    mkdirSync(own);execFileSync('git',['init','-q'],{cwd:own});writeFileSync(join(own,'stock.py'),'limit = 10\n');
+    workspaceArgs.push(own);
+  }
+  if (['suiteDebugPractice','suitePersonalArchitecture','suiteProjectArchitecture', 'suiteProjectCoach', 'suiteProjectCompletion', 'suiteShelfWorkflow', 'suiteCourseTerminal'].includes(process.argv[2])) {
     if (!process.env.DHIMANTAI_PROJECT_IMAGE) throw new Error('Set DHIMANTAI_PROJECT_IMAGE to an existing course image for container-only project acceptance.');
     projectDirectory = mkdtempSync(join(root, '.project-coach-'));
-    const project = join(projectDirectory, 'course-agent');
-    await createProject(join(root, 'media/projects/course-agent'), project);
-    for (const id of ['shelf-reading','rich-reading'] as const) await createReadingProject(join(root,'media'),id,join(projectDirectory,id));
-    await cloneCapstone(join(root, 'media/capstone/shelf.bundle'), join(projectDirectory, 'shelf-capstone'));
-    workspaceArgs.push(project);
-    projectContainer = 'dhimantai-project-ui-' + Date.now();
+    if (process.argv[2] === 'suiteShelfWorkflow') {
+      if (!process.env.DHIMANTAI_TEST_COURSEWORK_URL) throw new Error('Launch with agent/tests/run_shelf_workflow.py for a disposable gradebook.');
+      const project = join(projectDirectory,'shelf-capstone');
+      await cloneCapstone(join(root,'media/capstone/shelf.bundle'), project);
+      workspaceArgs.push(project);
+    } else if (['suitePersonalArchitecture','suiteDebugPractice'].includes(process.argv[2])) {
+      const own = join(projectDirectory,'student-store');
+      mkdirSync(own);
+      execFileSync('git',['init','-q'],{cwd:own});
+      writeFileSync(join(own,'stock.py'), 'def mobile_limit(items):\n    return items <= 6\n');
+      workspaceArgs.push(own);
+    } else if (process.argv[2] === 'suiteProjectArchitecture') {
+      await createProject(join(root, 'media/projects/market-checkout'), join(projectDirectory, 'market-checkout'));
+      workspaceArgs.push(join(projectDirectory,'market-checkout'));
+    } else {
+      const project = join(projectDirectory, 'course-agent');
+      await createProject(join(root, 'media/projects/course-agent'), project);
+      for (const id of ['shelf-reading','rich-reading'] as const) await createReadingProject(join(root,'media'),id,join(projectDirectory,id));
+      await cloneCapstone(join(root, 'media/capstone/shelf.bundle'), join(projectDirectory, 'shelf-capstone'));
+      workspaceArgs.push(project);
+    }
+    projectContainer = 'dhimantai-project-ui-' + randomUUID();
     const user = process.getuid ? `${process.getuid()}:${process.getgid!()}` : '1000:1000';
-    execFileSync(projectPodman, ['run','--detach','--pull=never','--name',projectContainer,'--user',user,
+    const rootlessShelf = process.argv[2] === 'suiteShelfWorkflow'
+      && execFileSync(projectPodman,['info','--format','{{.Host.Security.Rootless}}'],{encoding:'utf8'}).trim() === 'true';
+    execFileSync(projectPodman, ['run','--detach','--pull=never','--name',projectContainer,
+      ...(rootlessShelf ? ['--userns=keep-id'] : []), '--user',user,
       '--volume',projectDirectory + ':/course',process.env.DHIMANTAI_PROJECT_IMAGE,'sleep','300'], {timeout:30000,stdio:'pipe'});
   }
   if (process.argv[2] === 'suiteNativeDebugger') {
@@ -66,12 +112,13 @@ async function main() {
       // Native debugger checks opt into an isolated directory of real language adapters.
       launchArgs: [...workspaceArgs, ...(process.env.VSCODE_TEST_LANGUAGE_EXTENSIONS
         ? ['--extensions-dir',process.env.VSCODE_TEST_LANGUAGE_EXTENSIONS]
+        : process.argv[2] === 'suiteBuildStudio' ? ['--extensions-dir',join(userData,'course-extensions')]
         : process.argv[2] === 'suiteNativeDebugger' && process.env.VSCODE_TEST_DEBUG_EXTENSIONS
           ? ['--extensions-dir',process.env.VSCODE_TEST_DEBUG_EXTENSIONS] : ['--disable-extensions']), '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust',
         '--user-data-dir', userData,
         '--use-inmemory-secretstorage', ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : []),
         // The UX audit drives the real window and screenshots it through Chrome's debugging protocol.
-        ...(['suiteFirstLesson', 'suiteDesktopUx', 'suiteComposerShortcut', 'suiteLearningVideo', 'suiteStudy', 'suiteStudyDocuments', 'suiteStudyRegressions', 'suiteStudyExperience', 'suiteStudyCrop', 'suiteStudyConversation', 'suitePracticeUx', 'suiteGeneratedPractice', 'suiteNotebookCoachHistory', 'suitePracticeNotebook', 'suiteNotebookCoachChat', 'suiteProjectCoach', 'suiteProjectCompletion'].includes(process.argv[2]) ? ['--remote-debugging-port=' + (process.env.DHIMANTAI_CDP_PORT ?? '9339'), '--window-size=1440,900'] : [])],
+        ...(['suiteSkillingMenu','suiteBuildStudio','suiteCertificateNavigation', 'suiteFirstLesson', 'suiteDesktopUx', 'suiteDesktopControls', 'suiteCatalogWelcome', 'suiteComposerShortcut', 'suiteLearningVideo', 'suiteStudy', 'suiteStudyDocuments', 'suiteStudyRegressions', 'suiteStudyExperience', 'suiteStudyCrop', 'suiteStudyConversation', 'suitePracticeUx', 'suiteGeneratedPractice', 'suiteNotebookCoachHistory', 'suitePracticeNotebook', 'suiteNotebookCoachChat', 'suiteGitPractice', 'suiteDebugPractice','suitePersonalArchitecture','suiteProjectArchitecture', 'suiteProjectCoach', 'suiteProjectCompletion', 'suiteShelfWorkflow'].includes(process.argv[2]) ? ['--remote-debugging-port=' + (process.env.DHIMANTAI_CDP_PORT ?? '9339'), '--window-size=1440,900'] : [])],
       extensionTestsEnv: {
         DHIMANTAI_TEST_ENVIRONMENT: JSON.stringify(process.argv[2] === 'suiteLearningVideo' ? ENVIRONMENTS.staging
           : { apiUrl: url, supabaseUrl: url, supabaseAnonKey: 'test-anon-key' }),
@@ -80,6 +127,7 @@ async function main() {
         DHIMANTAI_TEST_COURSES: testCourses || testPractice || process.argv[2] === 'suiteColab' ? '1' : '0',
         DHIMANTAI_TEST_LEARNING_WORKSPACE: testPractice ? '1' : '0',
         DHIMANTAI_TEST_RESULTS: results,
+        DHIMANTAI_TEST_PROFILE: userData,
         DHIMANTAI_CDP_PORT: process.env.DHIMANTAI_CDP_PORT ?? '9339',
         DHIMANTAI_UX_OUT: process.env.DHIMANTAI_UX_OUT ?? '',
         DHIMANTAI_PROJECT_CONTAINER: projectContainer,

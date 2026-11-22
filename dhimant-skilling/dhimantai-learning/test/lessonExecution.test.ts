@@ -30,3 +30,15 @@ test('a recap or partial session cannot claim lesson completion', () => {
   assert.equal(lessonCompletion({is_complete:true, partial_session:true, summary_scope:'full'}), 'partial');
   assert.equal(lessonCompletion({is_complete:true, partial_session:false, summary_scope:'full'}), 'complete');
 });
+
+test('only the declared, complete exception clears an error demonstration follow-up', () => {
+  const old = [{key:'c:0', snippet:'code-18', detail:'Exit code 1'}];
+  const failure = {...run(1), stderr:'', stdout:"300\n150\nTypeError: unsupported operand type(s) for +: 'NoneType' and 'NoneType'"};
+  const record = (result: Execution, expected?:string) => recordExecutionIssue(old, 'c:0', 'code-18', result, undefined, expected);
+  assert.deepEqual(record(failure, 'TypeError'), []);
+  assert.match(record(failure)[0].detail, /TypeError: unsupported operand/);
+  assert.equal(record({...failure, truncated:true}, 'TypeError').length, 1);
+  assert.equal(record({...failure, status:'timeout'}, 'TypeError').length, 1);
+  assert.equal(record({...failure, stdout:'TypeError: prior exception\nNameError: missing name'}, 'TypeError').length, 1);
+  assert.equal(record({...failure, stdout:'300\n150'}, 'TypeError').length, 1);
+});

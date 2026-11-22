@@ -2,7 +2,7 @@ import type { CourseEngine } from './courseEngine';
 import { run } from './podman';
 import * as vscode from 'vscode';
 import type { Execution } from './api';
-import { programEnvironment, Toolchains } from './localRunner';
+import { programEnvironment, assertInCourseContainer, Toolchains } from './localRunner';
 import { ChildProcess, spawn } from 'node:child_process';
 import { constants } from 'node:os';
 import { join } from 'node:path';
@@ -117,6 +117,7 @@ export class NativeRunner implements vscode.Disposable {
 
   /** Build only (compiled languages), through the same task; true when there is nothing to build or it built. */
   async buildOnly(language: string, dir: vscode.Uri, tools: Toolchains): Promise<{ ok: boolean; diagnostics?: string }> {
+    assertInCourseContainer();
     const plan = nativePlan(language, [], tools);
     const folder = vscode.workspace.getWorkspaceFolder(dir);
     if (!plan?.build) return { ok: true };
@@ -142,6 +143,7 @@ export class NativeRunner implements vscode.Disposable {
 
   /** Build (if needed) through a task, then run in the terminal. Undefined = cannot here (use the hidden runner). */
   async run(language: string, dir: vscode.Uri, argv: string[], tools: Toolchains, stdin = '', timeoutMs = 45_000, engine?: CourseEngine): Promise<Execution | undefined> {
+    if (!engine) assertInCourseContainer();
     const plan = nativePlan(language, argv, engine ? {} : tools, engine ? false : windows);
     if (!plan) return undefined;
     const folder = vscode.workspace.getWorkspaceFolder(dir);

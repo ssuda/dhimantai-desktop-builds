@@ -15,7 +15,7 @@ test('a new title and its tools, notebooks and ports need no desktop registratio
 });
 test('configuration scopes account and environment, refreshes without a release, and refuses an account switch during fetch',async()=>{
  const filename=resolve(__dirname,'../src/courseWorkspace.js'),exports:any={};const nativeRequire=createRequire(filename);
- const stubs=new Set(['vscode','./podman','./courseEngine','./courseRecovery','./courseDebug','./courseReadiness','./courseTerminal','./colab','./colabNotebooks','./notebookKernelPicker']);
+ const stubs=new Set(['vscode','./courseAppPreview','./podman','./courseEngine','./courseRecovery','./courseDebug','./courseReadiness','./courseTerminal','./colab','./colabNotebooks','./notebookKernelPicker']);
  runInNewContext(readFileSync(filename,'utf8'),{exports,process,require:(name:string)=>stubs.has(name)?{}:nativeRequire(name)});
  const workspaces=Object.create(exports.CourseWorkspaces.prototype);workspaces.configurations=new Map();
  let account='one',environment='staging',calls=0;

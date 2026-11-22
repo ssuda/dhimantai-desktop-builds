@@ -1,0 +1,32 @@
+{
+  "id": "workshop-enrolment",
+  "version": 1,
+  "title": "Workshop enrolment",
+  "files": [
+    "README.md",
+    "places.py"
+  ],
+  "architecture": {
+    "prediction": "For a group of eight, how many of the two starter channels accept the booking?",
+    "focusFile": "places.py",
+    "boundaryHint": "Where could both channels consult the same capacity decision?"
+  },
+  "steps": [
+    {
+      "id": "investigate",
+      "title": "Investigate and repair",
+      "goal": "A group of eight received different answers at the desk and on the phone. Both entry points should accept a group of up to eight people inclusive. Keep both booking channels available when next season’s group capacity changes.",
+      "opening": "Inspect the original behavior before changing it.",
+      "task": "Investigate the report in README.md. Read places.py. Record your prediction before editing, then repair the service and verify the result.",
+      "files": [
+        "README.md",
+        "places.py"
+      ],
+      "check": "architecture:workshop-enrolment",
+      "expected": "Both entry points follow the published contract across its boundary cases.",
+      "hint": "What happens to a group at the published capacity in each channel?",
+      "reflection": "How did you verify the change?",
+      "evidencePrompt": "What did you observe before and after your repair?"
+    }
+  ]
+}

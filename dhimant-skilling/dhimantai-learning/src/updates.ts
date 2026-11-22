@@ -11,18 +11,23 @@ export function newerVersion(available: string, installed: string) {
   return false;
 }
 
-interface Release { extension: string; version: string; file: string; sha256: string }
+interface Release { extension: string; version: string; file: string; sha256: string; minimumEditorVersion?: string }
 export function releaseVersion(data: unknown): string {
   const release = data as Partial<Release> | null;
   if (release?.extension !== 'optficial.dhimantai-learning' || !VERSION.test(release?.version ?? '')
       || release?.file !== 'dhimantai-learning.vsix' || !/^[a-f0-9]{64}$/.test(release?.sha256 ?? '')) {
     throw new UpdateCheckError('The release information is invalid. Try again or download the VSIX manually.');
   }
+  if (release.minimumEditorVersion !== undefined && (typeof release.minimumEditorVersion !== 'string' || !VERSION.test(release.minimumEditorVersion))) {
+    throw new UpdateCheckError('The release has an invalid minimum editor version. Check again later.');
+  }
   return release.version!;
 }
 
 export interface UpdateStatus {
-  status: 'unchecked' | 'checking' | 'available' | 'current' | 'unavailable' | 'installing' | 'ready';
+  status: 'unchecked' | 'checking' | 'available' | 'current' | 'unavailable' | 'installing' | 'ready' | 'incompatible';
+  progress?: number;
+  retry?: boolean;
   installed: string;
   available?: string;
   message: string;
@@ -46,9 +51,12 @@ export function quietStart(elapsed: number, tabs: readonly { webview?: string; d
     && tabs.every(tab => !tab.dirty && (tab.webview ?? '').endsWith('dhimantai.courseCatalog'));
 }
 
-async function readBounded(response: Response, limit: number): Promise<Buffer> {
+async function readBounded(response: Response, limit: number, onProgress?: (percent: number) => void): Promise<Buffer> {
   if (!response.ok || !response.body) throw new UpdateCheckError('The update could not be downloaded. Try again later.');
-  if (Number(response.headers.get('content-length')) > limit) {
+  const length = Number(response.headers.get('content-length'));
+  const knownSize = length > 0 && !response.headers.get('content-encoding');
+  let reported = -1;
+  if (length > limit) {
     await response.body.cancel();
     throw new UpdateCheckError('The update file is too large. Download the VSIX manually.');
   }
@@ -62,6 +70,10 @@ async function readBounded(response: Response, limit: number): Promise<Buffer> {
       size += value.length;
       if (size > limit) throw new UpdateCheckError('The update file is too large. Download the VSIX manually.');
       chunks.push(value);
+      if (onProgress && knownSize) {
+        const percent = Math.min(100, Math.floor(100 * size / length));
+        if (percent !== reported) { reported = percent; onProgress(percent); }
+      }
     }
   } finally { await reader.cancel(); reader.releaseLock(); }
   return Buffer.concat(chunks);
@@ -77,7 +89,8 @@ export class ExtensionUpdates {
   private installing?: Promise<void>;
   private abort = new AbortController();
   constructor(private readonly environment: () => EnvironmentName, private readonly installed: string,
-    private readonly changed: (state: UpdateStatus) => void, private readonly fetcher: typeof fetch = fetch) {
+    private readonly changed: (state: UpdateStatus) => void, private readonly fetcher: typeof fetch = fetch,
+    private readonly editorVersion?: string) {
     this.state = { status: 'unchecked', installed, message: 'Check for updates from your selected dhimantAI service.' };
   }
   get downloadUrl() { const origin = ORIGINS[this.environment()]; return origin ? `${origin}/downloads/dhimantai-learning.vsix` : undefined; }
@@ -110,6 +123,12 @@ export class ExtensionUpdates {
       if (request !== this.request || environment !== this.environment()) return;
       this.release = { ...release, environment };
       const newer = newerVersion(available, this.installed);
+      const editor = this.editorVersion?.split('-')[0];
+      if (newer && editor && release.minimumEditorVersion && newerVersion(release.minimumEditorVersion, editor)) {
+        this.set({ status: 'incompatible', installed: this.installed, available,
+          message: `Version ${available} needs editor ${release.minimumEditorVersion} or later. This app uses ${editor}. Update the desktop app first.` });
+        return;
+      }
       this.set({ status: newer ? 'available' : 'current', installed: this.installed, available,
         message: newer ? `Version ${available} is available. Install the update here, then reload when you are ready.`
           : available === this.installed ? 'You have the latest published version for this service.' : 'Your installed version is newer than this service’s published version.' });
@@ -141,23 +160,25 @@ export class ExtensionUpdates {
     if (this.state.status !== 'available' || !release || release.environment !== this.environment()) return;
     const request = this.request;
     const stillSelected = () => request === this.request && release.environment === this.environment();
-    this.set({ ...this.state, status: 'installing', message: `Downloading and verifying ${release.version}…` });
+    this.set({ ...this.state, status: 'installing', retry: false, message: `Downloading and verifying ${release.version}…` });
     try {
       const response = await this.fetcher(`${ORIGINS[release.environment]}/downloads/dhimantai-learning.vsix`, {
         credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.any([this.abort.signal, AbortSignal.timeout(30000)]),
       });
-      const bytes = await readBounded(response, 32 * 1024 * 1024);
+      const bytes = await readBounded(response, 32 * 1024 * 1024, progress => {
+        if (stillSelected()) this.set({ ...this.state, progress, message: `Downloading ${release.version}… ${progress}%` });
+      });
       if (!stillSelected()) return;
       if (createHash('sha256').update(bytes).digest('hex') !== release.sha256) {
         throw new UpdateCheckError('The download did not match the verified release. Nothing was installed. Check for updates and try again.');
       }
-      this.set({ ...this.state, message: `Installing ${release.version}…` });
+      this.set({ ...this.state, progress: undefined, message: `Installing ${release.version}…` });
       await installer(bytes, release.version);
       if (!stillSelected()) return;
       this.set({ ...this.state, status: 'ready', message: `Version ${release.version} is installed and will activate when you next open the app. This window continues with ${this.installed}.` });
     } catch (error) {
       if (!stillSelected()) return;
-      this.set({ status: 'available', installed: this.installed, available: release.version,
+      this.set({ status: 'available', retry: true, installed: this.installed, available: release.version,
         message: error instanceof UpdateCheckError ? error.message : 'The update could not be installed. Try Install update again or download the VSIX manually.' });
     }
   }
