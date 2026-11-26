@@ -1,0 +1,39 @@
+name: Build course runtime image
+# Builds the content-addressed course runtime image in ./context natively on amd64 and arm64 runners.
+# Each architecture is uploaded as an OCI archive; the publisher copies both into Artifact Registry
+# under runtime:<KEY>, where course publication finds and reuses it.
+on:
+  push:
+    branches: ['course-image/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build linux/${{ matrix.arch }}
+        run: |
+          key=$(cat KEY)
+          docker buildx build --platform linux/${{ matrix.arch }} \
+            --provenance=false --sbom=false \
+            --output type=oci,dest=image-${{ matrix.arch }}.tar ./context
+          sha256sum image-${{ matrix.arch }}.tar
+          echo "$key"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.arch }}
+          path: image-${{ matrix.arch }}.tar
+          compression-level: 0
+          retention-days: 3
