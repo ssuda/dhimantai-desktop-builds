@@ -2,6 +2,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -12,10 +13,38 @@ sys.path.insert(0,str(ROOT))
 spec=importlib.util.spec_from_file_location('desktop_build_updates',ROOT/'build.py')
 build=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
-from customize import configure_learning_updates
+from customize import configure_learning_updates, preserve_updated_profile_extensions
 
 
 class ExtensionUpdateTests(unittest.TestCase):
+    def test_stale_builtin_cleanup_preserves_newer_installed_version(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / 'src/vs/platform/extensionManagement'
+            scanner = root / 'common/extensionsProfileScannerService.ts'
+            management = root / 'node/extensionManagementService.ts'
+            scanner.parent.mkdir(parents=True)
+            management.parent.mkdir(parents=True)
+            signature = 'removeExtensionsFromProfile(extensions: IExtensionIdentifier[], profileLocation: URI)'
+            scanner.write_text('export interface IScannedProfileExtension {\n}\n\t' + signature
+                + ': Promise<void>;\n\tasync ' + signature + ': Promise<void> {\n'
+                + 'if (extensions.some(extension => areSameExtensions(e.identifier, extension))) {\n}')
+            management.write_text('removeExtensionsFromProfile(staleExtensions.map(e => e.identifier), profile);')
+            preserve_updated_profile_extensions(Path(folder))
+            self.assertIn('version: e.manifest.version', management.read_text())
+            predicate = scanner.read_text().split('if (', 1)[1].split(') {', 1)[0]
+            script = """
+const assert = require('node:assert/strict');
+const areSameExtensions = (a, b) => a.id === b.id;
+const id = 'optficial.dhimantai-learning';
+const shouldRemove = (e, extensions) => PREDICATE;
+const obsolete = [{id, version:'0.39.104'}];
+assert.equal(shouldRemove({identifier:{id}, version:'0.39.106'}, obsolete), false);
+assert.equal(shouldRemove({identifier:{id}, version:'0.39.104'}, obsolete), true);
+assert.equal(shouldRemove({identifier:{id:'other'}, version:'0.39.104'}, obsolete), false);
+assert.equal(shouldRemove({identifier:{id}, version:'0.39.106'}, [{id}]), true);
+"""
+            subprocess.run(['node', '-e', script.replace('PREDICATE', predicate)], check=True)
+
     def test_marketplace_does_not_override_the_owned_learning_update_feed(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);source=root/'src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts'

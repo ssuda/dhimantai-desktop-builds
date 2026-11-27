@@ -46,6 +46,7 @@ def customize(root):
         "autoplayPolicy: 'user-gesture-required'", "autoplayPolicy: 'document-user-activation-required'")
     configure_course_copilot(root)
     configure_learning_updates(root)
+    preserve_updated_profile_extensions(root)
     for source in (ROOT / 'overlays').rglob('*'):
         if not source.is_file():
             continue
@@ -131,6 +132,25 @@ def configure_learning_updates(root):
         raise RuntimeError('Learning extension updates already customized')
     replace(root,path,'\tprivate shouldAutoUpdateExtension(extension: IExtension): boolean {',
         "\tprivate shouldAutoUpdateExtension(extension: IExtension): boolean {\n\t\tif (extension.identifier.id.toLowerCase() === 'optficial.dhimantai-learning') { return false; }")
+
+
+def preserve_updated_profile_extensions(root):
+    # A single update can leave old and new VSIX directories beside each other.
+    # Compare the version inside the serialized profile edit, where concurrent installs are visible.
+    scanner = 'src/vs/platform/extensionManagement/common/extensionsProfileScannerService.ts'
+    replace(root, scanner, 'export interface IScannedProfileExtension {',
+        'interface IProfileExtensionRemoval extends IExtensionIdentifier { readonly version?: string }\n\n'
+        'export interface IScannedProfileExtension {')
+    signature = 'removeExtensionsFromProfile(extensions: IExtensionIdentifier[], profileLocation: URI)'
+    for prefix in ('\n\t', '\n\tasync '):
+        replace(root, scanner, prefix + signature,
+            prefix + signature.replace('IExtensionIdentifier[]', 'IProfileExtensionRemoval[]'))
+    replace(root, scanner, 'extensions.some(extension => areSameExtensions(e.identifier, extension))',
+        'extensions.some(extension => areSameExtensions(e.identifier, extension)\n'
+        '\t\t\t\t\t\t&& (extension.version === undefined || extension.version === e.version))')
+    management = 'src/vs/platform/extensionManagement/node/extensionManagementService.ts'
+    replace(root, management, 'removeExtensionsFromProfile(staleExtensions.map(e => e.identifier),',
+        'removeExtensionsFromProfile(staleExtensions.map(e => ({ ...e.identifier, version: e.manifest.version })),')
 
 
 def customize_navigation(root):

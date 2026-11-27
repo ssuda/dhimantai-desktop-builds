@@ -1,5 +1,5 @@
 {
-  "sourceCommit": "a0457d9bfb3c907bb94c2b0beec74252178e9367",
+  "sourceCommit": "bb8f339246dd43315914fc02c3468581a6f6576e",
   "sourceRepository": "bitbucket.org/optficial/dhimantai",
   "files": {
     ".github/workflows/desktop-build.yml": "9459a6a2397907f2d73501eca5c9a15ff0d72da078dae05480ae8574b116826f",
@@ -51,10 +51,10 @@
     "dhimant-skilling/desktop/.gitignore": "31a350e73feaac3cb382bb353ba9db7a993c085f986e6fd6fa74287b9d71c4d0",
     "dhimant-skilling/desktop/README.md": "4e5662b53e81273ec1934c53116d70a70075ceef2495b96b123ddbc9417b1079",
     "dhimant-skilling/desktop/build.py": "af3856c5e602588a7856388a1bc7115113173df78490c785f8e51cbb702afcd4",
-    "dhimant-skilling/desktop/customize.py": "f89ef21fbffb792dd848b1558b1d2b36d191e95b61a22b4fdd2cedd2ac0d1a63",
+    "dhimant-skilling/desktop/customize.py": "352cb88af55c54fcece4a161fb1d87879fbdf6a55f7fa2a432687faed0b89eb4",
     "dhimant-skilling/desktop/export_build_source.py": "8fd107187bbcd431a1773ffe709d0d3596b8108feeb7b6343b0d7de05eb39d8e",
     "dhimant-skilling/desktop/linux-deb-launcher.sh": "258c0683b9414ee160dc0d75391c5f5d8073d59d9b9c885a45135fe55a174bb7",
-    "dhimant-skilling/desktop/lock.json": "e44a742ab672a4a26d482625031a29294fc70ea58b8e1987a1eb4b0c513faff8",
+    "dhimant-skilling/desktop/lock.json": "4e118fda3f617108f724fc2cf69455e4ec7156f31a44624433f94bf290ac319f",
     "dhimant-skilling/desktop/macos_credentials.py": "dc809f640323ca98e8dce34f365d2e96b45c0d6a6b08b379a3c9cdea4c8f514e",
     "dhimant-skilling/desktop/macos_release.py": "b9fb74d8ad62f86a87f6a75437e172d577a84748a741a44dea47631b89450aee",
     "dhimant-skilling/desktop/overlays/extensions/theme-defaults/themes/dhimantai-light.json": "fa125382c92cf45e37f398a2d920863921453b921bd0f5cdc73a7248a22e21be",
@@ -72,7 +72,7 @@
     "dhimant-skilling/desktop/tests/mediaPolicy.test.mjs": "336a8a2f493ae0cf42ecfc915666c4dc91c85de919b47f5e86b43a7c30d685be",
     "dhimant-skilling/desktop/tests/signing.test.mjs": "7687d3a67c39f843ef0fe8539cc0f01178c8b5c375afcabc8b7560e7e15dde72",
     "dhimant-skilling/desktop/tests/test_customize.py": "a1636a021b9576e7fc50c3ed7fd799d387fd6ecc0c819d695c6737de611c524b",
-    "dhimant-skilling/desktop/tests/test_extension_updates.py": "6f176cfb565e3d3e9d641e1eaf5829ca6c3401f5dc832cb4aed41a7c808007ce",
+    "dhimant-skilling/desktop/tests/test_extension_updates.py": "ef46ee883c3714bbe5855e267356357e7cca9588ae37d511529458cf5d92f7a5",
     "dhimant-skilling/desktop/tests/test_linux_deb_launcher.py": "25ba97207d8c203e5097d2e03db7fd22252d0ae5475796aab5165de843af9b05",
     "dhimant-skilling/desktop/tests/test_macos_signing.py": "b719be844423b73b66affb47e4181d4eba2e0249a75ecfef866fa54ae662ad1f",
     "dhimant-skilling/desktop/verify_windows_install.py": "fd77b74d7bc0f759a76650cf0fb8c75dac6b2e709670966e09652abe18b3450e",
