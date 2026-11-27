@@ -78,8 +78,8 @@ jobs:
           npm run compile
           node --test out/test/desktopRoom.test.js ../desktop/tests/*.test.mjs
           curl --fail --silent --show-error --retry 3 --max-time 600 \
-            https://app-staging.dhimant.ai/downloads/dhimantai-learning-0.39.103.vsix -o desktop.vsix
-          python -c "import hashlib; from pathlib import Path; assert hashlib.sha256(Path('desktop.vsix').read_bytes()).hexdigest() == 'f10535840e36d70a5403011b7df5a464b85924961b80905f5d44dbf7d95e1932'"
+            https://app-staging.dhimant.ai/downloads/dhimantai-learning-0.39.105.vsix -o desktop.vsix
+          python -c "import hashlib; from pathlib import Path; assert hashlib.sha256(Path('desktop.vsix').read_bytes()).hexdigest() == 'e07dea4328ea9379d917e490c1d6b463027df7c48a2fc62f5d92103ff3c51cf9'"
       - name: Prepare private client configuration
         env:
           CLIENT_ENVIRONMENT: ${{ inputs.environment }}

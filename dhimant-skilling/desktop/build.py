@@ -254,6 +254,12 @@ def main():
         # Package the same payload for Debian/Ubuntu. RPM is available through the
         # corresponding upstream gulp tasks on a runner with rpmbuild installed.
         run([npm, 'run', 'gulp', f'vscode-linux-{args.arch}-prepare-deb'], source, env)
+        # Stage the launcher after upstream has calculated dependencies from the original ELF.
+        deb_arch = {'x64': 'amd64', 'arm64': 'arm64'}[args.arch]
+        payload = source / f'.build/linux/deb/{deb_arch}/dhimantai-{deb_arch}/usr/share/dhimantai'
+        (payload / 'dhimantai').rename(payload / 'dhimantai-electron')
+        shutil.copyfile(HERE / 'linux-deb-launcher.sh', payload / 'dhimantai')
+        (payload / 'dhimantai').chmod(0o755)
         run([npm, 'run', 'gulp', f'vscode-linux-{args.arch}-build-deb'], source, env)
         for deb in (source / '.build/linux/deb').rglob('*.deb'):
             target = output / deb.name; shutil.copyfile(deb, target); outputs.append(target)
