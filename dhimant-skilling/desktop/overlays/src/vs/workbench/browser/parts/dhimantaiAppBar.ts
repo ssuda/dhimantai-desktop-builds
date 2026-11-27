@@ -69,7 +69,7 @@ export class DhimantaiAppBar extends Disposable {
 	private button(command: string): HTMLButtonElement {
 		const button = append(this.element, $('button')) as HTMLButtonElement;
 		button.type = 'button';
-		button.setAttribute('aria-haspopup', 'dialog');
+		if (command === 'dhimantai.profile') { button.setAttribute('aria-haspopup', 'dialog'); }
 		this._register(addDisposableListener(button, EventType.CLICK, () => {
 			void this.commands.executeCommand(command).catch(error => this.notifications.error(error));
 		}));

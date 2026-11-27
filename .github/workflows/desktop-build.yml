@@ -77,7 +77,9 @@ jobs:
           npm ci
           npm run compile
           node --test out/test/desktopRoom.test.js ../desktop/tests/*.test.mjs
-          npx --yes @vscode/vsce@3.2.1 package --no-dependencies --allow-missing-repository --baseContentUrl https://bitbucket.org/optficial/dhimantai/src/codex/question-bank-ux/dhimant-skilling/dhimantai-learning/ --out desktop.vsix
+          curl --fail --silent --show-error --retry 3 --max-time 600 \
+            https://app-staging.dhimant.ai/downloads/dhimantai-learning-0.39.103.vsix -o desktop.vsix
+          python -c "import hashlib; from pathlib import Path; assert hashlib.sha256(Path('desktop.vsix').read_bytes()).hexdigest() == 'f10535840e36d70a5403011b7df5a464b85924961b80905f5d44dbf7d95e1932'"
       - name: Prepare private client configuration
         env:
           CLIENT_ENVIRONMENT: ${{ inputs.environment }}

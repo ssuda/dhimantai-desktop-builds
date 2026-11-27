@@ -21,13 +21,12 @@ class WebviewCspTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 configure_app_bar(root)
 
-    def test_new_profiles_do_not_pin_developer_tools(self):
+    def test_new_and_existing_student_sidebar_pins(self):
         upstream = (
-            "\t\t\t// Pin it by default if it is new\n"
-            "\t\t\tconst cachedViewContainer = this.cachedViewContainers.filter(({ id }) => id === viewContainer.id)[0];\n"
-            "\t\t\tif (!cachedViewContainer) {\n"
-            "\t\t\t\tthis.compositeBar.pin(viewContainer.id);\n"
-            "\t\t\t}\n")
+            "\tprivate getViewContainer(id: string): ViewContainer | undefined {\n"
+            "return this.viewDescriptorService.getViewContainersByLocation(this.location);\n"
+            "for (const viewContainer of viewContainers) {\n\t\t\tthis.addComposite(viewContainer);\n"
+            "return JSON.parse(this.pinnedViewContainersValue);\n")
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             path = root / 'src/vs/workbench/browser/parts/paneCompositeBar.ts'
@@ -35,11 +34,11 @@ class WebviewCspTests(unittest.TestCase):
             path.write_text(upstream)
             hide_developer_activity(root)
             patched = path.read_text()
-            for container in ('search', 'scm', 'debug', 'extensions'):
-                self.assertIn(f"'workbench.view.{container}'", patched)
-            self.assertNotIn('explorer', patched)
-            self.assertIn('this.compositeBar.unpin(viewContainer.id);', patched)
-            self.assertIn('} else if (!cachedViewContainer) {\n\t\t\t\tthis.compositeBar.pin(viewContainer.id);\n\t\t\t}', patched)
+            self.assertIn("this.location !== ViewContainerLocation.Sidebar || id === 'workbench.view.extension.dhimantai-learning'", patched)
+            self.assertIn("stored.filter(view => this.showsStudentRailItem(view.id)).map(view => ({ ...view, pinned: true }))", patched)
+            self.assertIn("if (!this.showsStudentRailItem(viewContainer.id)) { continue; }", patched)
+            self.assertIn("if (!this.showsStudentRailItem(id)) { return undefined; }", patched)
+            self.assertIn("getViewContainersByLocation(this.location).filter(view => this.showsStudentRailItem(view.id))", patched)
             with self.assertRaises(RuntimeError):
                 hide_developer_activity(root)
 

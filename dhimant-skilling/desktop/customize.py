@@ -149,21 +149,26 @@ def customize_navigation(root):
         "collapsed: item.id === 'dhimantai.practice' || this.showCollapsed(container) || initialVisibility === InitialVisibility.Collapsed,")
 
 
-# Developer tool containers a new learner does not need on the Activity Bar.
-# They stay registered: opening one (a debugging lesson, Git & GitHub, the
-# Command Palette or the View menu) shows it while it is open, and a learner
-# can pin it. Only containers new to a profile are affected, so existing
-# layouts and explicit pins are kept.
-LEARNER_UNPINNED_CONTAINERS = ('workbench.view.search', 'workbench.view.scm', 'workbench.view.debug', 'workbench.view.extensions')
+LEARNING_SIDEBAR = 'workbench.view.extension.dhimantai-learning'
 
 
 def hide_developer_activity(root):
-    ids = ', '.join(f"'{c}'" for c in LEARNER_UNPINNED_CONTAINERS)
-    # CompositeBarModel.add() already creates new items pinned, so skipping pin() is not enough:
-    # a container new to this profile must be unpinned explicitly.
-    replace(root, 'src/vs/workbench/browser/parts/paneCompositeBar.ts',
-        '\t\t\tif (!cachedViewContainer) {\n\t\t\t\tthis.compositeBar.pin(viewContainer.id);',
-        f'\t\t\tif (!cachedViewContainer && [{ids}].includes(viewContainer.id)) {{\n\t\t\t\tthis.compositeBar.unpin(viewContainer.id);\n\t\t\t}} else if (!cachedViewContainer) {{\n\t\t\t\tthis.compositeBar.pin(viewContainer.id);')
+    pane = 'src/vs/workbench/browser/parts/paneCompositeBar.ts'
+    # Apply the same rule to restored profiles, new contributions and view activations.
+    # The editor can still open the tool itself; it does not add a learner navigation icon.
+    lookup = '\tprivate getViewContainer(id: string): ViewContainer | undefined {'
+    replace(root, pane, lookup,
+        f"\tprivate showsStudentRailItem(id: string): boolean {{\n"
+        f"\t\treturn this.location !== ViewContainerLocation.Sidebar || id === '{LEARNING_SIDEBAR}';\n\t}}\n\n"
+        + lookup + "\n\t\tif (!this.showsStudentRailItem(id)) { return undefined; }")
+    replace(root, pane, 'return this.viewDescriptorService.getViewContainersByLocation(this.location);',
+        'return this.viewDescriptorService.getViewContainersByLocation(this.location).filter(view => this.showsStudentRailItem(view.id));')
+    replace(root, pane, 'for (const viewContainer of viewContainers) {\n\t\t\tthis.addComposite(viewContainer);',
+        'for (const viewContainer of viewContainers) {\n\t\t\tif (!this.showsStudentRailItem(viewContainer.id)) { continue; }\n\t\t\tthis.addComposite(viewContainer);')
+    replace(root, pane, 'return JSON.parse(this.pinnedViewContainersValue);',
+        "const stored: IPinnedViewContainer[] = JSON.parse(this.pinnedViewContainersValue);\n"
+        "\t\tif (this.location !== ViewContainerLocation.Sidebar) { return stored; }\n"
+        "\t\treturn stored.filter(view => this.showsStudentRailItem(view.id)).map(view => ({ ...view, pinned: true }));")
 
 
 # Status bar items a new learner cannot act on: the errors/warnings counter (squiggles and the
