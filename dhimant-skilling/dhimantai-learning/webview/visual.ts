@@ -1,8 +1,5 @@
 /** Keep the complete figure beside its explanation, including portrait diagrams. */
 export const visualStyle = 'display:block;width:auto;height:auto;max-width:min(100%,720px);max-height:min(440px,55vh);object-fit:contain;box-sizing:border-box;margin:12px 0';
-/** Generated diagrams are vector art: use the notebook width so labels stay readable,
- *  while the height cap keeps a tall chart beside its explanation (letterboxed, centred). */
-export const diagramStyle = 'display:block;width:100%;height:auto;max-width:min(100%,1040px);max-height:min(680px,72vh);object-fit:contain;box-sizing:border-box;margin:12px 0';
 
 export function imageSource(value: unknown): string | undefined {
   // Leave room for an escaped caption inside the notebook's 100,000-character cell limit.

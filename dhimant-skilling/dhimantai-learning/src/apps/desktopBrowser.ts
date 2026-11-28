@@ -3,7 +3,6 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {CdpClient, CdpTransport, injectPlayer} from './inject';
 import {AppServer} from './types';
-import {trainingBridge} from './trainingBridge';
 
 /** The desktop's proposed integrated-browser API (vscode.proposed.browser.d.ts), used only when enabled. */
 interface BrowserTab { readonly url: string; startCDPSession(): Thenable<BrowserCDPSession>; close(): Thenable<void> }
@@ -13,13 +12,11 @@ type BrowserWindow = {readonly activeBrowserTab?: BrowserTab; readonly onDidChan
 export interface InjectedTab { readonly active?: boolean; client: CdpClient; sessionId: string; transport?: CdpTransport; dispose(): Promise<void>; close?(): Promise<void> }
 export interface TabRequest {
   onFocusChange?: () => void;
-  viewColumn?: vscode.ViewColumn;
   url: string; home: string; media: string; adapter: string; learner?: string;
   /** learner, bridge and token from the loopback Instructor bridge; omitted for authoring replay (adapter only). */
   bridge?: URLSearchParams;
   /** Signs the learner in on the server side; its session cookie is handed to the tab. */
   server: AppServer;
-  hostedLogin?: string;
 }
 
 /**
@@ -34,25 +31,20 @@ export async function openInjectedTab(request: TabRequest): Promise<InjectedTab 
   const files = [join('apps', request.adapter + '.js'), ...(request.bridge ? [join('player', 'shift.js'), join('player', 'guide.js'), join('player', 'live.js')] : [])];
   const scripts = await Promise.all(files.map(path => readFile(join(request.media, path), 'utf8')));
   await request.server.login();
-  const tab = await open(request.url + '/', {viewColumn: request.viewColumn ?? vscode.ViewColumn.Beside, preserveFocus: true});
+  const tab = await open(request.url + '/', {viewColumn: vscode.ViewColumn.Beside});
   let session: BrowserCDPSession;
   try {session = await tab.startCDPSession();} catch (error) {await tab.close(); throw error;}
   const transport = {send: (message: unknown) => session.sendMessage(message), onMessage: (listener: (message: unknown) => void) => session.onDidReceiveMessage(listener)};
   const client = new CdpClient(transport);
-  let relay: Awaited<ReturnType<typeof trainingBridge>> | undefined;
   let sessionId: string;
   try {
-    sessionId = await injectPlayer(client, {origin: request.url, scripts, home: request.server.landingPath?.() ?? request.home, cookie: request.server.sessionCookie(),
-      prepare: request.hostedLogin && request.bridge ? async id => {
-        relay = await trainingBridge(client, transport, id, {origin: request.url, port: request.bridge!.get('bridge')!, token: request.bridge!.get('token')!});
-        return relay.source;
-      } : undefined,
+    sessionId = await injectPlayer(client, {origin: request.url, scripts, home: request.home, cookie: request.server.sessionCookie(),
       session: request.bridge && request.learner ? {'dhimantai-erpnext-learner': request.learner, 'dhimantai-erpnext-instructor': JSON.stringify({
-        ...(request.hostedLogin ? {login: request.hostedLogin} : {origin: 'http://127.0.0.1:' + request.bridge.get('bridge'), token: request.bridge.get('token')}), learner: request.learner})} : {}});
-  } catch (error) { relay?.dispose(); client.dispose(); await session.close(); await tab.close(); throw error; }
+        origin: 'http://127.0.0.1:' + request.bridge.get('bridge'), token: request.bridge.get('token'), learner: request.learner})} : {}});
+  } catch (error) { client.dispose(); await session.close(); await tab.close(); throw error; }
   const window = vscode.window as unknown as BrowserWindow;
   const focus = request.onFocusChange && window.onDidChangeActiveBrowserTab?.(request.onFocusChange);
-  const dispose = async () => { focus?.dispose(); relay?.dispose(); client.dispose(); await session.close(); };
+  const dispose = async () => { focus?.dispose(); client.dispose(); await session.close(); };
   return {client, sessionId, transport, get active() { return window.activeBrowserTab === tab; }, dispose,
     async close() { await dispose(); await tab.close(); }};
 }

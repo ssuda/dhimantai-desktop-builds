@@ -21,13 +21,6 @@ import tempfile
 import threading
 import time
 import traceback
-# Older standalone lab images can still run untraced cells with their original helper set.
-try:
-    from lesson_trace import LessonTrace
-except ModuleNotFoundError as error:
-    if error.name != 'lesson_trace':
-        raise
-    LessonTrace = None
 from lab_scenarios import prepared_setup
 from sql_runtime import PostgresRuntimeError
 
@@ -41,7 +34,6 @@ transport = os.fdopen(os.dup(1), 'w', buffering=1)
 control = os.fdopen(os.dup(0), 'r')
 lock = threading.Lock()
 requests = queue.Queue()
-closing = threading.Event()
 answers = queue.Queue()
 active = None
 stopping = None
@@ -57,10 +49,6 @@ lab_setup = None
 lab_failed = False
 sql_db = None
 shell_env = dict(os.environ)
-# Notebook commands may have a PTY for input. A pager on that PTY waits for a
-# keystroke even after the query has returned its final row.
-shell_env['PSQL_PAGER'] = ''
-cell_shells = {}
 uploaded_files = {}
 LIMIT = 200000
 
@@ -83,7 +71,7 @@ def notebook_error(error):
             and error.args[0].code() == kafka.KafkaError._ALL_BROKERS_DOWN and shutil.which('kafkalab')):
         return ('Kafka could not reach a broker (_ALL_BROKERS_DOWN). Check the bootstrap address in your cell. '
                 'For the single-broker course lab, use localhost:9092. '
-                'Run kafkalab check in a Bash cell. '
+                'Open Runtime → Open course terminal and run kafkalab check. '
                 'If the lab broker is stopped, run kafkalab start and wait for "ready": true before rerunning this cell.')
     native_library = type(error) is OSError and re.search(r'\.so\b|\.dll\b|\.dylib\b|DLL load failed', str(error), re.I)
     if isinstance(error, ImportError) or native_library:
@@ -93,7 +81,7 @@ def notebook_error(error):
                 'For the course container, open Runtime above the notebook → Set up / rebuild course and wait for setup to finish. '
                 'For a connected Python kernel, install the course requirements in that same environment. '
                 'Then use Notebook options (⋯) → Restart runtime and rerun the prerequisite cells and the failed cell. '
-                'If setup already failed, inspect the setup log before rebuilding again.')
+                'If setup already failed, use Runtime → Open course terminal to inspect the setup error before rebuilding again.')
     return None
 
 
@@ -194,12 +182,9 @@ def receive():
             if action == 'run': requests.put(message)
             elif action == 'input' and message.get('id') == active:
                 answers.put(message.get('value'))
-            elif action == 'terminal' and message.get('id') == active:
-                answers.put(message)
             elif action == 'stop': interrupt()
             elif action == 'close': break
     finally:
-        closing.set()
         if active: interrupt()
         requests.put(None)
 
@@ -297,26 +282,6 @@ def capture(result):
             thread.join(timeout=1)
 
 
-# read and readv, by architecture: a thread blocked in one of these on the cell's terminal is waiting for the learner.
-TERMINAL_READS = {'x86_64': (0, 19), 'aarch64': (63, 65)}.get(os.uname().machine, ()) if os.name == 'posix' else ()
-
-
-def reading_terminal(session, tty):
-    """True when a process the cell started is blocked reading its terminal (Scanner, cin, read_line, fmt.Scan)."""
-    for proc in Path('/proc').glob('[0-9]*'):
-        try:
-            stat = (proc / 'stat').read_text()
-            if int(stat[stat.rindex(')') + 2:].split()[3]) != session: continue
-            for task in (proc / 'task').iterdir():
-                call = (task / 'syscall').read_text().split()
-                if len(call) > 1 and call[0].isdigit() and int(call[0]) in TERMINAL_READS \
-                        and os.readlink(proc / 'fd' / str(int(call[1], 16))) == tty:
-                    return True
-        except (OSError, ValueError, IndexError):
-            continue
-    return False
-
-
 def command(argv, data, env=None, *, timeout=None):
     """Interactive programs use a PTY on Unix, so prompts and line buffering work inside cells."""
     global process
@@ -327,7 +292,6 @@ def command(argv, data, env=None, *, timeout=None):
         import pty, termios
         master, slave = pty.openpty()
         flags = termios.tcgetattr(slave); flags[3] &= ~termios.ECHO; termios.tcsetattr(slave, termios.TCSANOW, flags)
-        tty = os.ttyname(slave)
     child = subprocess.Popen(argv, stdin=slave if terminal else subprocess.PIPE,
                              stdout=slave if terminal else None, stderr=slave if terminal else None,
                              env=env or shell_env, start_new_session=os.name == 'posix')
@@ -340,7 +304,6 @@ def command(argv, data, env=None, *, timeout=None):
                 while chunk := os.read(master, 4096): os.write(1, chunk.replace(b'\r\n', b'\n'))
             except OSError: pass
         reader = threading.Thread(target=drain, daemon=True); reader.start()
-        if data.get('terminal'): emit(id=active, kind='input', prompt='Program input')
     def send(value):
         if terminal: os.write(master, b'\x04' if value is None else value.encode())
         elif not child.stdin.closed:
@@ -348,28 +311,14 @@ def command(argv, data, env=None, *, timeout=None):
             else: child.stdin.write(value.encode()); child.stdin.flush()
     try:
         try:
-            # A terminal holds a line until Enter, so stdin without a final newline
-            # leaves `cin >> p` or input() waiting forever for the rest of the line.
-            stdin = data.get('stdin') or ''
-            if terminal and stdin and not stdin.endswith('\n'): stdin += '\n'
-            if stdin: send(stdin)
+            if data.get('stdin'): send(data['stdin'])
             if not data.get('interactive'): send(None)
         except (BrokenPipeError, OSError): pass
-        # A compiled program waiting on an empty terminal looks exactly like a hang. Say it wants input,
-        # the way Python cells do, so the learner can type a line, end input, or Stop.
-        waiting, checked = False, 0.0
         while child.poll() is None:
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError('Lab setup timed out. Restart the notebook runtime to retry.')
             try: value = answers.get(timeout=.05)
-            except queue.Empty:
-                if terminal and not data.get('terminal') and active and TERMINAL_READS and time.monotonic() - checked >= .3:
-                    checked = time.monotonic()
-                    now = reading_terminal(child.pid, tty)
-                    if now and not waiting: emit(id=active, kind='input', prompt='Program input')
-                    waiting = now
-                continue
-            waiting = False
+            except queue.Empty: continue
             try: send(None if value is None else value if value.endswith('\n') else value+'\n')
             except (BrokenPipeError, OSError): pass
         return child.returncode
@@ -526,13 +475,9 @@ def installation_failures():
         subprocess.Popen = original
 
 
-def execute(data, trace=None):
+def execute(data):
     language, source = data['language'], data['source']
     if data.get('database') == 'lab': database('pglab', data.get('setup', ''))
-    if data.get('postgresTerminal'):
-        # The terminal joins the database owned by this bridge. Compose supplies its own connection environment.
-        print(str(lab[0]) if lab else '')
-        return 0
     for file in data.get('files', []):
         path = safe_file(file['name']); path.parent.mkdir(parents=True, exist_ok=True)
         # Preserve edits made by cells unless the learner uploads a revised input file.
@@ -568,25 +513,27 @@ def execute(data, trace=None):
     if language in ('bash', 'zsh', 'pglab') or source.startswith(('%%bash\n', '%%sh\n', '%%zsh\n')):
         shell = 'zsh' if language == 'zsh' or source.startswith('%%zsh') else 'bash'
         if source.startswith('%%'): source = source.partition('\n')[2]
-        from cell_shell import CellShell
-        global process
-        session = cell_shells.get(shell)
-        if session is None or session.child.poll() is not None:
-            if session: session.close()
-            session = cell_shells[shell] = CellShell(shell, shell_env)
-        process = session.child
+        # Persist cwd and exported variables without sourcing learner-controlled state as code.
+        fd, name = tempfile.mkstemp(prefix='.cell-env-', dir=root)
+        os.close(fd); state = Path(name)
+        script = source + '\n'
+        save = 'cell_exit=$?; pwd > "$DHIMANTAI_CELL_STATE.cwd"; env -0 > "$DHIMANTAI_CELL_STATE"; exit "$cell_exit"'
+        env = {**shell_env, 'DHIMANTAI_CELL_STATE': str(state)}
         try:
-            terminal_output = None
-            if data.get('terminal') and data.get('interactive'):
-                def terminal_output(text):
-                    emit(id=active, kind='terminal', **({'data': text} if text is not None else {}))
-            return session.run(source, data, answers, shell_env, terminal_output=terminal_output,
-                               database_bash=shell == 'bash' and (language == 'pglab' or data.get('database') == 'lab'))
-        except BaseException:
-            cell_shells.pop(shell).close()
-            raise
+            code = command([shell, '-c', 'trap ' + __import__('shlex').quote(save) + ' EXIT\n' + script], data, env)
+            updated = {}
+            for pair in state.read_bytes().split(b'\0'):
+                key, _, value = pair.partition(b'=')
+                if key and key != b'DHIMANTAI_CELL_STATE': updated[key.decode()] = value.decode(errors='replace')
+            if updated:
+                for key in shell_env.keys() - updated.keys(): os.environ.pop(key, None)
+                shell_env.clear(); shell_env.update(updated)
+            os.environ.update(shell_env)
+            cwd = Path(str(state)+'.cwd')
+            if cwd.exists() and Path(cwd.read_text().strip()).is_dir(): os.chdir(cwd.read_text().strip())
+            return code
         finally:
-            process = None
+            state.unlink(missing_ok=True); Path(str(state)+'.cwd').unlink(missing_ok=True)
     if language == 'python':
         old_input, old_argv = sys.stdin, sys.argv
         sys.stdin = CellInput(data.get('stdin', ''), data.get('interactive', False))
@@ -594,33 +541,31 @@ def execute(data, trace=None):
         namespace['display'] = display
         try:
             shell = notebook_shell()
-            filename = f'<notebook cell {active}>' if trace else '<notebook cell>'
-            with trace.record(filename) if trace else contextlib.nullcontext():
-                if shell is not None:
-                    if 'matplotlib' in source or 'plt.' in source:
-                        try: shell.run_line_magic('matplotlib','inline')
-                        except (ImportError, KeyError): pass
-                    with installation_failures() as failures:
-                        outcome = shell.run_cell(source, store_history=True)
-                    if failures:
-                        print(f'Package installation failed (exit code {failures[0]}). Read the pip error above; '
-                              'fix it before running dependent cells.', file=sys.stderr)
-                        return failures[0]
-                    error = outcome.error_in_exec or outcome.error_before_exec
-                    if isinstance(error, subprocess.CalledProcessError):
-                        return error.returncode
-                    return 0 if outcome.success else 1
-                else:
-                    if source.startswith('!'): return command(['bash', '-c', source[1:]], data)
-                    tree = ast.parse(source, filename)
-                    last = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
-                    exec(compile(tree, filename, 'exec'), namespace)
-                    if last:
-                        value = eval(compile(ast.Expression(last.value), filename, 'eval'), namespace)
-                        if value is not None:
-                            print(repr(value))
-                            if any(callable(getattr(value, method, None)) for method in ('_repr_html_', '_repr_png_', '_repr_svg_')): display(value)
-                    return 0
+            if shell is not None:
+                if 'matplotlib' in source or 'plt.' in source:
+                    try: shell.run_line_magic('matplotlib','inline')
+                    except (ImportError, KeyError): pass
+                with installation_failures() as failures:
+                    outcome = shell.run_cell(source, store_history=True)
+                if failures:
+                    print(f'Package installation failed (exit code {failures[0]}). Read the pip error above; '
+                          'fix it before running dependent cells.', file=sys.stderr)
+                    return failures[0]
+                error = outcome.error_in_exec or outcome.error_before_exec
+                if isinstance(error, subprocess.CalledProcessError):
+                    return error.returncode
+                return 0 if outcome.success else 1
+            else:
+                if source.startswith('!'): return command(['bash', '-c', source[1:]], data)
+                tree = ast.parse(source, '<notebook cell>')
+                last = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
+                exec(compile(tree, '<notebook cell>', 'exec'), namespace)
+                if last:
+                    value = eval(compile(ast.Expression(last.value), '<notebook cell>', 'eval'), namespace)
+                    if value is not None:
+                        print(repr(value))
+                        if any(callable(getattr(value, method, None)) for method in ('_repr_html_', '_repr_png_', '_repr_svg_')): display(value)
+                return 0
         finally: sys.stdin, sys.argv = old_input, old_argv
     plans = {
         'javascript': ('main.js', [], ['node', 'main.js']),
@@ -657,15 +602,11 @@ def main():
     try:
         while (data := requests.get()) is not None:
             active = data['id']; stopping = None
-            if closing.is_set(): break  # A close can arrive while this run is still queued.
             while not answers.empty(): answers.get_nowait()
             result = dict(stdout='', stderr='', truncated=False, status='exited', exit_code=0)
             started = time.monotonic()
-            trace = None
-            if LessonTrace and data.get('trace') and data['language'] == 'python':
-                trace = LessonTrace(data['source'], data.get('observeFunction'))
             with capture(result):
-                try: result['exit_code'] = execute(data, trace)
+                try: result['exit_code'] = execute(data)
                 except CompilationError as error:
                     result.update(status='compile_error', exit_code=error.exit_code)
                 except KeyboardInterrupt:
@@ -680,19 +621,10 @@ def main():
                     if message: print(message, file=sys.stderr)
                     else: traceback.print_exc()
             if stopping == active: result.update(status='cancelled', exit_code=None)
-            if data.get('database') == 'lab' and (lab or os.environ.get('DHIMANTAI_DATABASE_MODE') == 'service'):
-                result['postgres_environment'] = {
-                    'ps_available': shutil.which('ps', path=shell_env.get('PATH')) is not None,
-                    'pager_disabled': shell_env.get('PSQL_PAGER') == '',
-                    'os_root': os.geteuid() == 0,
-                }
             result.update(duration_seconds=round(time.monotonic()-started, 3), command=data['language']+' notebook cell')
-            if trace:
-                result['lessonTrace'] = trace.result(result['stdout'])
             emit(id=active, kind='done', execution=result)
             active = None
     finally:
-        for session in cell_shells.values(): session.close()
         databases.close()
         if python_shell is not None: python_shell.atexit_operations()
         if python_profile is not None: python_profile.cleanup()

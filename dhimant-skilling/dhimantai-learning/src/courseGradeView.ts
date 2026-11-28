@@ -61,7 +61,7 @@ export class CourseGradeView implements vscode.Disposable {
   private render(notice = this.notice) {
     this.notice = notice;
     if (this.panel) this.panel.webview.html = courseGradeHtml(randomBytes(16).toString('hex'),this.grade,this.certificates,this.notice,
-      this.owner && this.environment ? this.outbox.pending(this.environment,this.owner) : [],this.busy,!this.course,this.learning,`${this.owner}:${this.environment}:${this.course}`,this.certificateCourses,this.lessons,!!this.api);
+      this.owner && this.environment ? this.outbox.pending(this.environment,this.owner).length : 0,this.busy,!this.course,this.learning,`${this.owner}:${this.environment}:${this.course}`,this.certificateCourses,this.lessons,!!this.api);
   }
   private async refresh(openCatalog?: PublicCatalog) {
     if (!this.panel) return;

@@ -19,7 +19,7 @@ const data:SkillingPathway={current_week:'2026-11-09',topics:[{key:'c:loops',top
 const grade:CourseGrade={course_id:'python',course_title:'Python',score:100,grade:'A',eligible:false,passed_count:10,required_count:10,exercise_score:100,project_score:100,
   policy:{description:'Practice marks',scope:'Learner reports'},blockers:[],topics:[],requirements:[],readiness:data.pathway,coursework_ready:true};
 
-function page(scope='owner:staging:python',saved?:unknown,html=courseGradeHtml('nonce',grade,[],'',[],false,false,data,scope)){
+function page(scope='owner:staging:python',saved?:unknown,html=courseGradeHtml('nonce',grade,[],'',0,false,false,data,scope)){
   let state=saved;const messages:any[]=[];
   const dom=new JSDOM(html,{url:'https://webview.test/',runScripts:'dangerously',beforeParse(window){
     (window as any).acquireVsCodeApi=()=>({getState:()=>state,setState:(v:unknown)=>{state=v;},postMessage:(v:unknown)=>messages.push(v)});
@@ -44,7 +44,7 @@ test('a lesson-locked Micro links to its course and lists the unavailable lesson
   locked.pathway.lesson_access = {reason, lessons:['Loops <and> conditions']};
   locked.pathway.blockers.unshift(reason);
   Object.assign(locked.pathway.milestones[0], {unlocked:false, status:'locked', lock_reason:reason});
-  const p = page('', undefined, courseGradeHtml('nonce', {...grade, readiness:locked.pathway}, [], '', []));
+  const p = page('', undefined, courseGradeHtml('nonce', {...grade, readiness:locked.pathway}, [], '', 0));
   const doc = p.dom.window.document;
   const start = doc.querySelector<HTMLButtonElement>('[data-action="skillingProject"][data-id="micro"]')!;
   assert.equal(start.disabled, true);
@@ -64,7 +64,7 @@ test('a lesson-locked Micro links to its course and lists the unavailable lesson
   locked.pathway.milestones[0].status = 'not_started';
   locked.pathway.milestones[0].lock_reason = undefined;
   locked.pathway.blockers = ['Unlock the required course lessons before starting readiness assessments.'];
-  const older = page('', undefined, courseGradeHtml('nonce', grade, [], '', [], false, false, locked));
+  const older = page('', undefined, courseGradeHtml('nonce', grade, [], '', 0, false, false, locked));
   const legacyStart = older.dom.window.document.querySelector<HTMLButtonElement>('[data-action="skillingProject"][data-id="micro"]')!;
   assert.equal(legacyStart.disabled, true);
   assert.match(legacyStart.closest('li')!.textContent!, /Unlock the required course lessons/);
@@ -73,7 +73,7 @@ test('a lesson-locked Micro links to its course and lists the unavailable lesson
 });
 
 test('eligible and issued certificates reveal their corresponding claim or verified record',()=>{
-  const eligible=page('',undefined,courseGradeHtml('nonce',{...grade,eligible:true},[],'',[]));
+  const eligible=page('',undefined,courseGradeHtml('nonce',{...grade,eligible:true},[],'',0));
   const doc=eligible.dom.window.document;
   assert.equal(doc.querySelector('#panel-Certificate .locked'),null);
   doc.querySelector<HTMLButtonElement>('[data-action="claim"]')!.click();
@@ -82,7 +82,7 @@ test('eligible and issued certificates reveal their corresponding claim or verif
 
   const certificate={id:'earned',course_id:'python',course_title:'Python',recipient_name:'A Learner',grade:'A',score:94,
     issued_at:'2026-11-15',revoked_at:null,policy_version:'v1'};
-  const issued=page('',undefined,courseGradeHtml('nonce',{...grade,certificate_id:'earned'},[certificate],'',[]));
+  const issued=page('',undefined,courseGradeHtml('nonce',{...grade,certificate_id:'earned'},[certificate],'',0));
   assert.match(issued.dom.window.document.querySelector('.earned-paper')!.textContent!, /A Learner/);
   assert.equal(issued.dom.window.document.querySelector('[data-action="claim"]'),null);
   issued.dom.window.document.querySelector<HTMLButtonElement>('[data-action="certificate"]')!.click();
@@ -105,7 +105,7 @@ test('evidence drafts survive rerenders and retries but cannot cross account or 
 test('course and review content cannot inject script, and current attempt answers use stable ids',()=>{
   const malicious=structuredClone(data);malicious.pathway.profile!.role='<img src=x onerror="window.pwned=true">';
   malicious.weekly=[{id:'attempt',week_start:'2026-11-09',submission_id:null,questions:[{id:'q',topic:'Loops',topic_key:'c:loops',prompt:'Explain <script>window.pwned=true</script>'}]}];
-  const html=courseGradeHtml('nonce',grade,[],'',[],false,false,malicious,'owner:</script><script>window.pwned=true</script>');
+  const html=courseGradeHtml('nonce',grade,[],'',0,false,false,malicious,'owner:</script><script>window.pwned=true</script>');
   const p=page('',undefined,html),doc=p.dom.window.document;
   assert.equal((p.dom.window as any).pwned,undefined);assert.equal(doc.querySelector('img'),null);
   const input=doc.querySelector('[data-field="answer:attempt:q"]') as HTMLTextAreaElement;input.value='Boundary explanation';
@@ -144,7 +144,7 @@ test('older unfinished mocks remain resumable without mixing their answers or as
   const learning=structuredClone(data);
   learning.weekly=[{id:'current',week_start:learning.current_week,submission_id:'submitted',questions:[]},
     {id:'older',week_start:'2026-11-02',submission_id:null,questions:[{id:'q',topic:'Loops',topic_key:'c:loops',prompt:'Explain boundary cases.'}]}];
-  const p=page('',undefined,courseGradeHtml('nonce',grade,[],'',[],false,false,learning)),doc=p.dom.window.document;
+  const p=page('',undefined,courseGradeHtml('nonce',grade,[],'',0,false,false,learning)),doc=p.dom.window.document;
   assert.equal((doc.querySelector('[data-action="weeklyStart"]') as HTMLButtonElement).disabled,true);
   assert.ok(doc.querySelector('[data-field="answer:older:q"]'));
   assert.ok(doc.querySelector('[data-field="weeklyAssistance:older"]'));

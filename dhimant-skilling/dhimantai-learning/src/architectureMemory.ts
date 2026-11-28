@@ -63,25 +63,19 @@ export function architectureSummary(project: string, attempts: ArchitectureAttem
     messages.push('Your first prediction missed the original behavior.' + (attempt.repair_help ? '' : ' You can try another location and count.'));
   if (attempt?.repair_help && attempt.recognition_help === null && attempt.first_diagnosis === null)
     messages.push('Recognition before the repair was not observed.');
-  if (attempt?.repair_help) {
-    const repair = project === 'market-checkout' ? 'Your first recorded repair' : 'Your local repair';
-    messages.push(repair + ' passed ' + support(attempt.repair_help) + '.');
-  } else if (attempt?.help.length) messages.push('You have worked ' + support(attempt.help) + '.');
+  if (attempt?.repair_help) messages.push('Your local repair passed ' + support(attempt.repair_help) + '.');
+  else if (attempt?.help.length) messages.push('You have worked ' + support(attempt.help) + '.');
   if (attempt?.test_help) messages.push('Your test caught the original bug ' + support(attempt.test_help) + '.');
   if (project === 'field-dispatch' && attempt?.prior_practice && attempt.repair_help && guided?.repair_help)
     messages.push('Earlier, you completed Checkout previews ' + support(guided.repair_help) + '.');
   return messages.join(' ');
 }
 
-export const debugProjects: Record<string, {title:string; file:string; description:string; reproduction:string}> = {
-  'trail-log': {title:'Trail log', file:'trips.py', description:'Investigate a walking guide’s itinerary report.',
-    reproduction:'from trips import record_stop\nprint(record_stop("Station"))\nprint(record_stop("Museum"))'},
-  'print-batches': {title:'Print batches', file:'labels.py', description:'Investigate a print operator’s label counts.',
-    reproduction:'from labels import Batch\nfirst = Batch()\nfirst.add("A")\nfirst.add("B")\nprint(Batch().add("C"))'},
-  'ferry-fares': {title:'Ferry fares', file:'fares.py', description:'Investigate a disputed passenger fare.',
-    reproduction:'from fares import fare\nprint(sum(fare(age) for age in (11, 12, 13)))'},
-  'meter-blocks': {title:'Parking meter', file:'meter.py', description:'Investigate a driver’s parking bill.',
-    reproduction:'from meter import blocks\nprint(blocks(45))'},
+export const debugProjects: Record<string, {title:string; file:string; description:string}> = {
+  'trail-log': {title:'Trail log', file:'trips.py', description:'Investigate a walking guide’s itinerary report.'},
+  'print-batches': {title:'Print batches', file:'labels.py', description:'Investigate a print operator’s label counts.'},
+  'ferry-fares': {title:'Ferry fares', file:'fares.py', description:'Investigate a disputed passenger fare.'},
+  'meter-blocks': {title:'Parking meter', file:'meter.py', description:'Investigate a driver’s parking bill.'},
 };
 
 export function isDebugProject(id: string) { return Object.hasOwn(debugProjects, id); }

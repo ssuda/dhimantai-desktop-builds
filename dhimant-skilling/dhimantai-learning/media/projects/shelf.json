@@ -47,7 +47,7 @@
       "task": "In Runtime → Open terminal, inspect git status, git log --oneline, and git log -p -- shelf/search.py. Use git show <commit> -- shelf/search.py to inspect a candidate. Record the short hash and explain the changed behavior. Keep your regression test and edits safe; the focused tests remain available here.",
       "files": ["CAPSTONE.md", "shelf/search.py", "tests/test_search.py"],
       "check": "all", "expected": "You can connect a specific patch to the reproduction. Tests may still fail while the bug is unfixed.",
-      "hint": "Compare the matching expression before and after a candidate change. Ask the mentor about log, show or bisect before using an unfamiliar Git operation.",
+      "hint": "Compare the matching expression before and after a candidate change. Ask Coach about log, show or bisect before using an unfamiliar Git operation.",
       "checkpointCheck": "shelf-evidence:history",
       "evidencePrompt": "Enter the short or full commit hash that introduced the search defect.",
       "reflection": "What evidence identifies the cause beyond the commit's title?"
@@ -68,7 +68,7 @@
       "id": "commit", "title": "6. Review and commit the change",
       "goal": "Produce a focused commit with a readable explanation and verified tests.",
       "opening": "Review the exact patch you are about to record, including your regression test.",
-      "task": "Inspect git status and git diff. Stage only your intended source and test paths with git add, then inspect git diff --cached. Commit with a message describing the change and mentioning #12. Rerun tests if you changed code during review. Ask the mentor to explain staging, diffs or commits when needed.",
+      "task": "Inspect git status and git diff. Stage only your intended source and test paths with git add, then inspect git diff --cached. Commit with a message describing the change and mentioning #12. Rerun tests if you changed code during review. Ask the Instructor to explain staging, diffs or commits when needed.",
       "files": ["CAPSTONE.md", "shelf/search.py", "tests/test_search.py"],
       "check": "all", "expected": "Your source and regression test are committed on your branch, with #12 in a commit message. Passing tests alone do not verify the Git requirements.",
       "hint": "Use explicit paths when staging and review the staged diff before committing. Do not include unrelated files or secrets.",

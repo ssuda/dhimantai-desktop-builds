@@ -5,33 +5,6 @@ import { questionMarkdown } from '../src/practiceNotebook';
 
 const open = (id: string) => ({type: 'open' as const, id, title: 'Reverse words', language: 'python'});
 
-test('the first passing grade uses its declaration even when the learner used external help only', () => {
-  for (const [declaration, label] of [
-    ['reported', 'with help'], ['unknown', 'with no help declaration'], ['none_reported', 'without help'],
-  ] as const) {
-    let records = record([], open('column'), 0);
-    records = record(records, {type:'graded', id:'column', passed:2, total:3, declaration:'reported'}, 1);
-    assert.equal(records[0].solved, undefined);
-    records = record(records, {type:'graded', id:'column', passed:3, total:3, declaration}, 2);
-    records = record(records, {type:'graded', id:'column', passed:3, total:3, declaration:'none_reported'}, 3);
-    records = validRecords(JSON.parse(JSON.stringify(records)));
-    assert.equal(trendText(trend(records)), `Last 1 solved: 1 ${label}.`);
-    assert.equal(progressText(records), `1 solved · 1 ${label}`);
-    const exported = exportRecords(records).problems[0].solved!;
-    assert.equal(exported.helpStatus, declaration);
-    assert.equal(exported.independent, declaration === 'none_reported');
-    assert.equal(exported.helpBeforeSolve, 0, 'a declaration does not invent an Instructor interaction');
-  }
-});
-
-test('legacy solves retain observed help and leave missing declarations unspecified', () => {
-  const records = ['first', 'second'].map((id, help) => ({
-    ...record([], open(id), 0)[0], solved:{at:1, help, maxLevel:0},
-  }));
-  assert.equal(trendText(trend(validRecords(records))), 'Last 2 solved: 1 with help, 1 with no help declaration.');
-  assert.equal(hardReady(records.map(({id, title}) => ({id, title, difficulty:'medium'})), records), false);
-});
-
 test('the help ladder climbs one rung per fresh try and restarts after a full graded pass', () => {
   let r: ProblemRecord[] = record([], open('a'), 0);
   const at = () => nextLevel(r.find(x => x.id === 'a'));
@@ -42,16 +15,16 @@ test('the help ladder climbs one rung per fresh try and restarts after a full gr
   assert.deepEqual(at(), {level: 2, waiting: false});
   for (const level of [2, 3, 4]) { r = record(r, {type: 'help', id: 'a', level}, 3); r = record(r, {type: 'run', id: 'a'}, 4); }
   assert.deepEqual(at(), {level: 4, waiting: false}, 'the top rung is a similar example, never the solution');
-  r = record(r, {type: 'graded', declaration: 'reported', id: 'a', passed: 1, total: 2}, 5);
+  r = record(r, {type: 'graded', id: 'a', passed: 1, total: 2}, 5);
   assert.equal(at().level, 4, 'a partial pass keeps the episode open');
   r = record(r, {type: 'samples', id: 'a', passed: 2, total: 2}, 5);
   assert.equal(r[0].solved, undefined, 'passing the published samples alone is not solving the problem');
   assert.equal(r[0].samplesPassed, 5);
-  r = record(r, {type: 'graded', declaration: 'reported', id: 'a', passed: 2, total: 2}, 6);
+  r = record(r, {type: 'graded', id: 'a', passed: 2, total: 2}, 6);
   assert.deepEqual(at(), {level: 1, waiting: false}, 'the next stuck moment starts small again');
-  assert.deepEqual(r[0].solved, {at: 6, help: 4, maxLevel: 4, declaration: 'reported'});
+  assert.deepEqual(r[0].solved, {at: 6, help: 4, maxLevel: 4});
   r = record(r, {type: 'help', id: 'a', level: 1}, 7);
-  r = record(r, {type: 'graded', declaration: 'reported', id: 'a', passed: 2, total: 2}, 8);
+  r = record(r, {type: 'graded', id: 'a', passed: 2, total: 2}, 8);
   assert.equal(r[0].solved!.at, 6, 'the first solve is the one that counts');
   assert.equal(record([], {type: 'run', id: 'unknown'}).length, 0, 'events for unopened problems are ignored');
 });
@@ -64,14 +37,14 @@ test('the trend counts recent problems solved without any help', () => {
     r = record(r, open(id), start);
     if (helped) r = record(r, {type: 'ask', id}, start + minute);
     r = record(r, {type: 'run', id}, start + 2 * minute);
-    r = record(r, {type: 'graded', declaration: helped ? 'reported' : 'none_reported', id, passed: 1, total: 1}, start + 10 * minute);
+    r = record(r, {type: 'graded', id, passed: 1, total: 1}, start + 10 * minute);
   }
   const t = trend(r);
   assert.equal(t.solved, 5, 'only the last five solved problems');
   assert.equal(t.independent, 4);
   assert.deepEqual(t.levels, [0, 0, 0, 0, 0], 'free questions are help, but not ladder rungs');
   assert.equal(t.medianMinutesToSolve, 10);
-  assert.equal(trendText(t), 'Last 5 solved: 4 without help, 1 with help.');
+  assert.equal(trendText(t), 'Last 5 solved: 4 without help.');
   assert.match(trendText(trend([])), /start your record/);
 });
 
@@ -79,10 +52,10 @@ test('an exported record holds counts and times only, and stored data is validat
   let r = record([], open('a'), 0);
   r = record(r, {type: 'run', id: 'a'}, 30000);
   r = record(r, {type: 'help', id: 'a', level: 2}, 40000);
-  r = record(r, {type: 'graded', declaration: 'reported', id: 'a', passed: 1, total: 1}, 90000);
+  r = record(r, {type: 'graded', id: 'a', passed: 1, total: 1}, 90000);
   const out = exportRecords(r);
   assert.equal(out.format, 'dhimantai-practice-record/1');
-  assert.deepEqual(out.problems[0].solved, {secondsToSolve: 90, helpBeforeSolve: 1, highestLevel: 2, helpStatus: 'reported', independent: false});
+  assert.deepEqual(out.problems[0].solved, {secondsToSolve: 90, helpBeforeSolve: 1, highestLevel: 2, independent: false});
   assert.equal(out.problems[0].secondsToFirstRun, 30);
   assert.deepEqual(Object.keys(out.problems[0]).sort(), ['id','ladder','language','opened','otherAsks','runs','secondsToFirstRun','solved','title']);
   assert.deepEqual(validRecords([null, {id: 1}, ...r, 'x']), r);
@@ -112,16 +85,16 @@ test('a run of unchanged code after help does not unlock a stronger hint', () =>
 test('a first graded pass schedules reviews after 1, 3 and 7 days; an on-time review moves to the next', () => {
   const day = 86_400_000;
   let r: ProblemRecord[] = record([], open('a'), 0);
-  r = record(r, {type: 'graded', declaration: 'none_reported', id: 'a', passed: 3, total: 4}, 10);
+  r = record(r, {type: 'graded', id: 'a', passed: 3, total: 4}, 10);
   assert.equal(r[0].reviewDue, undefined, 'a partial pass schedules nothing');
-  r = record(r, {type: 'graded', declaration: 'none_reported', id: 'a', passed: 4, total: 4}, 100);
+  r = record(r, {type: 'graded', id: 'a', passed: 4, total: 4}, 100);
   assert.deepEqual(r[0].reviewDue, REVIEW_DAYS.map(d => 100 + d * day));
   assert.deepEqual(REVIEW_DAYS, [1, 3, 7]);
   assert.deepEqual(dueReviews(r, 100 + day - 1), [], 'nothing is due before a day has passed');
   assert.deepEqual(dueReviews(r, 100 + day).map(x => x.id), ['a']);
-  r = record(r, {type: 'graded', declaration: 'none_reported', id: 'a', passed: 4, total: 4}, 200);
+  r = record(r, {type: 'graded', id: 'a', passed: 4, total: 4}, 200);
   assert.equal(r[0].reviewDue!.length, 3, 'an early pass is not a review');
-  r = record(r, {type: 'graded', declaration: 'none_reported', id: 'a', passed: 4, total: 4}, 100 + day);
+  r = record(r, {type: 'graded', id: 'a', passed: 4, total: 4}, 100 + day);
   assert.deepEqual(r[0].reviewDue, [100 + 3 * day, 100 + 7 * day]);
   assert.equal(r[0].solved!.at, 100, 'the first solve stays the one that counts');
   r = record(r, {type: 'samples', id: 'a', passed: 4, total: 4}, 100 + 3 * day);
@@ -134,17 +107,17 @@ test('a topic lists exercises easiest first, suggests Hard after two independent
   assert.deepEqual(byDifficulty(qs).map(q => q.id), ['e', 'm1', 'u', 'm2', 'h'], 'authored order stands within a difficulty');
   let r: ProblemRecord[] = [];
   for (const id of ['e', 'm1', 'm2']) r = record(r, open(id), 0);
-  r = record(r, {type: 'graded', declaration: 'none_reported', id: 'e', passed: 1, total: 1}, 1);
+  r = record(r, {type: 'graded', id: 'e', passed: 1, total: 1}, 1);
   assert.equal(nextExercise(qs, r, 'e')?.id, 'm1');
   assert.equal(hardReady(qs, r), false);
-  r = record(r, {type: 'graded', declaration: 'none_reported', id: 'm1', passed: 1, total: 1}, 2);
+  r = record(r, {type: 'graded', id: 'm1', passed: 1, total: 1}, 2);
   r = record(r, {type: 'ask', id: 'm2'}, 3);
-  r = record(r, {type: 'graded', declaration: 'reported', id: 'm2', passed: 1, total: 1}, 4);
+  r = record(r, {type: 'graded', id: 'm2', passed: 1, total: 1}, 4);
   assert.equal(hardReady(qs, r), false, 'a Medium solved with help does not count');
   r = record(r, open('u'), 5);
   assert.equal(nextExercise(qs, r, 'm2')?.id, 'u');
-  assert.equal(progressText(r), '3 solved · 2 without help, 1 with help');
+  assert.equal(progressText(r), '3 solved · 2 without help');
   assert.equal(progressText([]), 'No problems solved yet');
   assert.equal(hardReady([...qs, {id: 'm9', title: 'M', difficulty: 'medium'}],
-    record(record(r, open('m9'), 6), {type: 'graded', declaration: 'none_reported', id: 'm9', passed: 1, total: 1}, 7)), true);
+    record(record(r, open('m9'), 6), {type: 'graded', id: 'm9', passed: 1, total: 1}, 7)), true);
 });

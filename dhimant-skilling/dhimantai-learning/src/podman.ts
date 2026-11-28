@@ -318,7 +318,7 @@ export async function ensurePodman(report: (s: string) => void, log: (s: string)
     if (process.platform === 'linux') throw error;
   }
   if (ready) { await checkMemory(); return bin; }
-  report('Setting up your Python workspace. The first run takes a moment. Meanwhile, write your prediction.');
+  report('Starting the Podman virtual machine');
   const machines = JSON.parse(await run(bin, ['machine', 'list', '--format', 'json'])) as Machine[] | null;
   for (const args of machineSetup(machines ?? [], memoryMiB)) {
     // A fresh VM must pass the same host-RAM check as an existing VM before allocating memory.

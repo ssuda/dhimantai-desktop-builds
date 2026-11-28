@@ -8,8 +8,7 @@ export class B2cServer {
   private url = '';
   private users = new Map<string, { name: string; password: string; verified: boolean; profile: boolean; joined: boolean }>();
   private tokens = new Map<string, string>();
-  private chapterEditions = new Map<string,{revision:string;attempt:string}>();
-  private settings = { chapterRevision:'1', confirmation: false, profileFailure: false, unavailable: false, institute: false };
+  private settings = { confirmation: false, profileFailure: false, unavailable: false, institute: false };
   private signups = 0;
   private social?: {scopes: string | null; email: string; challenge: string; code: string; link: string};
   private recovery?: {email: string; challenge: string; code: string; link: string};
@@ -135,21 +134,9 @@ export class B2cServer {
     if (path === '/learning-billing/purchases') return send(200, {payments_ready:true,purchases:[]});
     if (path === '/notebook-coach/study') return send(200, {courses:user?.joined && !this.settings.institute
       ? [{id:'python',title:'Python',chapters:[{id:'10000000-0000-0000-0000-000000000001',title:'Lists'}]}] : []});
-    if (user?.joined && path === '/notebook-coach/exercises/10000000-0000-0000-0000-000000000001/questions') {
-      return send(200, {questions:[{id:'30000000-0000-0000-0000-000000000001',title:'Index a Python list',topic:'Indexing',language:'python',difficulty:'Easy'}]});
-    }
-    const edition = email ? this.chapterEditions.get(email) : undefined;
-    if (user?.joined && email && path === '/vscode-learning/chapters/10000000-0000-0000-0000-000000000001/open') {
-      const current = edition?.revision === this.settings.chapterRevision ? edition : {
-        revision:this.settings.chapterRevision, attempt:edition ? randomUUID() : '',
-      };
-      if (body.restart && body.expected === current.attempt && body.revision === current.revision) current.attempt = body.restart;
-      this.chapterEditions.set(email, current);
-      return send(200, current);
-    }
     if (path === '/notebook-coach/exercises') return send(200, { courses: user?.joined && !this.settings.institute ? [{ name: this.course.title, chapters: [
       { id: '10000000-0000-0000-0000-000000000001', name: 'Lists', locked:false,
-        progress:{status:edition && edition.revision !== this.settings.chapterRevision ? 'content_changed' : 'covered', content_revision:this.settings.chapterRevision,covered:1,total:1,topics:[{id:'indexing',title:'Indexing',status:'covered'}]} },
+        progress:{status:'covered',covered:1,total:1,topics:[{id:'indexing',title:'Indexing',status:'covered'}]} },
       { id: '10000000-0000-0000-0000-000000000002', name: 'Loops', locked:true,
         progress:{status:'not_started',covered:0,total:1,topics:[{id:'for',title:'For loops',status:'not_started'}]} }] }] : [], languages: [{ id: 'python', name: 'Python' }] });
     return send(404, { error: 'Unknown test route' });

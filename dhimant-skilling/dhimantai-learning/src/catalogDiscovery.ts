@@ -1,33 +1,10 @@
 import type { Course } from './api';
-import { compareCourseActivity, nextChapter } from './courseProgress';
-import type { CatalogCourse, PublicCatalog } from './learnerCatalog';
-
-export type LearnerCourse = Course & {catalog?: CatalogCourse; outlineUnavailable?: boolean};
-
-/** Institute courses come from the assigned syllabus. Individual enrolments can precede a published syllabus. */
-export function learnerCourses(subjects: Course[], catalog?: PublicCatalog): LearnerCourse[] {
-  const courses: LearnerCourse[] = subjects.map(course => {
-    const match = catalog?.courses.find(c => c.id === course.project_coach?.course_id || c.title === course.name)
-      ?? catalog?.courses.find(c => course.chapters.some(ch => c.chapters.some(item => item.id === ch.id)));
-    return {...course, catalog:match};
-  });
-  if (catalog?.individual) {
-    const matched = new Set(courses.map(c => c.catalog?.id));
-    for (const entry of catalog.courses.filter(c => c.enrolled && !matched.has(c.id)))
-      courses.push({name:entry.title, chapters:[], catalog:entry, outlineUnavailable:true});
-  }
-  return courses.sort(compareCourseActivity);
-}
+import { nextChapter } from './courseProgress';
+import type { CatalogCourse } from './learnerCatalog';
 
 /** Teaching coverage is not an assessment or a certificate. */
 export function lessonsCovered(course: CatalogCourse) {
   return !!course.chapters.length && course.chapters.every(ch => ch.progress?.status === 'covered');
-}
-
-export function courseLearningStatus(course: CatalogCourse): 'covered' | 'inProgress' | 'notStarted' | undefined {
-  if (lessonsCovered(course)) return 'covered';
-  if (course.chapters.some(ch => ['in_progress','covered','content_changed'].includes(ch.progress?.status ?? ''))) return 'inProgress';
-  if (!course.enrolled || course.chapters.length && course.chapters.every(ch => ch.progress?.status === 'not_started')) return 'notStarted';
 }
 
 /** Transparent suggestions from actual study history; preserve the service's order on ties. */
@@ -39,7 +16,7 @@ export function courseSuggestions(courses: CatalogCourse[]) {
     .slice(0, 3).map(course => ({course, reason:`More in ${course.category}`}));
 }
 
-export function resumeTopic(course: Pick<CatalogCourse, 'chapters'>, chapterId?: string) {
+export function resumeTopic(course: CatalogCourse, chapterId?: string) {
   const topics = course.chapters.find(ch => ch.id === chapterId)?.progress?.topics ?? [];
   return topics.find(topic => topic.status === 'in_progress' || topic.status === 'content_changed')?.title
     ?? topics.find(topic => topic.status === 'not_started')?.title;
@@ -83,7 +60,6 @@ export function catalogChapter(course: CatalogCourse) {
 export function chapterActionLabel(course: CatalogCourse, chapter: CatalogCourse['chapters'][number]) {
   const number = course.chapters.indexOf(chapter) + 1;
   const status = chapter.progress?.status;
-  if (status === 'content_changed') return 'Start updated chapter ' + number;
-  if (status === 'covered') return 'Review chapter ' + number;
+  if (status === 'covered' || status === 'content_changed') return 'Review chapter ' + number;
   return (status === 'in_progress' ? 'Resume chapter ' : 'Start chapter ') + number;
 }

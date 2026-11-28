@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { ChapterCoverage, courseCoverage, coverageLabel, nextChapter, topicCoverageHtml } from '../src/courseProgress';
+import { ChapterCoverage, courseCoverage, coverageLabel, topicCoverageHtml } from '../src/courseProgress';
 
 test('course counts separate taught, remaining, revised and unavailable chapters', () => {
   const chapter = (status: ChapterCoverage['status']) => ({progress:{status, covered:0, total:0, topics:[]}});
@@ -25,12 +25,4 @@ test('taught topics are marked, not struck through as done; review stays visible
     assert.match(dom.window.document.body.textContent!, /Slicing In progress/);
     assert.match(dom.window.document.body.textContent!, /Loops Not started/);
   } finally { dom.window.close(); }
-});
-
-test('a revised chapter opens in syllabus order ahead of a later resume point', () => {
-  const chapters = ['content_changed', 'content_changed', 'in_progress'].map((status, index) => ({
-    index, progress:{status:status as ChapterCoverage['status'], covered:0, total:1, topics:[], updated_at:'2026-11-2' + index},
-  }));
-  assert.equal(nextChapter(chapters, () => true), chapters[0]);
-  assert.equal(nextChapter(chapters, ch => ch.index > 0), chapters[1]);
 });

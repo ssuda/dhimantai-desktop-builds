@@ -1,5 +1,4 @@
 import type { GeneratedExercise, PublicTest, Workspace } from './api';
-import type { LocalTestResult } from './localRunner';
 import { codeLanguage } from './roomCode';
 import { emptyNotebook, TutorNotebook } from './tutorNotebook';
 
@@ -59,51 +58,10 @@ export function generatedPractice(result: GeneratedExercise, id: string, account
   const normalized = (value: string) => value.replace(/\r\n/g, '\n').split('\n').map(line => line.trimEnd()).join('\n').trimEnd();
   if (tests.length !== 1 || tests[0].stdin !== exercise.example_input
       || normalized(tests[0].expected) !== normalized(exercise.expected_output))
-    throw new Error('dhimantAI could not open a validated exercise sample. Update dhimantAI, or open a published Practice question.');
+    throw new Error('This service did not return a validated exercise sample. Update the service, or open a published Practice question.');
   return {id, account, language, title:exercise.title, course:result.course, starter:'', assistance:true, tests,
     path:'/notebook-coach/tutor', question:[exercise.title, exercise.task, 'Example input', exercise.example_input,
       'Expected output', exercise.expected_output].join('\n\n').slice(0,6000)};
-}
-
-export const LOCAL_EXAMPLE_FAILED = 'The generated example did not check out when it ran on your computer, so it has not been opened. Generate another exercise.';
-
-/**
- * The service no longer runs code. It returns a reference program for the example, and this
- * computer's course container runs it. The exercise opens only when the reference prints the
- * example's expected output. The reference is dropped here: it is never shown or saved.
- */
-export async function checkGeneratedLocally(result: GeneratedExercise,
-    run: (language: string, source: string, tests: PublicTest[]) => Promise<LocalTestResult[]>): Promise<GeneratedExercise> {
-  const { reference, ...rest } = result;
-  if (result.validation !== 'local_reference') return rest;
-  const tests = storedTests(result.tests);
-  const language = codeLanguage(result.language);
-  if (!language || !reference || typeof reference.source !== 'string' || !reference.source.trim()
-      || reference.source.length > 8000 || codeLanguage(reference.language) !== language || tests.length !== 1)
-    throw new Error(LOCAL_EXAMPLE_FAILED);
-  const [outcome] = await run(language, reference.source, tests);
-  if (!outcome || outcome.id !== tests[0].id || outcome.verdict !== 'passed') throw new Error(LOCAL_EXAMPLE_FAILED);
-  return { ...rest, validation: 'reference_execution', tests: [{ ...tests[0], expected: outcome.actual }] };
-}
-
-export const GENERATION_ATTEMPTS = 3;
-/**
- * A generated example fails its check now and then: the service's review rejects it (503), or the reference
- * does not print the example on this computer. A fresh draft usually passes, so these are tried again.
- * A wrong selection, missing access, quota or runtime setup will fail the same way every time.
- */
-export function retryableGeneration(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const status = (error as {status?: unknown}).status;  // ApiError, without loading the API client here
-  if (typeof status === 'number') return [0, 502, 503, 504].includes(status);
-  return error.message === LOCAL_EXAMPLE_FAILED;
-}
-/** Run one generate-and-check attempt up to `attempts` times while the failure is retryable. */
-export async function withGenerationRetry<T>(attempt: (n: number) => Promise<T>, attempts = GENERATION_ATTEMPTS): Promise<T> {
-  for (let n = 1; ; n++) {
-    try { return await attempt(n); }
-    catch (error) { if (n >= attempts || !retryableGeneration(error)) throw error; }
-  }
 }
 
 const EXAMPLE_LABEL = /^(?:example input|expected output|sample input|sample output|input|output)$/i;
@@ -124,14 +82,7 @@ export function questionMarkdown(question: string, title = ''): string {
 
 export function practiceDocument(practice: PracticeNotebook): TutorNotebook {
   const notebook = emptyNotebook(); notebook.exerciseId = practice.id; notebook.title = practice.title.slice(0,300);
-  let text = questionMarkdown(practice.question, practice.title);
-  if (practice.id === '75141e8f-b5ce-56c8-befc-c325019517bf' && !/bill\(\s*0\s*,\s*20\s*,\s*5\s*\)/.test(text)) {
-    text += '\n\n- `bill(0, 20, 5) -> 5` (**Edge case:** zero quantity still pays the delivery charge.)';
-  }
-  if (practice.tests.length > 0 && !/Sample tests are a quick check/i.test(text)) {
-    text += '\n\n> Sample tests are a quick check. They do not prove the whole solution is correct.';
-  }
-  notebook.cells.push({id:'practice-question', kind:'board', text:text.slice(0,6000), packet:{
+  notebook.cells.push({id:'practice-question', kind:'board', text:questionMarkdown(practice.question, practice.title).slice(0,6000), packet:{
     is_question_prompt:true, tutor_checkpoint_id:'practice:' + practice.id,
     practice_course:practice.course, practice_tests:practice.tests, tutor_practice_editor:{
       question_id:practice.id, checkpoint_id:'practice:' + practice.id, language:practice.language,

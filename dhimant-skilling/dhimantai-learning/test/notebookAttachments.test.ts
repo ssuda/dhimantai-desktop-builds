@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { resolve } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { buildSync } from 'esbuild';
 import { JSDOM } from 'jsdom';
 
-const script = readFileSync(resolve(__dirname, 'fixtures/attachments.js'), 'utf8');
+const script = buildSync({entryPoints:[resolve(__dirname,'../../webview/notebookAttachments.ts')], bundle:true,
+  write:false, format:'iife', globalName:'AttachmentKit', footer:{js:'globalThis.AttachmentKit = AttachmentKit;'}}).outputFiles[0].text;
 function fixture() {
   const dom = new JSDOM('<div id="tray"></div><small id="notice"></small>', {runScripts:'outside-only'});
   const w = dom.window;

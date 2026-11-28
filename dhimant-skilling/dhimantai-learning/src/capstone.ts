@@ -11,9 +11,7 @@ import { CATALOG_PROJECTS } from './catalogProjects';
 import { CODE_READING_PAUSED, CODE_READING_PROJECTS_ENABLED, desktopProjectEnabled } from './desktopFeatures';
 
 export async function openProject(context: vscode.ExtensionContext, title: string, destination: string, created: boolean) {
-  // Resuming from Home in an empty window has no workspace to keep, so the project opens in place.
-  // A new project still shows where its folder was created.
-  const choice = !created && !vscode.workspace.workspaceFolders?.length ? 'Open in Current Window' : await vscode.window.showInformationMessage(`${title} — ${created ? 'project created' : 'project ready'}`,
+  const choice = await vscode.window.showInformationMessage(`${title} — ${created ? 'project created' : 'project ready'}`,
     {modal: true, detail: `${created ? 'Created project folder' : 'Existing project folder'}:\n${destination}\n\nOpen in a new window to keep your current workspace open. Open in the current window to replace this workspace with the project.`},
     'Open in New Window', 'Open in Current Window');
   if (!choice) return;

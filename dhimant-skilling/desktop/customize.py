@@ -39,9 +39,7 @@ def customize(root):
     customize_appearance(root)
     configure_brand(root)
     configure_app_bar(root)
-    open_home_on_launch(root)
     configure_skilling_shell(root)
-    disable_notebook_terminals(root)
     # The catalog or chapter click starts the lesson. Its WebRTC audio element
     # attaches later, after the grant and agent handoff, often in a new webview.
     replace(root, 'src/vs/platform/windows/electron-main/windows.ts',
@@ -99,14 +97,9 @@ def customize(root):
 	}
 
 	protected override async prepareWebviewOrigin(encodedOrigin: string): Promise<void> {
-		if (this.extension?.id.value !== 'optficial.dhimantai-learning' || this._captureDisposed) { this.clearMediaCapture(); return; }
+		this.clearMediaCapture();
+		if (this.extension?.id.value !== 'optficial.dhimantai-learning' || this._captureDisposed) { return; }
 		const registration = { target: this.findTarget, origin: this.webviewContentEndpoint(encodedOrigin) };
-		const old = this._captureRegistration;
-		const target = registration.target;
-		const sameTarget = old && ('windowId' in target
-			? 'windowId' in old.target && target.windowId === old.target.windowId
-			: 'webContentsId' in old.target && target.webContentsId === old.target.webContentsId);
-		if (!sameTarget || old?.origin !== registration.origin) { this.clearMediaCapture(); }
 		this._captureRegistration = registration;
 		await this._webviewMainService.setMediaCaptureOrigin(registration.target, this.id, registration.origin, this.extension.id.value, true);
 		if (this._captureDisposed) { this.clearMediaCapture(); }
@@ -248,27 +241,6 @@ def configure_brand(root):
     shutil.copyfile(ROOT.parent / 'dhimantai-learning/media/auth/dhimantai.png', mark)
 
 
-def disable_notebook_terminals(root):
-    service = 'src/vs/workbench/contrib/terminal/browser/terminalService.ts'
-    anchor = 'async createTerminal(options?: ICreateTerminalOptions): Promise<ITerminalInstance> {'
-    replace(root, service, anchor, anchor + """
-		const launch = options?.config;
-		const managed = launch && (('isFeatureTerminal' in launch && launch.isFeatureTerminal)
-			|| ('isExtensionOwnedTerminal' in launch && launch.isExtensionOwnedTerminal && launch.executable));
-		if (!managed && this._contextKeyService.getContextKeyValue('dhimantai.learningNotebookActive')) {
-			throw new Error('Use a Bash or SQL cell in your learning notebook.');
-		}
-""")
-
-    view = 'src/vs/workbench/contrib/terminal/browser/terminal.contribution.ts'
-    replace(root, view, 'import { SyncDescriptor }',
-            "import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';\nimport { SyncDescriptor }")
-    replace(root, view, 'containerIcon: terminalViewIcon,',
-            "containerIcon: terminalViewIcon,\n\twhen: ContextKeyExpr.not('dhimantai.learningNotebookActive'),")
-    replace(root, view, 'primary: KeyMod.CtrlCmd | KeyCode.Backquote,',
-            "when: ContextKeyExpr.not('dhimantai.learningNotebookActive'),\n\t\t\tprimary: KeyMod.CtrlCmd | KeyCode.Backquote,")
-
-
 def configure_skilling_shell(root):
     menu = 'src/vs/workbench/browser/parts/titlebar/menubar.contribution.ts'
     replace(root, menu, "import { IsMacNativeContext }",
@@ -319,32 +291,6 @@ def configure_app_bar(root):
     replace(root, 'src/vs/workbench/browser/parts/activitybar/activitybarPart.ts',
         "import { GlobalCompositeBar } from '../globalCompositeBar.js';",
         "import { DhimantaiAppBar as GlobalCompositeBar } from '../dhimantaiAppBar.js';")
-
-
-def open_home_on_launch(root):
-    # A learner chooses course or project on Home. Launch never reopens the last
-    # project window; an explicit window.restoreWindows setting and the restart
-    # after an applied update still restore windows.
-    replace(root, 'src/vs/platform/windows/electron-main/windowsMainService.ts',
-        "restoreWindows = windowConfig?.restoreWindows || 'all'; // by default restore all windows",
-        "restoreWindows = windowConfig?.restoreWindows || 'none'; // dhimantAI: open Home")
-    replace(root, 'src/vs/platform/windows/electron-main/windowsMainService.ts',
-        "\t\t\t\trestoreWindows = 'all'; // by default restore all windows",
-        "\t\t\t\trestoreWindows = 'none'; // dhimantAI: open Home")
-    replace(root, 'src/vs/workbench/electron-browser/desktop.contribution.ts',
-        "\t\t\t\t'default': 'all',\n\t\t\t\t'scope': ConfigurationScope.APPLICATION,\n\t\t\t\t'description': localize('restoreWindows',",
-        "\t\t\t\t'default': 'none',\n\t\t\t\t'scope': ConfigurationScope.APPLICATION,\n\t\t\t\t'description': localize('restoreWindows',")
-    # Home is the Learning sidebar beside the Course Catalog, never the Explorer.
-    # A reload still restores whichever sidebar the learner had open.
-    replace(root, 'src/vs/workbench/browser/layout.ts',
-        "\t\t\t} else if (\n"
-        "\t\t\t\tviewContainerToRestore !== this.viewDescriptorService.getDefaultViewContainer(ViewContainerLocation.Sidebar)?.id &&\n"
-        "\t\t\t\tviewContainerToRestore !== this.viewDescriptorService.getDefaultViewContainer(ViewContainerLocation.AuxiliaryBar)?.id\n"
-        "\t\t\t) {\n"
-        "\t\t\t\t// fallback to default viewlet otherwise if the viewlet is not a default viewlet\n"
-        "\t\t\t\tviewContainerToRestore = this.viewDescriptorService.getDefaultViewContainer(ViewContainerLocation.Sidebar)?.id;\n",
-        "\t\t\t} else {\n"
-        f"\t\t\t\tviewContainerToRestore = '{LEARNING_SIDEBAR}'; // dhimantAI: open Home\n")
 
 
 def configure_course_copilot(root):

@@ -63,29 +63,6 @@ export async function liveVolume(bin:string, root:string, attempt:string) {
   return !await exists(current) && await exists(legacy) ? legacy : current;
 }
 
-interface StudioCheckCase {
-  stock:number; quantity:number; expected:number; status:number|null; stockAndLoans:string; passed:boolean
-}
-
-/** Keep the observation with the revision that produced it, including on later visits. */
-export function studioCheckFeedback(result:{setup?:string; passed:boolean; observations:StudioCheckCase[]}, revision:string) {
-  const version = 'Checked revision ' + revision.slice(0,9);
-  if (result.setup) return {report:version + ' · Could not check yet · ' + result.setup,
-    guidance:'Which setup step can you verify before trying the checkout again?'};
-  const rows = result.observations.map(r => (r.passed ? '✓ ' : '✗ ') + r.stock + ' available, borrow ' + r.quantity + ': '
-    + (r.status === null ? 'no response' : 'HTTP ' + r.status) + (r.passed ? '' : ' (expected ' + r.expected + ')')
-    + ' · stock, total loans, matching loans ' + r.stockAndLoans.split('\t').join(', '));
-  const failed = result.observations.find(r => !r.passed);
-  const report = [version + ' · ' + (result.passed && rows.length && !failed ? 'Passed' : 'Needs work'), ...rows].join('\n');
-  if (!failed && (!result.passed || !rows.length)) return {report, guidance:'The check did not verify the checkout cases. Review the project check output before trying again.'};
-  if (!failed) return {report, guidance:'All checkout cases passed for this revision. When the borrower requested exactly the stock on hand, what did the response and loan row show?'};
-  const observed = failed.status === null ? 'the app did not respond' : 'the app returned HTTP ' + failed.status;
-  const question = failed.status === failed.expected
-    ? 'The response matched. Which stored value differed from your prediction?'
-    : 'Where would you look first to explain that response?';
-  return {report, guidance:'With ' + failed.stock + ' available and ' + failed.quantity + ' requested, ' + observed + '. ' + question};
-}
-
 export class StudioRun {
   private readonly gateway = createServer();
   private closed = false;
@@ -93,7 +70,7 @@ export class StudioRun {
   private constructor(readonly bin:string,readonly container:string,readonly id:string,readonly kind:Kind,
       readonly revision:string, readonly attempt:string, readonly source:string, readonly image:string, readonly scratch?:string) {}
 
-  static async start(root:string,attempt:string,image:string,kind:Kind,revision:string, tempRoot:string, onStatus?:(text:string)=>void) {
+  static async start(root:string,attempt:string,image:string,kind:Kind,revision:string, tempRoot:string) {
     if (!/^[\da-f-]{36}$/.test(attempt) || !/^[\da-f]{40,64}$/.test(revision)
         || !/^(?:sha256:[\da-f]{64}|[a-z0-9./:_-]+@sha256:[\da-f]{64})$/.test(image)) throw new Error('Invalid published run identity.');
     const bin = await findPodman();
@@ -114,31 +91,19 @@ export class StudioRun {
       const volumes = ['-v',(kind==='live'?await liveVolume(bin,root,attempt):'desk-state-'+id)+':/studio-state:U'];
       const socket = 'desk-socket-'+id;
       // An explicit pull by digest is needed on a fresh learner installation.
-      if (!await run(bin,['image','exists',image]).then(()=>true,()=>false)) {
-        onStatus?.('Downloading the Equipment Desk runtime for this device. The first download can take several minutes.');
-        // Allow a cold installation to fetch the full runtime on a slower connection.
-        await run(bin,['pull',image],30*60_000);
-        onStatus?.('');
-      }
-      // Disposable runs copy only their frozen source across the desktop filesystem.
-      // Dependency installation and the build then stay on a private Linux volume.
-      const projectMount=kind==='live'?['-v',source+':/course:z']:
-        ['-v',source+':/studio-source:ro,z','-v','desk-source-'+id+':/course:U'];
-      const startCommand=kind==='live'?['python3',runner,'serve']:
-        ['sh','-ec','cp -a --no-preserve=ownership /studio-source/. /course/ && exec python3 /opt/build-studio/runtime.py serve'];
+      if (!await run(bin,['image','exists',image]).then(()=>true,()=>false)) await run(bin,['pull',image],300000);
       container = await run(bin,['run','-d','--name','desk-'+id,'--label','ai.dhimant.attempt='+attempt,'--label','ai.dhimant.studio-kind='+kind,
         ...(process.platform==='linux'?['--userns=keep-id']:[]),'--user',uid+':'+gid,'--security-opt','no-new-privileges','--pids-limit','512','--memory','1536m','--cpus','2',
-        '--publish','127.0.0.1::8000',...projectMount,'-v',socket+':/studio-socket:z,U',...volumes,
-        '-e','STUDIO_RUN='+id,'-e','STUDIO_KIND='+kind,'-e','STUDIO_REVISION='+revision,image,...startCommand],60000);
+        '--publish','127.0.0.1::8000','-v',source+':/course:z','-v',socket+':/studio-socket:z,U',...volumes,
+        '-e','STUDIO_RUN='+id,'-e','STUDIO_KIND='+kind,'-e','STUDIO_REVISION='+revision,image,'python3',runner,'serve'],60000);
       const studio = new StudioRun(bin,container,id,kind,revision,attempt,source,image,scratch);
       const binding = await run(bin,['port',container,'8000/tcp']);
       const port = Number(/^127\.0\.0\.1:(\d+)$/.exec(binding)?.[1]);
       if (!port) throw new Error('Podman did not publish the learner app on loopback.');
       let ready = false;
-      const deadline=Date.now()+180000;
-      for (let i=0;i<360 && Date.now()<deadline;i++) {
+      for (let i=0;i<120;i++) {
         const response = await fetch('http://127.0.0.1:'+port+'/_studio/ready',{headers:{'X-Studio-Run':id},signal:AbortSignal.timeout(800)}).catch(()=>undefined);
-        if (response?.ok && response.headers.get('X-Studio-Run')===id) { ready=true; break; }
+        if (response?.headers.get('X-Studio-Run')===id) { ready=true; break; }
         if (i%8===0 && (await run(bin,['inspect','--format','{{.State.Running}}',container]))!=='true')
           throw new Error('Equipment Desk could not start. '+(await run(bin,['logs','--tail','4',container])).slice(-500));
         await new Promise(resolve=>setTimeout(resolve,350));
@@ -147,9 +112,7 @@ export class StudioRun {
       await studio.listen(port);
       return studio;
     } catch(error) {
-      // Remove the named run even if the launch command timed out before returning its ID.
-      await run(bin,['rm','--ignore','--time','2','-f',container??'desk-'+id],60000);
-      if (kind!=='live') await run(bin,['volume','rm','desk-source-'+id]).catch(()=>undefined);
+      if(container) await run(bin,['rm','-f',container]).catch(()=>undefined);
       await run(bin,['volume','rm','desk-socket-'+id]).catch(()=>undefined);
       if (kind!=='live') await run(bin,['volume','rm','desk-state-'+id]).catch(()=>undefined);
       if(scratch) await rm(scratch,{recursive:true,force:true});
@@ -206,7 +169,12 @@ export class StudioRun {
   async check(harness:string){
     if(this.kind!=='check')throw new Error('Use a disposable project check.');
     const result=JSON.parse(await run(this.bin,['exec','--workdir','/opt/build-studio',this.container,'python3','-c',harness]));
-    return studioCheckFeedback(result, this.revision);
+    if(typeof result.setup==='string')return 'Could not check yet · '+result.setup+' · '+this.revision.slice(0,9);
+    type Case={stock:number;quantity:number;expected:number;status:number|null;stockAndLoans:string;passed:boolean};
+    const rows=(result.observations as Case[]).map(r=>(r.passed?'✓ ':'✗ ')+r.stock+' available, borrow '+r.quantity+': '
+      +(r.status===null?'no response':'HTTP '+r.status)
+      +(r.passed?'':' (expected '+r.expected+')')+' · stock, total loans, matching loans '+r.stockAndLoans.split('\t').join(', '));
+    return (result.passed?'Passed':'Needs work')+' · '+rows.join(' / ')+' · '+this.revision.slice(0,9);
   }
   async inventory():Promise<Map<string,number>> {
     const rows: [string,string][]=JSON.parse(await run(this.bin,['exec',this.container,'python3',runner,'inventory']));
@@ -227,10 +195,11 @@ export class StudioRun {
     if(this.closed) return;
     this.closed=true;
     this.gateway.close(); this.gateway.closeAllConnections();
-    await run(this.bin,['rm','--ignore','--time','2','-f',this.container],60000);
-    if(this.kind!=='live')await run(this.bin,['volume','rm','desk-source-'+this.id]);
-    await run(this.bin,['volume','rm','desk-socket-'+this.id]).catch(()=>undefined);
-    if (this.kind!=='live') await run(this.bin,['volume','rm','desk-state-'+this.id]).catch(()=>undefined);
-    if(this.scratch) await rm(this.scratch,{recursive:true,force:true});
+    try { await run(this.bin,['rm','--time','2','-f',this.container],30000); }
+    finally {
+      await run(this.bin,['volume','rm','desk-socket-'+this.id]).catch(()=>undefined);
+      if (this.kind!=='live') await run(this.bin,['volume','rm','desk-state-'+this.id]).catch(()=>undefined);
+      if(this.scratch) await rm(this.scratch,{recursive:true,force:true});
+    }
   }
 }

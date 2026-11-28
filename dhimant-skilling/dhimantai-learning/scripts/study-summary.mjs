@@ -23,7 +23,7 @@ for (const file of files) {
     const s = p.solved;
     console.log('  ' + p.title.slice(0, 30).padEnd(31) + (s ? 'yes' : 'no ').padEnd(9) + minutes(s?.secondsToSolve).padStart(4)
       + String(s ? s.helpBeforeSolve : p.ladder.question + p.ladder.hint + p.ladder.where + p.ladder.example + p.otherAsks).padStart(7)
-      + String(s ? s.highestLevel : '—').padStart(14) + (s?.helpStatus === 'unknown' ? '  unspecified' : s?.independent ? '  yes' : '  no'));
+      + String(s ? s.highestLevel : '—').padStart(14) + (s?.independent ? '  yes' : '  no'));
     all.push(p);
   }
   // Primary measure: the last scored problem is solved without help, faster than the first.

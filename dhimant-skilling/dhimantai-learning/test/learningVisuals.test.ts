@@ -4,10 +4,12 @@ import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { JSDOM } from 'jsdom';
+import { buildSync } from 'esbuild';
 import { emptyNotebook, importNotebook, serializeNotebook } from '../src/tutorNotebook';
 import { chapterId, lessonPicker, selectLesson } from './lessonPicker';
 
-const visualBundle = readFileSync(resolve(__dirname, 'fixtures/board.js'), 'utf8');
+const visualBundle = buildSync({stdin:{contents:"export * from './webview/visual'; export * from './webview/markdown'; export * from './webview/diagram';", resolveDir:resolve(__dirname,'../..')},
+  bundle:true, write:false, format:'iife', globalName:'Visual', loader:{'.woff2':'dataurl','.woff':'dataurl','.ttf':'dataurl'}}).outputFiles[0].text;
 
 test('Markdown previews retain readable content and literal code without formatting syntax', () => {
   const dom = new JSDOM('<!doctype html>', {runScripts:'outside-only'});
@@ -165,23 +167,4 @@ test('Instructor receives textbook image packets beside explanations and restore
     feed.querySelector('img')!.dispatchEvent(new w.Event('error'));
     assert.match(feed.querySelector('.diagram-alternative')!.textContent!, /original figure shows/);
   } finally { w.close(); }
-});
-
-test('generated diagrams use the notebook width, while photos and tiny SVGs keep a sensible size', () => {
-  const dom = new JSDOM('<!doctype html><main></main>', {runScripts:'outside-only'});
-  try {
-    const w = dom.window; w.eval(visualBundle);
-    const main = w.document.querySelector('main')!;
-    const style = (svg: string) => { main.innerHTML = w.Visual.diagram(svg); return main.querySelector<HTMLImageElement>('img.board-diagram')!.style; };
-    const flow = style('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 480"><rect x="10" y="10" width="300" height="60"/><text x="20" y="40">Dockerfile</text></svg>');
-    assert.equal(flow.width, '100%');
-    assert.equal(flow.maxWidth, 'min(100%,664px)', 'a phone-width chart may double, not more');
-    assert.match(flow.maxHeight, /72vh/, 'a tall chart stays beside its explanation');
-    const wide = style('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360"><rect width="900" height="360" fill="#eef"/><text x="20" y="40">Build</text></svg>');
-    assert.equal(wide.maxWidth, 'min(100%,1040px)');
-    const icon = style('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10"/></svg>');
-    assert.equal(icon.maxWidth, 'min(100%,72px)');
-    main.innerHTML = w.Visual.imageMarkup('https://example.test/figure.png', 'Figure');
-    assert.match(main.querySelector('img')!.style.maxWidth, /720px/, 'textbook photos keep their existing size');
-  } finally { dom.window.close(); }
 });

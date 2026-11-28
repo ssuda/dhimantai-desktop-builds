@@ -12,7 +12,7 @@ INPUTS = ['.github/workflows/desktop-preview.yml', '.github/workflows/desktop-bu
           'dhimant-skilling/dhimantai-learning',
           'assets/epub_reader', 'agent/course_projects/data/book_companions.json',
           'agent/course_projects/data/erpnext_shift.json', 'agent/course_projects/data/inference_runtime.json',
-          'agent/course_projects/data/equipment_desk.json', 'agent/course_projects/data/lab_compute.json', 'content/courses/inference-engineering/labs/cluster.py',
+          'agent/course_projects/data/lab_compute.json', 'content/courses/inference-engineering/labs/cluster.py',
           'content/courses/build-an-llm-from-scratch/*.md',
           'assets/fonts/paper-sans.ttf', 'assets/fonts/paper-sans-bold.ttf', 'assets/fonts/PAPER_FONT_LICENSE.txt']
 
@@ -20,7 +20,7 @@ WEB_COURSE = 'content/courses/full-stack-web/'
 # Only export the inputs used to generate the starter bundles distributed to students.
 INPUTS.extend(WEB_COURSE + name for name in (
     'runtime.json', 'editor-extensions/*.vsix',
-    'build-studio/build_starters.py', 'build-studio/check.py', 'build-studio/check_checkout.py', 'equipment-desk/app/Http/Controllers/LoanController.php',
+    'build-studio/build_starters.py', 'build-studio/check.py', 'build-studio/entries.json',
     'build-studio/LoanController.php', 'build-studio/composer.json', 'build-studio/composer.lock',
     'build-studio/bootstrap.php', 'build-studio/jsconfig.json',
     'equipment-desk/.gitignore', 'equipment-desk/artisan', 'equipment-desk/bootstrap/providers.php',

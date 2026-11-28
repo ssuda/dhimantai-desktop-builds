@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import * as vscode from 'vscode';
 import type { Auth } from '../../src/auth';
-import { learningFrame, learningPanel } from './learningFrame';
+import { learningFrame } from './learningFrame';
 
 export async function run() {
   const {auth} = await vscode.extensions.getExtension<{auth:Auth}>('optficial.dhimantai-learning')!.activate();
@@ -30,31 +30,6 @@ export async function run() {
     await side.getByRole('button',{name:'src ›'}).click();
     await side.getByRole('button',{name:'lesson.py'}).click();
     await page.locator('.tab.active').filter({hasText:'lesson.py'}).waitFor();
-    await vscode.commands.executeCommand('notifications.clearAll');
-    for (const [key, title] of [['mine','My courses'], ['practice','Practice'], ['mine','My courses'], ['practice','Practice']]) {
-      const link = side.locator(`[data-key="${key}"]`);
-      await link.click();
-      const tab = page.getByRole('tab',{name:title,exact:true});
-      await page.locator('.tab.active').filter({hasText:title}).waitFor();
-      const view = await learningPanel(page, `body:has(header h1:text-is("${title}")) .cards .course-card[data-course="Python"]`);
-      await view.getByRole('heading',{name:title,exact:true}).waitFor();
-      assert.equal(await tab.count(),1);
-      assert.equal(await link.getAttribute('aria-current'),'page');
-      assert.ok(await side.getByRole('navigation',{name:'Learning destinations'}).isVisible());
-      assert.match(await view.locator('.course-card').innerText(),/1\/2 chapters taught/);
-      if (key === 'practice') {
-        for (const label of ['Practice by course','Saved practice notebooks','My certificates'])
-          assert.ok(await view.getByRole('heading',{name:label,exact:true}).isVisible());
-        await view.getByRole('button',{name:'Open practice',exact:true}).click();
-        await page.locator('.quick-input-widget').getByText('Index a Python list',{exact:true}).waitFor();
-        await page.keyboard.press('Escape');
-        assert.ok(await side.getByRole('navigation',{name:'Learning destinations'}).isVisible());
-      } else {
-        if (!await view.locator('details[open]').count()) await view.getByText('Outline',{exact:true}).click();
-        assert.match(await view.locator('details').innerText(),/Loops · Locked/);
-      }
-      await capture(key);
-    }
     await side.getByRole('button',{name:'My certificates'}).click();
     let grade = await learningFrame(page,'.certificate-library [data-action="courseRequirements"]');
     assert.match(await grade.locator('.activity-count').innerText(),/0 of 37/);

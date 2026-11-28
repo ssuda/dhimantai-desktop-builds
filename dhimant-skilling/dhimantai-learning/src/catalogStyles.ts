@@ -1,16 +1,4 @@
-/** Shared course colour treatments adapt to the active editor theme. */
-export const categoryCardStyles = `
-[data-category-card]{
-  --accent:oklch(65% .21 var(--hue,260));
-  --tint:color-mix(in oklab,var(--accent) 23%,var(--paper));
-  background:var(--tint);border-color:color-mix(in oklab,var(--accent) 52%,var(--paper));
-  border-block-start:4px solid var(--accent)
-}
-body.vscode-dark [data-category-card]{--accent:oklch(76% .18 var(--hue,260));--tint:color-mix(in oklab,oklch(58% .26 var(--hue,260)) 43%,var(--paper))}
-body:is(.vscode-high-contrast,.vscode-high-contrast-light) [data-category-card]{--accent:var(--vscode-contrastBorder);--tint:var(--paper)}
-`;
-
-/** Catalog surfaces inherit the host theme. */
+/** Catalog surfaces inherit the host theme. Track colours stay on labels and shortcuts. */
 export const catalogStyles = `
 *{box-sizing:border-box}
 body{
@@ -52,10 +40,6 @@ label{font-size:.92em}
 .home-feature,.home-other,.home-grid,.suggestions,#results{display:grid;gap:14px;min-width:0}
 .home-feature:has(.home-other){grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}
 .home-other{align-content:start}.home-feature{max-width:100%}
-.home-choices{display:grid;gap:14px;min-width:0;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr))}
-.home-choices+.home-other{margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr))}
-.home-choices .resume-card.first h3{font-size:clamp(22px,2.4vw,32px)}.home-choices .actions{margin-top:auto;padding-top:8px}
-.resume-card .dh-eyebrow{margin:0}
 .home-grid,.suggestions{grid-template-columns:repeat(auto-fill,minmax(min(100%,max(210px,calc((100% - 42px)/4))),1fr))}
 .resume-card,.home-tile,.course,.suggestions button{min-width:0;background:var(--paper);border:1px solid var(--line);border-radius:16px}
 .resume-card,.home-tile{display:flex;align-items:flex-start;flex-direction:column;gap:9px;padding:clamp(15px,2vw,24px)}
@@ -89,18 +73,7 @@ label{font-size:.92em}
 #active-filters{display:flex;flex-wrap:wrap;gap:6px}#active-filters:not(:empty){margin-bottom:14px}
 #active-filters button,.paths button{border-radius:99px;font-size:.88em}
 .paths button[aria-pressed=true]{background:var(--primary);color:var(--on-primary)}
-#results{gap:28px}
-.category-grid,#results.flat{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(min(100%,max(198px,calc((100% - 24px)/3))),1fr))}
-.result-group .track-tag{display:none}
-.result-group .shelf-heading{justify-content:flex-start}.group-count{color:var(--dh-muted)}
-.group-more{display:block;margin:12px auto 0}.sr-only,.chips input{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-.filter-options{min-width:0;border:0;padding:0;margin:0}.filter-options legend{font-size:.9em;font-weight:600;margin-bottom:6px}
-.filter-options label{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer}.filter-options input{width:auto;margin:0;accent-color:var(--primary)}
-.filter-options.chips label{position:relative;display:inline-flex;padding:0;margin:2px}.chips label span{border:1px solid var(--line);border-radius:99px;padding:5px 10px;background:var(--paper)}
-.chips input:checked+span{color:var(--on-primary);background:var(--primary);border-color:var(--primary);font-weight:600}
-.chips input:focus-visible+span{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}
-#catalog-explore>.chips{margin-bottom:18px}
-
+#results{grid-template-columns:repeat(auto-fill,minmax(min(100%,235px),1fr));align-items:stretch}
 .course{display:flex;flex-direction:column;padding:16px}
 .course .card-body{min-width:0}.course h3{margin:7px 0 5px}.course p{font-size:.94em}.course .summary{color:var(--dh-muted)}
 .course:not(:has(details[open])) .summary{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
@@ -203,7 +176,4 @@ body:is(.vscode-high-contrast,.vscode-high-contrast-light){
   color:var(--vscode-foreground);background:var(--paper);text-decoration:underline;text-underline-offset:4px
 }
 :is(.vscode-high-contrast,.vscode-high-contrast-light) :is(.resume-card.first,button,.view-link[aria-current=page]){border-color:var(--line)}
-${categoryCardStyles}
-.resume-card.first[data-category-card]{background:var(--tint);color:var(--vscode-foreground);border-color:var(--accent)}
-.offer[data-category-card] .offer-head{background:transparent}
 `;

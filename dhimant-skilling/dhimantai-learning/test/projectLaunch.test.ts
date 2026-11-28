@@ -10,7 +10,7 @@ import { CATALOG_PROJECTS } from '../src/catalogProjects';
 
 const extension = resolve(__dirname, '../..');
 
-async function launch(options: {choice?: string; existing?: boolean; failure?: 'create' | 'open'; cancelSetup?: boolean; target?: string; emptyWindow?: boolean}) {
+async function launch(options: {choice?: string; existing?: boolean; failure?: 'create' | 'open'; cancelSetup?: boolean; target?: string}) {
   const directory = await mkdtemp(join(tmpdir(), 'project-launch-'));
   const storage = join(directory, 'storage'), parent = join(directory, 'course');
   const id = options.target ?? 'course-agent';
@@ -30,7 +30,6 @@ async function launch(options: {choice?: string; existing?: boolean; failure?: '
     if (options.existing) await writeFile(sentinel, 'Keep my changes');
     const vscode = {
       Uri: {file: uri, joinPath: (base: any, ...parts: string[]) => uri(join(base.fsPath, ...parts))},
-      workspace: {workspaceFolders: options.emptyWindow ? undefined : [{uri: uri(directory)}]},
       commands: {
         registerCommand: (_name: string, callback: typeof command) => { command = callback; },
         executeCommand: async (name: string, target?: any, settings?: any) => {
@@ -85,16 +84,6 @@ test('new and existing projects explain the destination and honour both explicit
     assert.deepEqual(result.workspace.folders, [{name: result.title, path: result.destination}]);
     if (existing) assert.equal(result.preserved, 'Keep my changes');
   }
-});
-
-test('resuming from Home in an empty window opens the project in place; a new project still explains its folder', async () => {
-  const resumed = await launch({existing: true, emptyWindow: true});
-  assert.deepEqual(resumed.prompts, []);
-  assert.equal(JSON.stringify(resumed.opened.map(o => o.options)), JSON.stringify([{forceReuseWindow: true}]));
-  assert.equal(resumed.preserved, 'Keep my changes');
-  const created = await launch({emptyWindow: true, choice: 'Open in Current Window'});
-  assert.equal(created.prompts.length, 1);
-  assert.match(created.prompts[0][0], /project created/);
 });
 
 test('all available catalog cards use the named launch choice', async () => {

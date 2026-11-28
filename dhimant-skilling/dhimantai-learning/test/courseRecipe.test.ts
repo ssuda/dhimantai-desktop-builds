@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { courseDockerfile, courseDockerfileServices, courseRecipe, exerciseLanguages, courseRequirements, Recipe, recipeLanguage, programmingRecipe } from '../src/courseRecipe';
+import { courseDockerfile, courseDockerfileServices, courseRecipe, courseRequirements, Recipe, recipeLanguage, programmingRecipe } from '../src/courseRecipe';
 import {cellLanguages} from '../src/roomCode';
 
 const media = join(__dirname, '../../media/course');
@@ -107,14 +107,4 @@ test('older Node-only workspace Dockerfiles gain matching npm while preserving l
  assert.ok(updated.includes('npm-cli.js /usr/local/bin/npm'));
  assert.ok(updated.endsWith('# learner edit\nRUN echo custom\n'));
  assert.equal(courseDockerfileServices(updated,[]),updated);
-});
-
-test('Practice offers only the languages a course teaches, and every language for multi-language runtimes', () => {
-  const service = ['python', 'rust', 'c', 'cpp', 'java', 'javascript', 'typescript', 'go', 'sql', 'pglab'].map(id => ({id, name: id}));
-  const ids = (recipe: Recipe | undefined) => exerciseLanguages(service, recipe).map(l => l.id);
-  assert.deepEqual(ids(courseRecipe(profiles, 'Build an LLM from Scratch')), ['python']);
-  assert.deepEqual(ids(courseRecipe(profiles, 'C Programming')), ['c']);
-  assert.deepEqual(ids(programmingRecipe()).sort(), service.map(l => l.id).sort(), 'the shared programming container teaches them all');
-  assert.deepEqual(ids({language: 'bash'}), service.map(l => l.id), 'a shell course the generator cannot run keeps the full list');
-  assert.deepEqual(ids(undefined), service.map(l => l.id), 'no course configuration keeps the full list');
 });

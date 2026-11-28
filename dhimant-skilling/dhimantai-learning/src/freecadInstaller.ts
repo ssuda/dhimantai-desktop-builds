@@ -1,19 +1,18 @@
 import {execFile} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {constants, createWriteStream} from 'node:fs';
-import {access, chmod, mkdir, mkdtemp, readdir, realpath, rename, rm, stat} from 'node:fs/promises';
+import {access, chmod, mkdir, mkdtemp, readdir, rename, rm, stat} from 'node:fs/promises';
 import {homedir} from 'node:os';
-import {basename, delimiter, join} from 'node:path';
+import {delimiter, join} from 'node:path';
 import {Readable, Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {promisify} from 'node:util';
 
 const run = promisify(execFile);
-// The macOS lesson ships a Cocoa platform plugin built for this release's Qt.
-const version = process.platform === 'darwin' ? '26.3rc2' : '1.1.4';
+const version = '1.1.4';
 const packages: Record<string, [string, string]> = {
-  'darwin-arm64':['macOS11-arm64.dmg','47bca77731545f30a9899c139fec8019f763c18f34eb82dac62894e3164cffd7'],
-  'darwin-x64':['macOS10-x86_64.dmg','da04468312257857d55fb524ab7ab74f53004ebc6c9daf25a950f451d012f6a5'],
+  'darwin-arm64':['macOS-arm64-py311.dmg','071343b4abb70492b75c973f41eaf1d2528f9b9c7ea018d22a4f46ae14d27ac0'],
+  'darwin-x64':['macOS-x86_64-py311.dmg','e173d0dcf47a5166b59cbb33adccf54cd751eb9ceaa2c86486230d0d079648c1'],
   'linux-arm64':['Linux-aarch64-py311.AppImage','675d1a4295b2183e0e1d816a4b5557dcb63aeced4e60aaa28d6c3686f4c71dc9'],
   'linux-x64':['Linux-x86_64-py311.AppImage','f6dc6ba676e5ac96a565ebc8d657232f94c6158e85b4352141bd1a46f6b43434'],
   'win32-x64':['Windows-x86_64-py311.7z','4828741fc91ee37fafcdb97a1abacb18b04ba451ac4372d9ff7a7349b36f4d6d'],
@@ -25,29 +24,12 @@ async function executable(file: string) {
 async function names(folder: string) {
   return readdir(folder).catch(() => [] as string[]);
 }
-export function compatibleMacQt(version?: string): boolean {
-  return version === '6.11.2';
-}
-
-export async function macFreeCADBundle(command: string): Promise<string|undefined> {
-  const path = await realpath(command).catch(() => '');
-  const match = path.match(/^(.+\.app)\/Contents\/(?:MacOS|Resources\/bin)\/freecad$/i);
-  if (!match) return;
-  const bundle = match[1];
-  const core = await realpath(join(bundle, 'Contents', 'Resources', 'lib', 'libQt6Core.6.dylib')).catch(() => '');
-  const qt = /^libQt6Core\.(\d+\.\d+\.\d+)\.dylib$/.exec(basename(core));
-  // Qt platform plugins use private APIs and must match the bundled Qt.
-  if (compatibleMacQt(qt?.[1])) return bundle;
-}
-async function usable(file: string, platform: NodeJS.Platform) {
-  return await executable(file) && (platform !== 'darwin' || !!await macFreeCADBundle(file));
-}
 async function inFolder(folder: string, platform: NodeJS.Platform): Promise<string | undefined> {
   const entries=(await names(folder)).filter(n=>/^freecad/i.test(n)).sort().reverse();
   for (const prefix of [folder,...entries.map(n=>join(folder,n))]) {
     const file = platform==='darwin' ? join(prefix,'Contents','MacOS','FreeCAD')
       : platform==='win32' ? join(prefix,'bin','FreeCAD.exe') : join(prefix,'AppRun');
-    if(await usable(file,platform))return file;
+    if(await executable(file))return file;
   }
 }
 type Installation={command:string;flatpak?:string};
@@ -58,7 +40,7 @@ export async function installedFreeCAD(root: string): Promise<Installation|undef
   for(const directory of (process.env.PATH || '').split(delimiter).filter(Boolean)) {
     for(const name of platform==='win32'?['FreeCAD.exe']:['freecad','FreeCAD']) {
       const file=join(directory,name);
-      if(await usable(file,platform))return {command:file};
+      if(await executable(file))return {command:file};
     }
   }
   const folders = platform==='darwin'?['/Applications',join(homedir(),'Applications')]

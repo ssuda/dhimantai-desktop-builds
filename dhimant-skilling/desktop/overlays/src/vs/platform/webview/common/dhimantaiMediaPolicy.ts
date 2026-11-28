@@ -21,11 +21,7 @@ export class MediaCapturePolicy {
 		const origin = mediaOrigin(url);
 		if (!origin || extension !== learningExtension) { return; }
 		const hosts = this.grants.get(owner) ?? new Map<string, Grant>();
-		if (enabled) {
-			if (hosts.get(origin)?.frame !== frame) {
-				hosts.set(origin, { frame, allowed: new Set(), pending: false });
-			}
-		}
+		if (enabled) { hosts.set(origin, { frame, allowed: new Set(), pending: false }); }
 		else if (hosts.get(origin)?.frame === frame) { hosts.delete(origin); }
 		if (hosts.size) { this.grants.set(owner, hosts); }
 		else { this.grants.delete(owner); }

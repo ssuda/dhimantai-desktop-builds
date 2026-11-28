@@ -1,4 +1,3 @@
-import type {InstructorTerminal} from './notebookTerminal';
 import type {EditorTool} from './courseEditorTools';
 import {createHash} from 'node:crypto';
 import {courseRecipe, COURSE_LANGUAGES, Recipe} from './courseRecipe';
@@ -16,7 +15,6 @@ export interface CourseConfiguration {
   scenarios:{version:1;scenarios:{id:string;setup:string;setup_sha256:string}[]};
   ports:{port:number;protocol:'tcp'|'udp'}[];
   editor_extensions?:EditorTool[];
-  instructor_terminal?:InstructorTerminal;
   notebooks?:{id:string;name:string}[];
 }
 export interface CourseRuntimeResponse {runtime:RuntimeRelease|null;configuration:CourseConfiguration}
@@ -28,10 +26,6 @@ export function courseConfiguration(value:unknown,title:string):CourseConfigurat
       ||!c.scenarios||c.scenarios.version!==1||!Array.isArray(c.scenarios.scenarios)
       ||![null,'gpu','tpu'].includes(c.preferred_accelerator)||!Array.isArray(c.ports)||c.ports.length>8)
     throw new Error('The service returned invalid course configuration. Republish the course configuration.');
-  const terminal = c.instructor_terminal;
-  if (terminal !== undefined && (!terminal || !['zsh','postgres','db2'].includes(terminal.kind)
-      || typeof terminal.auto_open !== 'boolean' || terminal.kind === 'postgres' && c.recipe.language !== 'pglab'))
-    throw new Error('Invalid Instructor terminal.');
   courseRecipe({[title.toLowerCase()]:c.recipe},title);
   if(!COURSE_LANGUAGES.includes(c.recipe.language)||[...(c.recipe.languages??[])].some(l=>!COURSE_LANGUAGES.includes(l)))throw new Error('Invalid course language.');
   for(const key of ['services','languages','requirements','imports','data'] as const) {

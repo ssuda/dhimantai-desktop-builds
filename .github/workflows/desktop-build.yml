@@ -77,11 +77,13 @@ jobs:
           npm ci
           npm run compile
           node --test out/test/desktopRoom.test.js ../desktop/tests/*.test.mjs
-          npx --yes @vscode/vsce@3.2.1 package --no-dependencies --allow-missing-repository --baseContentUrl https://bitbucket.org/optficial/dhimantai/src/codex/question-bank-ux/dhimant-skilling/dhimantai-learning/ --out desktop.vsix
+          curl --fail --silent --show-error --retry 3 --max-time 600 \
+            https://app-staging.dhimant.ai/downloads/dhimantai-learning-0.39.107.vsix -o desktop.vsix
+          python -c "import hashlib; from pathlib import Path; assert hashlib.sha256(Path('desktop.vsix').read_bytes()).hexdigest() == '8e336a4ab42d10c80f03462deb597c8818b4b63e22c4f9743e72f75ab350cac1'"
       - name: Prepare private client configuration
         env:
           CLIENT_ENVIRONMENT: ${{ inputs.environment }}
-          FLUTTER_CONFIG: ${{ secrets[inputs.environment == 'production' && 'FLUTTER_PRODUCTION_ENV_JSON' || 'FLUTTER_STAGING_ENV_JSON'] }}
+          FLUTTER_CONFIG: ${{ inputs.environment == 'staging' && secrets.FLUTTER_STAGING_ENV_JSON || secrets.FLUTTER_PRODUCTION_ENV_JSON }}
         run: |
           python - <<'PY'
           import json, os
@@ -115,7 +117,6 @@ jobs:
         run: python dhimant-skilling/desktop/macos_credentials.py prepare
       - name: Package and verify native installer
         env:
-          GITHUB_TOKEN: ${{ github.token }}
           CLIENT_ENVIRONMENT: ${{ inputs.environment }}
           TARGET_ARCH: ${{ inputs.arch }}
           MACOS_SIGNING: ${{ inputs.macos_signing || 'developer-id' }}

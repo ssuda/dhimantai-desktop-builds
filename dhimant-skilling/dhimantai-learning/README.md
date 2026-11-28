@@ -177,7 +177,7 @@ The course control opens VS Code's searchable picker. **Back to book** keeps the
 reading position. Summary sections can be folded, and quizzes show one question
 at a time with Previous/Next, answer feedback, a practice score, review, and retry.
 Study starts with a two-line composer; use its expand control for a longer draft.
-Press **Enter** to send or **Shift+Enter** to insert a new line. The arrow becomes a Stop button during a response.
+Enter adds a line; only the send button sends. The arrow becomes a Stop button during a response.
 Use **+** to attach photos or PDFs; the selected files accompany the question.
 Written responses clear the field and attachments; failed requests
 keep the draft. Unfinished drafts stay with their Study action until the chapter
@@ -233,7 +233,7 @@ Use the notebook's single **Runtime** dropdown for **Course container**,
 code, feedback, and questions stay in the notebook; a separate assistant panel does not
 open automatically. Use the separate **Ask Instructor** / **Answer Instructor** message bar below the learning
 notebook. The input starts at two lines and can be expanded or collapsed without losing the draft.
-Press **Enter** to send or **Shift+Enter** to insert a new line. The message bar scrolls with the
+Enter adds a new line; only the send button sends. The message bar scrolls with the
 page and has no Run action or cell number. Native Jupyter notebooks still use their
 Ask Instructor popup; they do not yet have this message bar. The **⋯** menu holds save, open, restart, and observation options.
 Return to Course Catalog with the **dhimantAI** status-bar entry for courses,
@@ -414,12 +414,8 @@ content updates an input file; rerunning unchanged input preserves edits made by
 Restarting clears variables and databases while retaining files on this computer.
 
 Output streams while a cell runs. **Stop** interrupts execution. With **Accept input
-while running** enabled, type directly at the prompt in the cell. Press **Enter**
-to send a line or **Ctrl+D** on an empty line to end input. Turn the setting off
-when a program should read supplied stdin through EOF. In the PostgreSQL DBA Instructor,
-**＋ Code** places the connected `postgres=#` prompt in the new cell. Type SQL or backslash
-commands there. The notebook keeps the same database session across cells. Arrow keys recall queries,
-Tab completes SQL, Ctrl+C cancels the current input or query, and `\q` exits. Native notebook
+while running** enabled, use **Send input** or **End input** below the running cell;
+turn it off when a program should read supplied stdin through EOF. Native notebook
 cells offer **Input** while running and prompt for Python `input()`. Python displays
 support tables, HTML and inline plots. Embedded HTML is sandboxed without scripts.
 
@@ -703,9 +699,7 @@ These content checks need the matching API update and its configured
 Generated reference programs are temporary; learner runs stay on the selected
 course container. Failed learner runs are labelled **Run failed**.
 
-## Course projects with Project Mentor
-
-In a project-led course, follow the published lessons and resume where you left off. In your own repository, open a file and ask about what you want to build or fix. In an assignment, work from its brief and submit according to the course requirements.
+## Course projects with Coach
 
 At the final milestone, **Submit Project** runs the full checker in your course container
 and saves the result, source digest, commit details and assistance on this computer.
@@ -730,10 +724,11 @@ Codebase** course still offers its regular lessons.
 **dhimantAI: Start a Course Project → Build a Course Research Agent** creates an
 independent Python repository. Ten milestones guide the learner through search,
 document reading, validated tool dispatch, the agent loop, quotation evidence,
-failure handling, testing, live-model comparison and handoff. Project Mentor opens beside the source. Choose **Open Project Mentor** to resume.
+failure handling, testing, live-model comparison and handoff. The existing Coach
+opens in the right panel; **Open Project Coach** resumes it when needed.
 
 Each step links relevant files and runs public checks in the managed course container.
-When a check fails, the mentor shows the first captured Python cause and affected project
+When a check fails, Coach shows the first captured Python cause and affected project
 file/line above **Show check output**. Long output keeps a bounded traceback excerpt
 and the ending test result. Summaries work with AI assistance off; unrecognized errors
 remain available in the output. Results from changed files stay labelled **Earlier files**.
@@ -767,12 +762,12 @@ Git and Python 3.10+. Use `python -m unittest discover -s tests -t .` there to r
 The same commands apply on Windows, macOS and Linux. The repository is built reproducibly by `scripts/capstone/build_shelf.py` into
 `media/capstone/shelf.bundle`; a unit test fails if the two drift apart.
 
-The seven Shelf milestones follow the capstone workflow, including Git,
+The seven Coach milestones follow the capstone workflow, including Git,
 regression tests, debugging and the PR note. Existing Shelf clones open without a
-migration or changes to learner files. Project Mentor shares bounded public excerpts,
+migration or changes to learner files. Coach shares bounded public excerpts,
 learner-added Python tests, current check/checkpoint state and a visible Git summary.
 Git changes invalidate earlier capstone check evidence. Run checks and `check.py`
-in the managed course container from Project Mentor. This support
+in the managed course container through the existing Coach controls. This support
 requires the matching backend schema accepting the `shelf` project and Git context.
 
 ## Notebook workflow

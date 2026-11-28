@@ -149,8 +149,6 @@ class NotarizationTests(unittest.TestCase):
             attach = next(i for i, c in enumerate(calls) if c[:2] == ['hdiutil', 'attach'])
             self.assertTrue(any(c[:4] == ['spctl', '--assess', '--type', 'execute'] for c in calls[attach + 1:]))
             self.assertEqual(calls[-1][:2], ['hdiutil', 'detach'])
-            requirements = [c[c.index('-R') + 1] for c in calls if '-R' in c]
-            self.assertTrue(requirements and all(r.startswith('=anchor apple generic') for r in requirements))
             self.assertLess(next(i for i, c in enumerate(calls) if c[:3] == ['xcrun', 'stapler', 'staple']),
                             next(i for i, c in enumerate(calls) if c[:2] == ['hdiutil', 'create']))
 

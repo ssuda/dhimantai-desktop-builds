@@ -124,5 +124,5 @@ export function projectOtherHelp(progress: ProjectProgress, current: ProjectChec
 export function smallerProjectStep(step: ProjectStep) {
   const file = step.nextAction?.file ?? step.files[0], anchor = step.anchors?.[file];
   const action = step.nextAction?.task ?? 'Choose one input and follow only its next call. Write what goes in and what comes back.';
-  return `Try one smaller step\n\nOpen \`${file}\`${anchor ? ` and find \`${anchor.trim()}\`` : ''}. ${action}\n\nCompare your result with the expected outcome: ${step.expected}\n\nIf you need more help, tell the mentor what you expected, what you observed and where the trace stops.`;
+  return `Try one smaller step\n\nOpen \`${file}\`${anchor ? ` and find \`${anchor.trim()}\`` : ''}. ${action}\n\nCompare your result with the expected outcome: ${step.expected}\n\nIf you need more help, tell Coach what you expected, what you observed and where the trace stops.`;
 }

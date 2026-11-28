@@ -1,11 +1,10 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { emptyNotebook, exportNotebook, importNotebook, serializeNotebook, NOTEBOOK_FILE_LIMIT, readNotebook } from '../src/tutorNotebook';
 import { NotebookConflictError, TutorNotebookStore } from '../src/tutorNotebookStore';
-import { missingTerminal, terminalClosedMessage } from '../src/notebookTerminal';
 import { codeLanguages } from '../src/roomCode';
 import { TutorPython } from '../src/tutorPython';
 import { practiceDocument, savedPractice } from '../src/practiceNotebook';
@@ -13,22 +12,6 @@ import { practiceDocument, savedPractice } from '../src/practiceNotebook';
 test('notebook import diagnoses corrupt, unsupported and oversized files and round-trips saved work', () => {
   const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
   const book = emptyNotebook(); book.title = 'నా నోట్'; book.cells.push({id:'note-1',kind:'note',text:'Private notes'});
-  book.cells.push({id:'postgres-console',kind:'terminal',text:''});
-  book.cells.push({id:'shell-cell',kind:'terminal',text:'',packet:{language:'zsh'}});
-  assert.equal((exportNotebook(book).cells[2] as {source:string}).source,'Zsh terminal');
-  const terminal = exportNotebook(book).cells[1] as {cell_type:string;source:string};
-  assert.equal(terminal.cell_type,'markdown');
-  assert.equal(terminal.source,'PostgreSQL (psql) terminal');
-  book.cells.push({id:'bash-terminal',kind:'terminal',text:'',packet:{language:'bash',terminalTypeSelected:true}});
-  assert.equal((exportNotebook(book).cells[3] as {source:string}).source,'Bash terminal');
-  book.cells.push({id:'db2-console',kind:'terminal',text:'',packet:{language:'db2'}});
-  assert.equal((exportNotebook(book).cells[4] as {source:string}).source,'IBM Db2 terminal');
-  const legacy=readNotebook({...book,cells:[{id:'bash-console',kind:'terminal',text:'',packet:{language:'bash'}},
-    {id:'script',kind:'code',text:'set -e',packet:{language:'bash'}}]});
-  assert.deepEqual(legacy.cells.map(c=>[c.id,c.packet?.language]),[['bash-console','zsh'],['script','bash']]);
-  const switched = readNotebook({...book,cells:[{id:'zsh-console',kind:'terminal',text:'',packet:{language:'bash',terminalTypeSelected:true}}]});
-  assert.equal(switched.cells[0].packet?.language,'bash');
-  assert.equal(missingTerminal(switched.cells,'zsh'),undefined);
   assert.deepEqual(importNotebook(new TextEncoder().encode(serializeNotebook(book))), book);
   assert.throws(() => importNotebook(new TextEncoder().encode('{broken')), /corrupted.*JSON/);
   assert.throws(() => importNotebook(new Uint8Array([255])), /UTF-8/);
@@ -160,43 +143,5 @@ test('two windows never silently overwrite each other: a stale save is refused u
     assert.equal((await second.load()).cells[0].text, 'Window one');
     const fresh = new TutorNotebookStore(directory, 'staging', 'alice\0tutor:lesson');
     await assert.rejects(fresh.save(theirs), NotebookConflictError, 'a store that never read an existing file cannot overwrite it');
-  } finally { await rm(directory, {recursive:true, force:true}); }
-});
-
-test('a shell the learner exits is a closed session, not a missing program',()=>{
-  // `exit` after a mistyped command returns 127, the same status as a missing program.
-  assert.equal(terminalClosedMessage('Bash',127,'',true),undefined);
-  assert.equal(terminalClosedMessage('Bash',1,'',true),undefined);
-  assert.equal(terminalClosedMessage('Rust (Evcxr)',127,'',false),'Rust (Evcxr) is unavailable in this course runtime.');
-  assert.equal(terminalClosedMessage('PostgreSQL (psql)',2,'connection refused',false),'connection refused');
-  assert.equal(terminalClosedMessage('MySQL',1,'',false),'MySQL exited with status 1.');
-  assert.equal(terminalClosedMessage('Bash',0,'',false),undefined);
-  assert.equal(terminalClosedMessage('Bash',null,'',false),undefined);
-});
-
-test('chapter restarts archive edits and resume only the active edition', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'chapter-restart-'));
-  try {
-    const store = new TutorNotebookStore(directory, 'staging', 'student\0tutor:linux');
-    const book = await store.load();
-    book.lessonId = 'linux';
-    book.cells.push({id:'note', kind:'note', text:'my first notes'});
-    book.textDraft = 'unsent';
-    const original = {revision:'987654321012345678', attempt:''};
-    const {book:legacy, archive} = await store.openEdition(book, original);
-    assert.equal(archive, undefined);
-    assert.deepEqual(legacy.cells, book.cells);
-    const revised = {revision:'987654321012345679', attempt:'64b5c17f-9810-486b-b7aa-82dc97e50f78'};
-    const fresh = await store.openEdition(legacy, revised);
-    assert.equal(fresh.book.cells.length, 0);
-    assert.equal(fresh.book.textDraft, undefined);
-    assert.deepEqual(importNotebook(await readFile(fresh.archive!)), legacy);
-    fresh.book.cells.push({id:'new', kind:'note', text:'new notes'});
-    await store.save(fresh.book);
-    const reopened = await store.openEdition(await store.load(), revised);
-    assert.deepEqual(reopened, {book:fresh.book});
-    const manual = await store.openEdition(reopened.book, {...revised, attempt:'ed5ed4f7-2958-4949-b59e-c30d39b73c6d'});
-    assert.deepEqual(manual.book.cells, []);
-    assert.deepEqual(importNotebook(await readFile(manual.archive!)), fresh.book);
   } finally { await rm(directory, {recursive:true, force:true}); }
 });

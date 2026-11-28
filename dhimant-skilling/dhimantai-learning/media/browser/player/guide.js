@@ -22,13 +22,8 @@
     const app = window.dhimantaiApp;
     if (!app?.ready()) return setTimeout(boot,500);
     const user = app.user(), match = /^learner-([a-f0-9]{20})@training\.invalid$/.exec(user);
-    let connection;
-    try { connection=JSON.parse(sessionStorage.getItem('dhimantai-erpnext-instructor')||'null'); } catch {}
-    const hosted = typeof window.dhimantaiTrainingRequest === 'function' && connection?.login === user &&
-      /^[a-f0-9]{20}$/.test(connection.learner);
     const requested=new URLSearchParams(location.search).get('dhimantai-user') || sessionStorage.getItem('dhimantai-erpnext-learner');
-    if(!hosted && connection?.login)return;
-    if(!hosted && requested && /^[a-f0-9]{20}$/.test(requested)) {
+    if(requested && /^[a-f0-9]{20}$/.test(requested)) {
       if(user!==`learner-${requested}@training.invalid`) {
         // The launch page (or the desktop) signs the requested learner in again.
         if(await app.logout())location.replace(app.launchPath || '/');
@@ -36,14 +31,16 @@
       }
       const clean=new URL(location.href);clean.searchParams.delete('dhimantai-user');history.replaceState(null,'',clean);
     }
-    if ((!hosted && !match) || document.getElementById('dhimantai-guide')) return;
-    const connected=hosted || connection && /^http:\/\/127\.0\.0\.1:\d+$/.test(connection.origin)
+    if (!match || document.getElementById('dhimantai-guide')) return;
+    let connection;
+    try { connection=JSON.parse(sessionStorage.getItem('dhimantai-erpnext-instructor')||'null'); } catch {}
+    const connected=connection && /^http:\/\/127\.0\.0\.1:\d+$/.test(connection.origin)
       && /^[a-f0-9]{64}$/.test(connection.token) && connection.learner===match[1];
-    const response = hosted ? await window.dhimantaiTrainingRequest('/course') : connected
+    const response = connected
       ? await fetch(connection.origin+'/course',{headers:{Authorization:'Bearer '+connection.token},cache:'no-store',signal:AbortSignal.timeout(15000)})
       : app.courseAsset ? await fetch(app.courseAsset) : {ok:false};
     if (!response.ok) return;
-    const template = await response.text(), tag = (hosted ? connection.learner : match[1]).slice(0,10);
+    const template = await response.text(), tag = match[1].slice(0,10);
     const course = JSON.parse(template.replaceAll('{{tag}}',tag).replaceAll('{{company}}','Training ' + tag));
     // Business shifts run without any injected UI. The existing Instructor owns their brief and controls.
     if(course.shift) {
@@ -66,8 +63,7 @@
     const firstOpen = course.lessons.findIndex(l => !finished(l.id));
     // Match the Instructor's resume target; a remembered completed task must not
     // pull it back to an earlier chapter when the first browser observation arrives.
-    const chosen = course.lessons.findIndex(lesson => lesson.id === course.initialTask);
-    let index = chosen >= 0 ? chosen : connected && firstOpen >= 0 ? firstOpen
+    let index = connected && firstOpen >= 0 ? firstOpen
       : Number.isInteger(state.lesson) ? Math.max(0,Math.min(course.lessons.length - 1,state.lesson)) : Math.max(0,firstOpen);
     let revision = 0, checking = false, filling = false, advancing = false, focusStep, lastSignature = '';
     const status = {textContent:''};
@@ -640,29 +636,7 @@
       } catch {return 'Chapter opened. Choose Open task in the browser to retry opening its form.';}
       finally {advancing=false;render();}
     }
-    async function demonstrate(guard) {
-      const lesson=current(), open=app.current();
-      if (level()==='none' || lesson.readOnly || missing().length || open?.dirty)
-        throw new Error('The current task or unsaved form cannot be demonstrated.');
-      guard();
-      if (!form()) {
-        if (lesson.source) {
-          const source=lessonOf(lesson.source.task);
-          await app.openRecord(formOf(source),state.done[source.id].record);
-        } else await app.openNew(formOf(lesson));
-      }
-      guard();
-      if (onSource()) await app.create(lesson.source.action);
-      for (let attempt=0;attempt<24 && !form()?.isNew;attempt++) {
-        guard();
-        await new Promise(resolve=>setTimeout(resolve,100));
-      }
-      guard();
-      if (!form()?.isNew) throw new Error('The training draft did not open.');
-      state.assisted[lesson.id]=true;save();setPanelClosed(false);render();highlight(true);
-      return `I opened the ${formOf(lesson)} draft. Start with ${label(lesson.steps[step()].field)}. Review the situation, enter your decisions, and save the record yourself.`;
-    }
-    window.dhimantaiErpGuide={user,tag,course:course.id,current,step,complete,root:shadow,status:()=>status.textContent,reportStatus:setStatus,live:$('live'),question,answerQuestion,continueTask,openTask,demonstrate};
+    window.dhimantaiErpGuide={user,tag,course:course.id,current,step,complete,root:shadow,status:()=>status.textContent,reportStatus:setStatus,live:$('live'),question,answerQuestion,continueTask,openTask};
     window.addEventListener('scroll',()=>highlight(),true);window.addEventListener('resize',()=>{highlight();reserve(true);});
     // Re-read the form after typing, SPA navigation and asynchronous rendering; never retain a stale element.
     setInterval(()=>{

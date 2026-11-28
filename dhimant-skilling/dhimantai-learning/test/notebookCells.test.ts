@@ -134,15 +134,6 @@ test('live Python and program input, rich display, interruption and subsequent e
     const node=await cells.run('javascript','process.stdout.write("ready\\n"); process.stdin.once("data",x=>{console.log(x.toString().trim());process.exit(0);});','',
       {interactive:true,event:e=>{if(e.kind==='stream' && e.text.includes('ready'))cells.input('typed live');}});
     assert.match(node.stdout,/typed live/);
-    // A compiled program reading an empty terminal says it wants input instead of spinning silently.
-    const prompts:CellEvent[]=[];
-    const compiled=await cells.run('cpp','#include <iostream>\nint main(){long n;std::cin>>n;std::cout<<n*(n-1)/2<<"\\n";}','',
-      {interactive:true,event:e=>{if(e.kind==='input'){prompts.push(e);cells.input('4');}}});
-    assert.equal(compiled.stdout,'6\n');
-    assert.equal(prompts.length,1);
-    const blocked=await cells.run('cpp','#include <iostream>\nint main(){long n;std::cin>>n;}','',
-      {interactive:true,event:e=>{if(e.kind==='input')cells.stop();}});
-    assert.equal(blocked.status,'cancelled');
     await cells.run('python','display({"text/html":"<b>result</b>"},raw=True)','',{event:e=>events.push(e)});
     assert.ok(events.some(e=>e.kind==='display' && e.data['text/html']==='<b>result</b>'));
     const abort=new AbortController();
@@ -159,53 +150,4 @@ test('cell input validation accepts shell/database and prevents invalid file pat
  for(const language of ['bash','zsh','pglab','sql'])assert.equal(validSnapshot({...base,language}),true);
  assert.equal(validSnapshot({...base,language:'python',files:[{name:'../outside',content:'x'}]}),false);
  assert.equal(validSnapshot({...base,language:'python',argv:['hello world'],files:[{name:'src/main.c',content:'x'}]}),true);
-});
-
-test('Python lesson traces capture shared state and output from one execution without changing it', async () => {
-  const cells = new NotebookCells(() => ({python}));
-  try {
-    await cells.run('python', 'total = 24\nobservations = []');
-    const result = await cells.run('python', [
-      'observations.append(total)', 'total += 1', 'boxes = total // 5', 'loose = total % 10',
-      'print(boxes - 1, loose)',
-    ].join('\n'), '', {trace:true});
-    assert.equal(result.exit_code, 0, result.stderr);
-    assert.equal(result.stdout, '4 5\n');
-    const trace = result.lessonTrace!;
-    assert.equal(trace.outputAligned, true);
-    assert.deepEqual(trace.steps.map(s => s.line), [1, 2, 3, 4, 5]);
-    assert.equal(trace.steps[1].previous.total, '24');
-    assert.equal(trace.steps[1].locals.total, '25');
-    assert.equal(trace.steps[4].printed, '4 5\n');
-    const check = await cells.run('python', 'print(observations)');
-    assert.equal(check.stdout, '[24]\n');
-    assert.equal(check.lessonTrace, undefined);
-
-    const repeated = await cells.run('python', 'def twice(n):\n    return n * 2\nfor i in range(3):\n    print(twice(i))', '', {trace:true});
-    const calls = repeated.lessonTrace!.steps.filter(s => s.function === 'twice');
-    assert.deepEqual(calls.map(s => s.locals.n), ['0', '1', '2']);
-    assert.equal(new Set(calls.map(s => s.frame)).size, 3);
-    const long = await cells.run('python', 'for i in range(200):\n    last = i\nprint(last)', '', {trace:true});
-    assert.equal(long.stdout, '199\n');
-    assert.equal(long.lessonTrace!.limited, true);
-    assert.equal(long.lessonTrace!.steps.length, 160);
-    const failed = await cells.run('python', 'raise ValueError("example")', '', {trace:true});
-    assert.notEqual(failed.exit_code, 0);
-    assert.equal((await cells.run('python', 'print(total)')).stdout, '25\n');
-  } finally { await cells.close(); }
-});
-
-test('consecutive shell submissions preserve local variables, functions, cwd and exit status',async()=>{
-  const cells = new NotebookCells(()=>({}));
-  try {
-    const first = await cells.run('bash','mkdir sub && cd sub && label=ready && say() { echo "$label"; } && false');
-    assert.equal(first.exit_code,1);
-    const second = await cells.run('bash','echo "$?"; say; basename "$PWD"; alias recall="printf recalled"', '', {interactive:true});
-    assert.equal(second.exit_code,0);
-    assert.equal(second.stdout,'1\nready\nsub\n');
-    const next = await cells.run('bash','recall', '', {interactive:true});
-    assert.equal(next.stdout,'recalled');
-    assert.equal((await cells.run('bash','exit 7')).exit_code,7);
-    assert.equal((await cells.run('bash','echo restarted')).stdout,'restarted\n');
-  } finally {await cells.close();}
 });

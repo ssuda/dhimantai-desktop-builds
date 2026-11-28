@@ -12,7 +12,6 @@ import {Replayer} from './replay';
 import {TaskVerifier} from './verifier';
 import {TourTask, freshReplayTasks} from './authoringModel';
 import {AppField} from './types';
-import {connectHostedErp, hostedErpOrigin} from './hostedErp';
 
 const safe = (f: AppField) => !f.readOnly && !f.hidden && f.type !== 'other' &&
   !/(password|secret|token|credential|email|phone|mobile|address|iban|bank_account)/i.test(f.name);
@@ -25,8 +24,6 @@ export class AuthoringBrowser {
   private learning = new BrowserLearning();
   private runtime?: ErpSandbox;
   private server?: FrappeServer;
-  private hostedServer?: FrappeServer;
-  private login = '';
   private learner = '';
   private origin = '';
   private media: string;
@@ -44,17 +41,6 @@ export class AuthoringBrowser {
   private async active() {if (this.closed || !await this.current()) throw new Error('Reopen authoring with your current account.');}
   async open(tasks: TourTask[]) {
     await this.active();
-    const site = hostedErpOrigin();
-    const hosted = site ? await connectHostedErp(site) : undefined;
-    await this.active();
-    if (site && !hosted) throw new Error('The ERPNext training login was cancelled.');
-    if (site && hosted) {
-      this.learner = sandboxKey(JSON.stringify(['author', this.environment, this.account, site, hosted.login]));
-      this.origin = site;
-      this.login = hosted.login;
-      this.server = this.hostedServer = hosted.server;
-      return this.openTab(tasks, hosted.server, hosted.login);
-    }
     const key = sandboxKey(this.context.globalStorageUri.fsPath + ':' + this.environment);
     // A separate training company/login keeps author rehearsals out of learner progress and records.
     this.learner = sandboxKey('author:' + this.environment + ':' + this.account);
@@ -71,26 +57,23 @@ export class AuthoringBrowser {
     this.origin = await this.runtime.start(admin, {id: this.learner, password}, this.report);
     await this.active();
     this.server = new FrappeServer(this.origin, 'Administrator', admin);
-    this.login = `learner-${this.learner}@training.invalid`;
-    return this.openTab(tasks, new FrappeServer(this.origin, this.login, password));
-  }
-  private async openTab(tasks: TourTask[], learnerServer: FrappeServer, hostedLogin?: string) {
+    const learnerServer = new FrappeServer(this.origin, `learner-${this.learner}@training.invalid`, password);
     let bridge: URLSearchParams | undefined;
     if (tasks.length) {
-      const verifier = new TaskVerifier(this.server!, this.media + '/player'), records: Record<string, string> = {};
+      const verifier = new TaskVerifier(this.server, this.media + '/player'), records: Record<string, string> = {};
       bridge = new URLSearchParams(await this.learning.start({origin: this.origin, account: this.account, environment: this.environment,
-        learner: this.learner, tasks: tasks as BrowserTask[], hosted: !!hostedLogin, current: async () => !this.closed && await this.current(),
+        learner: this.learner, tasks: tasks as BrowserTask[], current: async () => !this.closed && await this.current(),
         course: {id: 'author-preview', title: 'Author preview'},
         recordVerified: async (id, done) => {
           const task = tasks.find(t => t.id === id);
-          const ok = !!task && await verifier.verify(task, done.record, this.login, this.learner.slice(0, 10), records);
+          const ok = !!task && await verifier.verify(task, done.record, `learner-${this.learner}@training.invalid`, this.learner.slice(0, 10), records);
           if (ok) records[id] = done.record;
           return ok;
         }}));
       this.learning.setConnection(this.account, this.environment, false, 'Author preview. Learner progress is separate.');
     }
     this.tab = await openInjectedTab({url: this.origin, home: '/desk', media: this.media, adapter: 'frappe',
-      learner: this.learner, bridge, server: learnerServer, hostedLogin, viewColumn: vscode.ViewColumn.Two});
+      learner: this.learner, bridge, server: learnerServer});
     if (!this.tab?.transport) throw new Error('Tour authoring needs the dhimantAI desktop integrated browser.');
     await this.active();
     this.driver = await connectPlaywright(this.tab.transport, this.origin);
@@ -151,7 +134,7 @@ export class AuthoringBrowser {
     const definitions = freshReplayTasks(tasks, randomBytes(4).toString('hex'));
     const tag = this.learner.slice(0, 10);
     const replayer = new Replayer(this.tab!.client, this.tab!.sessionId, this.server!, new TaskVerifier(this.server!, this.media + '/player'),
-      this.login, tag, this.media + '/player', undefined,
+      `learner-${this.learner}@training.invalid`, tag, this.media + '/player', undefined,
       async <T>(expression: string) => {await this.page(); return page.evaluate<T>(expression);},
       AbortSignal.any([this.cancel.signal, AbortSignal.timeout(300000)]));
     return replayer.run(definitions);
@@ -162,6 +145,6 @@ export class AuthoringBrowser {
     const driver = this.driver, tab = this.tab;
     this.driver = undefined; this.tab = undefined;
     // The training stack is shared; close only this author's session.
-    await Promise.allSettled([driver?.close(), tab?.close?.(), this.learning.stop(), this.runtime?.revoke(this.learner), this.hostedServer?.logout()]);
+    await Promise.allSettled([driver?.close(), tab?.close?.(), this.learning.stop(), this.runtime?.revoke(this.learner)]);
   }
 }

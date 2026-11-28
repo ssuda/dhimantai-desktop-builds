@@ -6,7 +6,3 @@ export const coachingLanguages: Record<string, string> = {
 };
 export const coachingLanguage = (value: unknown): string =>
   typeof value === 'string' && Object.hasOwn(coachingLanguages, value) ? value : 'en-IN';
-
-export const mentorLanguageControl = `<label class="voice-setting">Spoken language <select id="voiceLanguage">
-<option value="auto">Follow spoken language</option>${Object.entries(coachingLanguages).map(([id,label]) => `<option value="${id}">${label}</option>`).join('')}
-</select></label>`;

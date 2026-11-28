@@ -5,7 +5,7 @@ with **Read an Unfamiliar Codebase**, then continue with the larger Rich project
 You can also start with Rich directly. The repository's existing training history
 and intentional search defect are preserved. Reading does not require fixing it.
 
-Open Project Mentor on the right. Use its steps to map folders, find an entry point,
+Open Project Coach on the right. Use its steps to map folders, find an entry point,
 follow a call, trace data, predict output and compare tests with real behaviour.
 
 ## Milestone 1 · Map the repository

@@ -73,20 +73,14 @@ export function observedRun(run: Execution, prediction = '') {
 /** Same local Practice runner and notebook Instructor, with temporary, revision-bound evidence. */
 export class RoomCodeSession {
   private entries = new Map<string, {snapshot: CodeSnapshot; execution?: Execution; previous?: string; request?: number}>();
-  private busy?: {snippet: string; phase: 'run' | 'coach'; abort: AbortController; done: Promise<void>};
-  /** How long a new Run waits for an earlier run it stopped (for example one waiting for input). */
-  static stopWait = 15000;
+  private busy?: {snippet: string; phase: 'run' | 'coach'; abort: AbortController};
   constructor(private readonly deps: {
-    predictionRequired?: (snapshot: CodeSnapshot) => boolean;
     current: () => Promise<boolean>;
     run: (snapshot: CodeSnapshot, signal?:AbortSignal, event?:(event:import('./notebookCells').CellEvent)=>void) => Promise<Execution>;
     coach: (body: object, signal: AbortSignal) => Promise<CodeFeedback>;
     aiEnabled: () => boolean;
   }) {}
   matches(snapshot: CodeSnapshot) { const entry = this.entries.get(snapshot.snippet); return !!entry && sameSnapshot(entry.snapshot, snapshot); }
-  executionFor(snapshot: CodeSnapshot) {
-    return this.matches(snapshot) ? this.entries.get(snapshot.snippet)?.execution : undefined;
-  }
   stop() { this.busy?.abort.abort(); }
   clear() { this.entries.clear(); this.busy?.abort.abort(); this.busy = undefined; }
   change(snapshot: CodeSnapshot) {
@@ -110,26 +104,11 @@ export class RoomCodeSession {
     if (!sameSnapshot(entry.snapshot, snapshot)) return;
     const reply = (result: Partial<CodeResult>) => emit({type: 'codeResult', attempt: message.attempt,
       snippet: message.snippet, revision: message.revision, request: message.request, ...result});
-    // Only one cell runs at a time. Pressing Run in a cell means "run this now": an earlier run
-    // (often a program still waiting for input in a cell scrolled out of view) is stopped first.
-    const previous = this.busy;
-    if (previous) {
-      if (message.action !== 'run' || previous.phase !== 'run') {
-        reply({error: 'Another cell is being checked. Try again when it finishes.'}); return;
-      }
-      previous.abort.abort();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([previous.done, new Promise(resolve => { timer = setTimeout(resolve, RoomCodeSession.stopWait); })]);
-      clearTimeout(timer);
-      if (this.entries.get(message.snippet) !== entry || !sameSnapshot(entry.snapshot, snapshot)) return;
-      if (this.busy) { reply({error: 'Another cell is still starting or stopping. Run again in a moment.'}); return; }
-    }
+    if (this.busy) { reply({error: 'Another snippet is being checked or run. Try again when it finishes.'}); return; }
     entry.request = message.request;
     const current = async () => await this.deps.current()
       && this.entries.get(message.snippet) === entry && entry.request === message.request;
-    let finished!: () => void;
-    const operation = {snippet: message.snippet, phase: 'run' as 'run' | 'coach', abort: new AbortController(),
-      done: new Promise<void>(resolve => { finished = resolve; })};
+    const operation = {snippet: message.snippet, phase: 'run' as 'run' | 'coach', abort: new AbortController()};
     this.busy = operation;
     try {
       if (!await current()) return;
@@ -137,17 +116,10 @@ export class RoomCodeSession {
       // Check always runs the exact current buffer. A previous output never stands in for a fresh check.
       if (message.action === 'run' || message.action === 'check') {
         if (!message.source.trim()) throw new Error('Write some code before running it.');
-        if (this.deps.predictionRequired?.(snapshot) && !message.prediction?.trim())
-          throw new Error('Enter your prediction before running this cell.');
         const mismatch = cellLanguageMismatch(language, source);
         if (mismatch) throw new Error(`This looks like ${cellLanguages[mismatch]} code, but the cell is set to ${cellLanguages[language]}. Change the cell language to ${cellLanguages[mismatch]} before running.`);
         entry.execution = undefined;
-        // PTY bytes and the final result must arrive in order, including across async session checks.
-        let delivery = Promise.resolve();
-        const execution = await this.deps.run(snapshot, operation.abort.signal, event => {
-          delivery = delivery.then(async () => { if (await current()) reply({event}); });
-        });
-        await delivery;
+        const execution = await this.deps.run(snapshot, operation.abort.signal, event=>{void current().then(ok=>{if(ok)reply({event});});});
         if (!await current()) return;
         entry.execution = execution;
         reply({execution});
@@ -175,11 +147,11 @@ export class RoomCodeSession {
     } catch (error) {
       if (await current()) reply({error: error instanceof Error ? error.message : 'Could not complete this action. Your edits are still here.',
         ...(error instanceof RuntimePreparationError ? {failureStage:'preparing' as const} : {})});
-    } finally { if (this.busy === operation) this.busy = undefined; finished(); }
+    } finally { if (this.busy === operation) this.busy = undefined; }
   }
 }
 
-export function sameSnapshot(a: CodeSnapshot, b: CodeSnapshot) {
+function sameSnapshot(a: CodeSnapshot, b: CodeSnapshot) {
   return a.snippet === b.snippet && a.revision === b.revision && a.language === b.language
     && a.source === b.source && a.stdin === b.stdin && a.question === b.question
     && JSON.stringify(a.argv??[])===JSON.stringify(b.argv??[]) && JSON.stringify(a.files??[])===JSON.stringify(b.files??[]) && !!a.interactive===!!b.interactive;

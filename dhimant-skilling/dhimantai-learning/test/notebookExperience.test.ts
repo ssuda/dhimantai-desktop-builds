@@ -1,9 +1,8 @@
 import { test } from 'node:test';
-import {deliveryBillSamples} from '../src/deliveryBillPractice';
 import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { JSDOM, type DOMWindow } from 'jsdom';
+import { JSDOM } from 'jsdom';
 import { EditorView } from '@codemirror/view';
 import { cellLanguages, codeLanguages, RoomCodeSession } from '../src/roomCode';
 import { TutorPython } from '../src/tutorPython';
@@ -15,13 +14,13 @@ import { engineeringSkills } from '../src/skillPractice';
 import { notebookMessageBar } from '../src/learningComposer';
 import { chapterId, lessonPicker, selectLesson } from './lessonPicker';
 
-function surface(livekit: unknown = {RoomEvent:{}}, composer = notebookMessageBar('Instructor', true, '<button type="button" id="sound"></button>'), practice = false, setup?: (window:DOMWindow) => void) {
+function surface(livekit: unknown = {RoomEvent:{}}, composer = notebookMessageBar('Instructor', true, '<button type="button" id="sound"></button>'), practice = false) {
   const ids = ['tutor','doubt_solver','end','wide','latest','add-note','add-code','save-notebook','open-notebook','restart-runtime','clear-conversation'];
   const dom = new JSDOM('<!doctype html><header class="workspace-header"><div class="workspace-title"><h1>Implement `subtract_time` &lt; safely</h1></div><div class="workspace-actions"></div></header><main id="feed"></main>' + composer
     + ids.map(id => `<button id="${id}" ${id === 'end' ? 'disabled' : ''}></button>`).join('')
     + '<section class="notebook-toolbar"><div id="saved-task-actions"></div><div class="notebook-jumps"></div><div class="notebook-tools"></div></section><input id="follow-code" type="checkbox" checked><input id="stuck-hints" type="checkbox"><span id="status"></span><span id="code-observer-status"></span><span id="notebook-save-status"></span>'
     + '<select id="cell-language">' + Object.keys(cellLanguages).map(language => `<option>${language}</option>`).join('') + '</select>'
-    + '<select id="course-runtime"><option value="course">Course container</option><option value="colab" data-gpu hidden disabled>Google Colab · GPU</option><option value="cloud" data-gpu hidden disabled>Cloud GPU · Jupyter</option><option value="jupyter" data-gpu hidden disabled>Your GPU · Jupyter</option><option value="ssh" data-gpu data-managed-gpu hidden disabled>SSH</option><option value="cloud-cli" data-gpu data-managed-gpu hidden disabled>Cloud Spot GPUs</option><option value="finish" data-gpu hidden disabled>Finish lab</option><option value="setup">Set up / rebuild course</option></select>',
+    + '<select id="course-runtime"><option value="course">Course container</option><option value="colab" data-gpu hidden disabled>Google Colab · GPU</option><option value="cloud" data-gpu hidden disabled>Cloud GPU · Jupyter</option><option value="jupyter" data-gpu hidden disabled>Your GPU · Jupyter</option><option value="ssh" data-gpu data-managed-gpu hidden disabled>SSH</option><option value="cloud-cli" data-gpu data-managed-gpu hidden disabled>Cloud Spot GPUs</option><option value="finish" data-gpu hidden disabled>Finish lab</option><option value="terminal">Open course terminal</option><option value="setup">Set up / rebuild course</option></select>',
     {runScripts:'outside-only',url:'https://webview.example',pretendToBeVisual:true});
   const w = dom.window, sent: any[] = [];
   if (practice) w.document.body.dataset.notebookMode = 'practice';
@@ -35,7 +34,6 @@ function surface(livekit: unknown = {RoomEvent:{}}, composer = notebookMessageBa
   w.Range.prototype.getBoundingClientRect = () => ({left:0,right:0,top:0,bottom:0,width:0,height:0}) as any;
   const post = (data: object) => w.dispatchEvent(new w.MessageEvent('message',{data,origin:w.location.origin}));
   const click = (id: string) => w.document.getElementById(id)!.click();
-  setup?.(w);
   w.eval(readFileSync(resolve(__dirname,'../../media/learning-room/room.js'),'utf8'));
   const code = (element: Element) => EditorView.findFromDOM(element.querySelector<HTMLElement>('.cm-content')!)!;
   return {w,sent,post,click,code,close:async () => {
@@ -43,38 +41,6 @@ function surface(livekit: unknown = {RoomEvent:{}}, composer = notebookMessageBa
     await new Promise(r => setTimeout(r,300)); w.close();
   }};
 }
-
-test('Doubt Solver applies the mode to the same live chat and restores its draft, examples and selection', async () => {
-  const calls: {method:string;payload:string}[] = [];
-  const peer = {identity:'worker',isAgent:true,trackPublications:new Map()};
-  class Room {
-    remoteParticipants = new Map([['worker',peer]]);
-    localParticipant = {registerRpcMethod(){}, performRpc:async (call:typeof calls[number]) => {calls.push(call);return 'ok';}};
-    on(){} async connect(){} async disconnect(){} registerTextStreamHandler(){}
-  }
-  const bar = notebookMessageBar('Doubt Solver',false,'<button id="sound"></button>') +
-    '<select id="doubt-mode"><option value="adaptive">Adaptive</option><option value="guided">Guided</option><option value="direct">Direct</option></select>';
-  const ui = surface({Room,RoomEvent:{}},bar), tick = () => new Promise(resolve=>setTimeout(resolve,10));
-  const book = {...emptyNotebook(),doubtId:'20000000-0000-0000-0000-000000000002',textDraft:'I predict four.',
-    cells:[{id:'evidence',kind:'board',text:'Count matches for each id.\n\n```python\nprint(1)\n```'}]};
-  try {
-    ui.post({type:'openTutor',mode:'doubt_solver'});
-    selectLesson(ui.w,ui.sent.at(-1).attempt);
-    const attempt=ui.sent.at(-1).attempt;
-    ui.post({type:'restoreNotebook',attempt,documentKey:'merge',notebook:book});
-    ui.post({type:'grant',attempt,url:'unused',token:'unused'}); await tick();
-    const select=ui.w.document.querySelector<HTMLSelectElement>('#doubt-mode')!;
-    assert.equal(select.value,'adaptive'); assert.equal(select.disabled,false);
-    select.value='direct';select.dispatchEvent(new ui.w.Event('change'));await tick();
-    assert.deepEqual(JSON.parse(calls.at(-1)!.payload),{doubt_mode:'direct',doubt_id:book.doubtId});
-    assert.equal(calls.filter(c=>c.method==='switch_mode').length,1);
-    assert.equal(ui.w.document.querySelector<HTMLTextAreaElement>('#message')!.value,book.textDraft);
-    assert.equal(ui.w.document.querySelector<HTMLDetailsElement>('[data-cell-id="evidence"] details')!.open,false);
-    assert.equal(ui.sent.filter(m=>m.type==='notebookChanged').at(-1)?.notebook.doubtMode,'direct');
-    select.value='guided';select.dispatchEvent(new ui.w.Event('change'));await tick();
-    assert.deepEqual(JSON.parse(calls.at(-1)!.payload),{doubt_mode:'guided',doubt_id:book.doubtId});
-  } finally { await ui.close(); }
-});
 
 test('Doubt Solver detects pasted C in a Java cell, switches its compiler and saves the corrected language', async () => {
   class Room {
@@ -173,7 +139,7 @@ test('Doubt Solver shows the selected course container for Java and C and separa
       post({...request,type:'codeResult',execution:{status:'exited',exit_code:0,stdout:'ok\n',stderr:'',truncated:false}});
     }
     assert.equal(w.document.querySelector('[value="course"]')!.textContent,'Course container');
-    assert.equal(w.document.querySelector('[value="terminal"]'),null);
+    assert.equal(w.document.querySelector('[value="terminal"]')!.textContent,'Open course terminal');
     post({type:'runtimeRestarted',runtime:'course'});
     for(const cell of w.document.querySelectorAll('.practice-code-editor'))
       assert.match(cell.querySelector(':scope > small')!.textContent!,/Course container/);
@@ -257,8 +223,7 @@ test('SQL predictions remain distinct from successful, failed and retried execut
   } finally { await ui.close(); }
 });
 
-for (const media of [false, true]) test(
-  'shared notebook context excludes private material and never creates a model turn by itself (media=' + media + ')', async () => {
+test('shared notebook context excludes private material and never creates a model turn by itself', async () => {
   const rooms: Room[] = [], chats: string[] = [], observations: any[] = [];
   const agent = {identity:'worker', isAgent:true, trackPublications:new Map()};
   let fail = false;
@@ -282,7 +247,7 @@ for (const media of [false, true]) test(
       {id:'local-note',kind:'note',text:'My private scratch work'},
       {id:'local-code',kind:'code',text:'print(42)',packet:{language:'python'}},
     ]}});
-    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media,lesson:{subject:'Computing', name:'Lists'}}); await new Promise(r => setTimeout(r,0));
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId}); await new Promise(r => setTimeout(r,0));
     assert.equal(w.document.querySelector('#feed #composer'), null, 'chat is not a notebook cell');
     assert.ok(w.document.querySelector('#message-bar #composer'));
     assert.ok(w.document.querySelector('#message-bar .composer-menu > summary[aria-label="Add attachments"] svg'));
@@ -622,11 +587,7 @@ test('headings, focus view and confirmed cell deletion preserve the remaining no
     const cells = () => [...w.document.querySelectorAll<HTMLElement>('article[data-cell-id]')];
     code(cells()[0]).dispatch({changes:{from:0,insert:'deleted = 1'}});
     code(cells()[1]).dispatch({changes:{from:0,insert:'kept = 2'}});
-    const more = cells()[0].querySelector<HTMLDetailsElement>('details.practice-more')!;
-    assert.equal(more.open,false);
-    assert.ok(more.contains(cells()[0].querySelector('[data-remove-cell]')));
-    more.open = true;
-    const remove = () => more.querySelector<HTMLButtonElement>('[data-remove-cell]')!.click();
+    const remove = () => cells()[0].querySelector<HTMLButtonElement>('[data-remove-cell]')!.click();
     remove(); assert.equal(cells().length,3);
     assert.equal(w.document.activeElement!.textContent,'Cancel');
     w.document.activeElement!.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
@@ -663,16 +624,17 @@ test('Python tokens are distinct and skill search keeps its selected skill witho
   } finally { await ui.close(); }
 });
 
-test('the notebook runtime dropdown offers setup and keeps terminal access in project mode', async () => {
+test('the runtime dropdown opens container terminals and setup without a host runtime option', async () => {
   const ui = surface();
   try {
     const picker = ui.w.document.getElementById('course-runtime') as HTMLSelectElement;
     assert.equal(picker.querySelector('[value="local"]'), null);
     assert.equal(picker.value, 'course');
-    assert.equal(picker.querySelector('[value="terminal"]'), null);
-    picker.value = 'setup'; picker.dispatchEvent(new ui.w.Event('change'));
-    assert.equal(ui.sent.at(-1).type, 'runtime'); assert.equal(ui.sent.at(-1).runtime, 'setup');
-    assert.equal(picker.value, 'course');
+    for (const runtime of ['terminal', 'setup']) {
+      picker.value = runtime; picker.dispatchEvent(new ui.w.Event('change'));
+      assert.equal(ui.sent.at(-1).type, 'runtime'); assert.equal(ui.sent.at(-1).runtime, runtime);
+      assert.equal(picker.value, 'course');
+    }
     ui.post({type:'runtimeSelected', runtime:'course'});
     assert.equal(picker.value, 'course');
     assert.match(ui.w.document.getElementById('status')!.textContent!, /Course container ready/);
@@ -716,7 +678,7 @@ test('notebook saves student notes and cells in every supported language and res
   } finally { await ui.close(); }
 });
 
-test('the message bar autosaves its multiline draft when sending is unavailable', async () => {
+test('the separate message bar autosaves unsent work, and Enter never sends it', async () => {
   const ui = surface();
   try {
     ui.post({type:'restoreNotebook',documentKey:'draft-document',notebook:emptyNotebook()});
@@ -724,9 +686,8 @@ test('the message bar autosaves its multiline draft when sending is unavailable'
     assert.ok(ui.w.document.getElementById('message-bar')!.contains(field));
     assert.equal(ui.w.document.getElementById('feed')!.contains(field), false);
     field.value = 'My question\nMy reasoning'; field.dispatchEvent(new ui.w.Event('input'));
-    assert.equal(ui.w.document.querySelector<HTMLButtonElement>('#send')!.disabled, true);
-    const enter = new ui.w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true});
-    field.dispatchEvent(enter); assert.equal(enter.defaultPrevented,true);
+    const enter = new ui.w.KeyboardEvent('keydown',{key:'Enter',cancelable:true});
+    field.dispatchEvent(enter); assert.equal(enter.defaultPrevented,false);
     await new Promise(resolve => setTimeout(resolve,300));
     const saved = ui.sent.filter(message => message.type === 'notebookChanged').at(-1).notebook;
     assert.equal(saved.textDraft,field.value);
@@ -789,7 +750,6 @@ test('Memory list questions and reviews preserve passing samples and recover fro
     post({type:'practiceToolResult',attempt,request:tests.request,tool:'tests',
       tests:[{id:'example',verdict:'passed',stdin,expected:output,actual:output,stderr:''}]}); await tick();
     assert.match(element.textContent!, /Sample tests: 1 of 1 passed/);
-    assert.match(element.querySelector('.practice-tool-output')!.textContent!, /Sample tests are a quick check.*hidden tests/);
     const field = w.document.getElementById('message') as HTMLTextAreaElement;
     const submit = () => w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit',{cancelable:true}));
     field.value = 'Okay so what is list?'; field.dispatchEvent(new w.Event('input')); submit();
@@ -1280,7 +1240,7 @@ test('Flutter Practice actions preserve selected-line context and retire replies
     const editor = code(w.document.querySelector('.practice-code-editor')!);
     editor.dispatch({changes:{from:0,insert:'value = 7\nprint(value)'},selection:{anchor:10}});
     const actions = [...w.document.querySelectorAll<HTMLButtonElement>('[data-practice-strategy]')];
-    assert.deepEqual(actions.map(b => b.textContent), ['Explain problem','Explain code','Explain simply','Summarise','Explain errors','Explain failed tests','Give an example','Quiz me','Next step']);
+    assert.deepEqual(actions.map(b => b.textContent), ['Explain problem','Explain code','Explain errors','Explain failed tests','Next step','Explain simply','Give an example','Quiz me','Summarise']);
     actions[1].click(); const request = sent.at(-1);
     assert.equal(request.strategy, 'trace'); assert.equal(request.focusLine, 2);
     assert.match(request.message, /starting with the selected line/);
@@ -1302,36 +1262,11 @@ test('Flutter Practice actions preserve selected-line context and retire replies
     assert.ok([...latest.querySelectorAll<HTMLButtonElement>('[data-reply]')].every(b => b.disabled));
     assert.equal(latest.querySelector<HTMLElement>('.practice-reply-stale')!.hidden, false);
     assert.equal(actions[1].disabled, false, 'a fresh teaching request remains available after an edit');
-    actions[8].click(); const next = sent.at(-1); assert.equal(next.strategy,'small_steps');
+    actions[4].click(); const next = sent.at(-1); assert.equal(next.strategy,'small_steps');
     post({type:'notebookReply',attempt,request:next.request,content:'Try one value.',replies:['I have an idea']}); await tick();
     const current = [...w.document.querySelectorAll<HTMLElement>('article[data-cell-id]')].at(-1)!;
     post({type:'runtimeRestarted'});
     assert.equal(current.querySelector<HTMLButtonElement>('[data-reply]')!.disabled, true);
-  } finally { await ui.close(); }
-});
-
-test('a sentence-starter reply chip goes to the message box for the learner to finish, never sent half-written', async () => {
-  const ui = surface(), {w,sent,post,code} = ui;
-  const tick = () => new Promise(r => setTimeout(r, 0));
-  try {
-    const task: PracticeNotebook = {id:'split',language:'python',title:'Split',question:'Split a line.',starter:'',assistance:true,path:'/unused',account:'learner',tests:[]};
-    post({type:'openPractice'}); const attempt = sent.at(-1).attempt;
-    post({type:'restoreNotebook',documentKey:'starter-doc',notebook:practiceDocument(task)});
-    post({type:'practiceReady',attempt,practice:task,aiEnabled:true});
-    code(w.document.querySelector('.practice-code-editor')!).dispatch({changes:{from:0,insert:'line = input()'}});
-    const actions = [...w.document.querySelectorAll<HTMLButtonElement>('[data-practice-strategy]')];
-    actions[1].click(); const request = sent.at(-1);
-    post({type:'notebookReply',attempt,request:request.request,content:'Which index holds the value?',
-      replies:['Index 0 holds the key, so the value is at...','Show me a smaller example']}); await tick();
-    const row = [...w.document.querySelectorAll<HTMLElement>('article[data-cell-id]')].at(-1)!;
-    const [starter, full] = [...row.querySelectorAll<HTMLButtonElement>('[data-reply]')];
-    const before = sent.length;
-    starter.click();
-    assert.equal(sent.slice(before).filter(m => m.type === 'notebookMessage' || m.message).length, 0, 'the starter is not sent');
-    const field = w.document.getElementById('message') as HTMLTextAreaElement;
-    assert.equal(field.value, 'Index 0 holds the key, so the value is at ');
-    assert.equal(w.document.activeElement, field);
-    full.click(); assert.match(sent.at(-1).message, /Show me a smaller example/);
   } finally { await ui.close(); }
 });
 
@@ -1537,8 +1472,8 @@ for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}
     post(mode === 'practice' ? {type:'practiceReady',attempt,practice:task,aiEnabled:true}
       : {type:'grant',attempt,url:'unused',token:'unused',chapterId});
     await tick();
-    const actions = [...w.document.querySelectorAll<HTMLButtonElement>('#notebook-help-actions [data-practice-strategy]')];
-    assert.deepEqual(actions.map(action => action.textContent), ['Explain problem','Explain code','Explain simply','Summarise','Explain errors','Explain failed tests','Give an example','Quiz me','Next step']);
+    const actions = [...w.document.querySelectorAll<HTMLButtonElement>('#notebook-help-actions button')];
+    assert.deepEqual(actions.map(action => action.textContent), ['Explain problem','Explain code','Explain errors','Explain failed tests','Next step','Explain simply','Give an example','Quiz me','Summarise']);
     actions[0].click();
     const empty = sent.filter(message => message.type === 'notebookTurn').at(-1);
     assert.equal(empty.snapshot.source,'', 'problem help works before writing code');
@@ -1556,7 +1491,7 @@ for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}
     const run = sent.filter(message => message.type === 'codeAction').at(-1);
     post({type:'codeResult',attempt,request:run.request,snippet:run.snippet,revision:run.revision,
       execution:{status:'exited',exit_code:1,stdout:'',stderr:'NameError: missing',truncated:false,duration_ms:1}});
-    const strategies = ['plan','trace','simplify','reflect','read_error','by_hand','walkthrough','by_hand','small_steps'];
+    const strategies = ['plan','trace','read_error','by_hand','small_steps','simplify','walkthrough','by_hand','reflect'];
     for (const [i,action] of actions.entries()) {
       action.click();
       const request = sent.filter(message => message.type === 'notebookTurn').at(-1);
@@ -1574,18 +1509,10 @@ for (const mode of ['practice', 'tutor', 'doubt_solver'] as const) test(`${mode}
       assert.match(w.document.getElementById('status')!.textContent!,new RegExp('^' + assistant + ' replied'));
     }
     assert.deepEqual(chats,[], 'Get Help uses the same coach path in every mode, never answer/chat delivery');
-    const formal = w.document.querySelector<HTMLButtonElement>('[data-lesson-action="formalExplanation"]');
-    if (mode === 'practice') assert.ok(!formal || formal.hidden);
-    else {
-      assert.ok(formal && !formal.hidden && !formal.disabled);
-      formal.click(); await tick();
-      assert.equal(chats.at(-1),'Give me the formal version of this explanation.');
-    }
     const reply = [...w.document.querySelectorAll<HTMLButtonElement>('[data-reply]')].find(button => !button.disabled)!;
     reply.click();
     const followup = sent.filter(message => message.type === 'notebookTurn').at(-1);
-    assert.match(followup.message,/^Explain more\. Answer this request itself; do not repeat your last reply\./, 'a chip asks for its own intent first');
-    assert.match(followup.message,/Your last reply, for context only: Shared reply 8/);
+    assert.match(followup.message,/About your reply: Shared reply 8/);
     post({type:'notebookReply',attempt,request:followup.request,error:'Service unavailable'}); await tick();
     assert.ok(actions.every(button => !button.disabled));
     assert.match(w.document.getElementById('status')!.textContent!,/Service unavailable/);
@@ -1644,11 +1571,9 @@ test('Instructor activity survives microphone shutdown and clears on idle, recon
     on(name:string, listener:Function) { this.listeners.set(name, listener); }
     async connect() {} async disconnect() {} registerTextStreamHandler() {}
   }
-  const names = ['ParticipantAttributesChanged','TrackSubscribed','DataReceived','Reconnecting','Reconnected','Disconnected'];
-  let grantMicrophone!: () => void;
-  const permission = new Promise<void>(resolve => { grantMicrophone = resolve; });
+  const names = ['ParticipantAttributesChanged','DataReceived','Reconnecting','Reconnected','Disconnected'];
   const ui = surface({Room, RoomEvent:Object.fromEntries(names.map(name => [name,name])),
-    createLocalAudioTrack:async () => { await permission; return {stop() { stopped++; }, mediaStreamTrack:{addEventListener() {}}}; }},
+    createLocalAudioTrack:async () => ({stop() { stopped++; }, mediaStreamTrack:{addEventListener() {}}})},
     notebookMessageBar('Instructor', false, '<button type="button" id="audio-microphone" data-live-mic></button><button type="button" id="sound"></button>', true));
   const {w,post,sent,click} = ui, tick = () => new Promise(r => setTimeout(r,0));
   const activity = w.document.getElementById('assistant-activity')!;
@@ -1665,28 +1590,12 @@ test('Instructor activity survives microphone shutdown and clears on idle, recon
       rooms[0].listeners.get('ParticipantAttributesChanged')!({'lk.agent.state':value},agent);
     };
     state('listening'); assert.equal(activity.hidden, true);
-    const audio = w.document.createElement('audio');
-    audio.play = async () => {};
-    audio.pause = () => {};
-    rooms[0].listeners.get('TrackSubscribed')!({kind:'audio', attach:() => audio}, {}, agent);
-    state('speaking');
-    // Two full on/off cycles while replying: the mic controls input only and never stops the reply.
-    for (let cycle = 0; cycle < 2; cycle++) {
-      click('audio-microphone');
-      if (cycle === 0) grantMicrophone();
-      await tick();
-      assert.equal(w.document.getElementById('audio-microphone')!.getAttribute('aria-pressed'),'true');
-      assert.equal(audio.muted, false, `turning the microphone on (cycle ${cycle + 1}) keeps the reply audible`);
-      click('audio-microphone'); await tick();
-      assert.equal(audio.muted, false, `turning the microphone off (cycle ${cycle + 1}) keeps the reply audible`);
-    }
-    assert.equal(rpcs.some(r => r.method === 'stop_speaking'), false, 'toggling the microphone never stops the reply');
     click('audio-microphone'); await tick();
     state('thinking');
     click('audio-microphone'); await tick();
-    assert.equal(stopped,3);
+    assert.equal(stopped,1);
     assert.equal(w.document.getElementById('audio-microphone')!.getAttribute('aria-pressed'),'false');
-    assert.equal(w.document.getElementById('status')!.textContent,'Microphone off.');
+    assert.equal(w.document.getElementById('status')!.textContent,'Microphone off. Sending your response…');
     assert.ok(rpcs.some(r=>r.method==='toggle_audio' && JSON.parse(r.payload).commit_turn===true));
     assert.equal(activity.hidden,false);
     assert.equal(activity.textContent,'Thinking…','stopping capture must not clear an in-flight response');
@@ -1739,17 +1648,7 @@ test('browser task questions use the Instructor composer and acknowledge progres
       {name:'Python',chapters:[{id:'python-chapter',name:'Lists'}]}]});
     w.document.querySelector<HTMLButtonElement>('#lesson-list button')!.click();const attempt=sent.at(-1).attempt;
     post({type:'restoreNotebook',attempt,documentKey:'browser',notebook:emptyNotebook()});
-    const connection = 'a'.repeat(32);
-    const erpnextRuntime = {sites:[{id:connection,name:'Warehouse Training',origin:'https://erp.example.com'}]};
-    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media:true,browserCourse:true,erpnextRuntime});await wait();
-    const runtime = w.document.getElementById('course-runtime') as HTMLSelectElement;
-    assert.equal(runtime.disabled,false);
-    assert.equal(runtime.querySelector('option[value="erpnext:connect"]')?.textContent,'Connect to ERPNext…');
-    assert.equal(runtime.querySelector(`option[value="erpnext:${connection}"]`)?.textContent,'Warehouse Training');
-    runtime.value = `erpnext:${connection}`;runtime.dispatchEvent(new w.Event('change'));
-    assert.deepEqual({...sent.at(-1)},{type:'runtime',runtime:`erpnext:${connection}`,attempt});
-    post({type:'erpnextRuntime',attempt,state:{...erpnextRuntime,active:connection}});
-    assert.equal(runtime.selectedOptions[0].textContent,'ERPNext · Warehouse Training');
+    post({type:'grant',attempt,url:'unused',token:'unused',chapterId,media:true,browserCourse:true});await wait();
     const mic=w.document.getElementById('audio-microphone') as HTMLButtonElement;
     assert.equal(mic.disabled,false);click('audio-microphone');await wait();
     assert.equal(mic.disabled,false,'capture finishes with the microphone still operable');
@@ -1788,17 +1687,15 @@ test('browser task questions use the Instructor composer and acknowledge progres
     assert.equal(shortcut(field,{isComposing:true}).defaultPrevented,false,'IME confirmation never submits');
     assert.equal(shortcut(field,{shiftKey:true}).defaultPrevented,false,'Shift+Enter keeps a multiline draft');
     const before=forwarded;
-    for (const extra of [{ctrlKey:true}, {metaKey:true}]) {
-      assert.equal(shortcut(field,extra).defaultPrevented,false);
+    for (const extra of [{}, {ctrlKey:true}, {metaKey:true}, {repeat:true}]) {
+      assert.equal(shortcut(field,extra).defaultPrevented,false,'Enter keeps its normal editing behavior');
     }
-    assert.equal(shortcut(field,{repeat:true}).defaultPrevented,true);
-    await wait();assert.equal(messages.length,0,'modified or repeated Enter does not submit');
+    await wait();assert.equal(messages.length,0,'keyboard input never sends a draft');
     post({type:'browserObservation',attempt,chapter:chapterId,observation:{task:'company'},question,focusQuestion:question.id});
     await wait();assert.equal(messages.length,0,'opening the answer box never submits even a complete draft');
     rooms[0].listeners.get('Reconnecting')!();
     assert.equal(sent.filter(m=>m.type==='browserState').at(-1).connected,false,'ERPNext immediately sees the reconnecting state');
     assert.equal((w.document.getElementById('send') as HTMLButtonElement).disabled,true);
-    shortcut(field);
     assert.ok(field.value);assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/Reconnecting/);
     const observations=rpcs.filter(r=>r.method==='on_browser_activity').length;
     rooms[0].listeners.get('Reconnected')!();await wait();
@@ -1814,7 +1711,7 @@ test('browser task questions use the Instructor composer and acknowledge progres
     assert.equal(sent.some(m=>m.type==='browserAnswer'),false);assert.ok(field.value);
     assert.match(w.document.getElementById('status')!.textContent!,/delivery could not be confirmed/);
     assert.match(w.document.getElementById('notebook-help-status')!.textContent!,/draft is still here.*before sending again/);
-    fail=false;assert.equal(shortcut(field).defaultPrevented,true);await wait();
+    fail=false;click('send');await wait();
     assert.equal(forwarded,before,'editing keys never escape to the desktop workbench');
     assert.match(messages.at(-1)!,/Question: What grows.*\nMy answer: Receivables/);
     assert.equal(sent.filter(m=>m.type==='browserAnswer').length,1);assert.equal(field.value,'');
@@ -2076,7 +1973,7 @@ test('learning preferences restore before greeting and changing a persona keeps 
   try {
     ui.post({type:'openTutor',mode:'doubt_solver'}); if (ui.sent.at(-1).type === 'tutorLessons') selectLesson(ui.w, ui.sent.at(-1).attempt);
     const attempt=ui.sent.at(-1).attempt;
-    const preferences={preferred_name:'Varun',check_frequency:'minimal',voice:'calm',doubt_style:'guided'};
+    const preferences={preferred_name:'Varun',check_frequency:'minimal',voice:'calm'};
     ui.post({type:'learningPreferences',preferences});
     ui.post({type:'restoreNotebook',attempt,documentKey:'preferences',notebook:emptyNotebook()});
     ui.post({type:'grant',attempt,url:'unused',token:'unused'}); await tick();
@@ -2084,12 +1981,6 @@ test('learning preferences restore before greeting and changing a persona keeps 
     assert.deepEqual(JSON.parse(applied.payload),preferences);
     assert.ok(calls.indexOf(applied)<calls.findIndex(call=>call.method==='switch_mode'));
     assert.equal((ui.w.document.getElementById('preferred-name') as HTMLInputElement).value,'Varun');
-    const style=ui.w.document.getElementById('doubt-style') as HTMLSelectElement;
-    assert.equal(style.value,'guided');
-    assert.equal(ui.w.document.getElementById('doubt-style-setting')!.hidden,false);
-    style.value='direct'; style.dispatchEvent(new ui.w.Event('change'));
-    ui.post({type:'learningPreferences',preferences:ui.sent.at(-1).preferences}); await tick();
-    assert.equal(JSON.parse(calls.at(-1).payload).doubt_style,'direct');
     const voice=ui.w.document.getElementById('preferred-voice') as HTMLSelectElement;
     voice.value='energetic'; voice.dispatchEvent(new ui.w.Event('change'));
     const save=ui.sent.at(-1);
@@ -2264,120 +2155,3 @@ for (const mode of ['tutor','doubt_solver']) {
     } finally { await ui.close(); }
   });
 }
-
-for (const mode of ['tutor','doubt_solver','practice'] as const) test(mode + ' streams the desktop microphone to its K–12 agent', async () => {
-  const rpcs:any[] = [], handlers = new Map<string, Function>(), streams:string[] = [], peer = {identity:'worker',isAgent:true,trackPublications:new Map()};
-  let published = 0, stopped = 0, subscribed = 0;
-  class Room {
-    remoteParticipants = new Map([[peer.identity,peer]]);
-    localParticipant = {registerRpcMethod() {}, performRpc:async (r:any) => {rpcs.push(r); return 'ok';},
-      publishTrack:async () => {published++;}, unpublishTrack:async () => {}};
-    on(name:string, handler:Function) { handlers.set(name,handler); }
-    registerTextStreamHandler(name:string) { streams.push(name); }
-    async connect() {} async disconnect() {} async startAudio() {}
-  }
-  const bar = notebookMessageBar(mode === 'doubt_solver' ? 'Doubt Solver' : 'Instructor', mode === 'practice',
-    '<button id="audio-microphone" type="button" data-live-mic></button><button id="sound" type="button"></button>');
-  const ui = surface({Room, RoomEvent:{TrackPublished:'published', TrackSubscribed:'subscribed', DataReceived:'data'},
-    createLocalAudioTrack:async () => ({stop() { stopped++; }, mediaStreamTrack:{addEventListener() {}}})}, bar, mode === 'practice');
-  const {w, post, sent, click} = ui, tick = () => new Promise(resolve => setTimeout(resolve,0));
-  try {
-    const task:PracticeNotebook = {id:'letters',language:'python',title:'Letters',question:'Count the letters.',starter:'',assistance:true,path:'/unused',account:'learner',tests:[]};
-    const practice = mode === 'practice';
-    post(practice ? {type:'openPractice'} : {type:'openTutor',mode});
-    if (sent.at(-1)?.type === 'tutorLessons') selectLesson(w,sent.at(-1).attempt);
-    const attempt = sent.at(-1).attempt;
-    post({type:'restoreNotebook',attempt,documentKey:mode, notebook:practice ? practiceDocument(task) : emptyNotebook()});
-    post(practice ? {type:'practiceReady',attempt,practice:task,aiEnabled:true} : {type:'grant',attempt,url:'unused',token:'unused',chapterId,media:true});
-    await tick();
-    const mic = w.document.getElementById('audio-microphone')!;
-    const field = w.document.querySelector<HTMLTextAreaElement>('#message')!;
-    field.value = 'Unsent keyboard draft'; field.dispatchEvent(new w.Event('input'));
-    click('audio-microphone');
-    if (practice) {
-      const cancelled = sent.at(-1);
-      assert.equal(cancelled.type,'practiceVoice');
-      click('audio-microphone');
-      post({type:'practiceVoiceGrant',id:cancelled.id,url:'unused',token:'old'});
-      assert.equal(published,0);
-      click('audio-microphone');
-      const failed = sent.at(-1);
-      post({type:'practiceVoiceGrant',id:failed.id,error:'Voice unavailable'});
-      assert.match(w.document.getElementById('status')!.textContent!,/Voice unavailable/);
-      assert.equal(mic.title,'Start microphone');
-      click('audio-microphone');
-      post({type:'practiceVoiceGrant',id:sent.at(-1).id,url:'unused',token:'unused'});
-    }
-    await tick();
-    const payload = JSON.parse(rpcs.find(r=>r.method==='switch_mode').payload);
-    assert.equal(payload.mode, practice ? 'pyq_practice' : mode);
-    if (practice) {
-      assert.equal(payload.practice_kind,'regular');
-      assert.equal(payload.practice_initial_question.question_id,task.id);
-      assert.match(payload.practice_initial_question.question_text,/Count the letters/);
-    }
-    assert.equal(published,1); assert.equal(mic.getAttribute('aria-pressed'),'true');
-    click('audio-microphone'); await tick();
-    assert.equal(stopped,1); assert.equal(mic.getAttribute('aria-pressed'),'false');
-    assert.deepEqual(JSON.parse(rpcs.filter(r=>r.method==='toggle_audio').at(-1).payload), {input_enabled:false,commit_turn:true});
-    handlers.get('published')!({kind:'audio',setSubscribed:(value:boolean) => {if(value)subscribed++;}},peer);
-    assert.equal(subscribed,1);
-    assert.equal(streams.includes('lk.transcription'),false);
-    assert.equal(sent.some(m=>['voiceInputGrant','notebookTurn'].includes(m.type)),false);
-    assert.equal(field.value,'Unsent keyboard draft');
-    click('audio-microphone'); await tick(); assert.equal(published,2);
-    post({type:'visibility',visible:false}); await tick();
-    assert.equal(stopped,2);
-    assert.equal(rpcs.filter(r=>JSON.parse(r.payload).commit_turn).length,1);
-  } finally { await ui.close(); }
-});
-
-test('delivery bill shows the public calls, directs a manual boundary run and grades only on request', async () => {
-  const ui = surface(), {w, sent, post, code} = ui;
-  try {
-    const task: PracticeNotebook = {id:'75141e8f-b5ce-56c8-befc-c325019517bf',language:'python',title:'Calculate a delivery bill',
-      question:'Run the public examples and try a boundary case of your own.',
-      starter:'def bill(quantity, unit_price, delivery):\n    return quantity * unit_price + delivery',
-      assistance:true,path:'/unused',account:'learner',tests:[
-        {id:'t1',kind:'function',call:'bill(3, 20, 5)',expected:'65'},
-        {id:'t2',kind:'function',call:'bill(1, 4, 0)',expected:'4'}]};
-    post({type:'openPractice'});
-    const attempt = sent.at(-1).attempt;
-    post({type:'restoreNotebook',documentKey:task.id,notebook:practiceDocument(task)});
-    post({type:'practiceReady',attempt,practice:{...task,tools:{tests:2,trace:true,boundaryPractice:true,billSamples:deliveryBillSamples(task.id, task.tests)}},aiEnabled:true});
-    const element = w.document.querySelector('.practice-code-editor')!;
-    element.querySelector<HTMLButtonElement>('[data-tool=tests]')!.click();
-    const request = sent.at(-1).request;
-    post({type:'practiceToolResult', attempt, request, tests:task.tests.map(t =>
-      ({id:t.id, call:t.call, verdict:'passed', stdin:'Call: ' + t.call, expected:t.expected, actual:t.expected, stderr:''}))});
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const feedback = element.querySelector<HTMLElement>('.practice-tool-output')!;
-    assert.match(feedback.textContent!, /2 of 2 passed/);
-    assert.match(feedback.textContent!, /bill\(3, 20, 5\) → 65/);
-    assert.match(element.textContent!, /Practice checks incomplete.*print\(bill\(3, 20, 5\)\).*print\(bill\(1, 4, 0\)\).*zero items/s);
-    assert.equal(element.querySelector<HTMLButtonElement>('[data-tool=variation]')!.hidden, true);
-    assert.equal(sent.some(m => m.tool === 'grade'), false);
-    feedback.querySelector('button')!.click();
-    const grade = sent.at(-1);
-    assert.equal(grade.tool, 'grade');
-    post({type:'practiceToolResult',attempt,request:grade.request});
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const editor = code(element);
-    editor.dispatch({changes:{from:editor.state.doc.length,insert:'\nprint(bill(0, 20, 5))'}});
-    assert.equal(feedback.hidden, true, 'editing retires results for the old buffer');
-    const runCell = async (observed: {args:string[];result:string}[]) => {
-      element.querySelector<HTMLButtonElement>('[data-action=run]')!.click();
-      const run = sent.at(-1);
-      assert.equal(run.action, 'run');
-      post({type:'codeResult',attempt,snippet:run.snippet,revision:run.revision,request:run.request,
-        execution:{status:'exited',exit_code:0,stdout:'',stderr:'',truncated:false,
-          lessonTrace:{steps:[],limited:false,outputAligned:true,functionCalls:observed}}});
-      await new Promise(resolve => setTimeout(resolve, 0));
-    };
-    await runCell([{args:['0','20','5'],result:'5'}]);
-    assert.match(element.textContent!, /Practice checks incomplete.*print\(bill\(3, 20, 5\)\)/s);
-    editor.dispatch({changes:{from:editor.state.doc.length,insert:'\nprint(bill(3, 20, 5))\nprint(bill(1, 4, 0))'}});
-    await runCell([{args:['0','20','5'],result:'5'},{args:['3','20','5'],result:'65'},{args:['1','4','0'],result:'4'}]);
-    assert.match(element.textContent!, /Practice checks complete.*bill\(0, 20, 5\) returned 5/s);
-  } finally { await ui.close(); }
-});

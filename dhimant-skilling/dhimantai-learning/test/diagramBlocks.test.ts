@@ -1,10 +1,11 @@
 import {test} from 'node:test';
 import * as assert from 'node:assert/strict';
 import {resolve} from 'node:path';
-import { readFileSync } from 'node:fs';
+import {buildSync} from 'esbuild';
 import {JSDOM} from 'jsdom';
 
-const bundle = readFileSync(resolve(__dirname, 'fixtures/board.js'), 'utf8');
+const bundle = buildSync({stdin:{contents:"export * from './webview/markdown'; export * from './webview/diagramBlocks';", resolveDir:resolve(__dirname,'../..')},
+  bundle:true, write:false, format:'iife', globalName:'Board'}).outputFiles[0].text;
 const workflow = 'graph TD\n  A["Purchase order (submit)<br/>promise to buy — no stock, no money"] --> B["Delivery / receipt<br/>widgets enter stock"]\n  B --> C["Supplier bill<br/>money is posted"]';
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 

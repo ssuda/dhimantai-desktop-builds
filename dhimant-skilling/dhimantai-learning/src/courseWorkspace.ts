@@ -11,7 +11,7 @@ import { prepareProjectDependencies, projectRuntime, ProjectRuntime } from './pr
 import { Auth } from './auth';
 import { EnvironmentName } from './environments';
 import { ensurePodman, run, stopCourseRuntime, stream } from './podman';
-import { CourseEngine, notebookSessionFolder } from './courseEngine';
+import { CourseEngine } from './courseEngine';
 import { repairable, withCourseRepair } from './courseRecovery';
 import { courseDebug, courseDebugPort } from './courseDebug';
 import { courseExamples, verifyCourseLanguage, verifyCourseNotebook } from './courseReadiness';
@@ -236,8 +236,7 @@ export class CourseWorkspaces {
       'pytrace.py',
       'pycall.py',
       'sql_runtime.py',
-      'cells.py', 'cell_shell.py',
-      'lesson_trace.py',
+      'cells.py',
       'lab_scenarios.py'
     ];
     for (const file of helpers) {
@@ -389,7 +388,7 @@ export class CourseWorkspaces {
                 source +
                 '",target=/course' +
                 (process.platform === 'linux' ? ',relabel=private' : ''),
-              ...await this.courseMount(record),
+              ...this.projectMount(record),
               ...(process.platform === 'linux' ? ['--userns=keep-id'] : []),
               // A runaway learner program cannot take over the machine; model courses get more room.
               '--pids-limit', '1024', '--memory', (await this.recipe(s)).torch ? '3g' : '1536m',
@@ -528,7 +527,7 @@ export class CourseWorkspaces {
           const source = record.root.replace(/"/g, '""');
           await stream(bin, ['run', '--detach', '--name', name, '--label', 'ai.dhimant.course=' + record.key,
             '--label', 'ai.dhimant.recipe=' + fingerprint, '--mount', 'type=bind,"source=' + source + '",target=/course' + (process.platform === 'linux' ? ',relabel=private' : ''),
-            ...await this.courseMount(record),
+            ...this.projectMount(record),
               ...(process.platform === 'linux' ? ['--userns=keep-id'] : []), '--user', `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
             '--pids-limit','1024','--memory',release.recipe.torch ? '3g' : '1536m', '--cpus','2',
             '--env','HOME=/course/.home','--env','SHELL=/bin/zsh','--publish','127.0.0.1::5678/tcp', ...previewPublishArgs, ...mediaPorts,
@@ -619,15 +618,8 @@ export class CourseWorkspaces {
     return mounts;
   }
 
-  private async courseMount(record: CourseRecord): Promise<string[]> {
-    const mounts = this.projectBinds(record);
-    if (!record.project && !record.runtime) {
-      const source = notebookSessionFolder(record.root,record.environment,record.account,'tutor','','dhimantai-course-' + record.key);
-      await mkdir(source, {recursive:true});
-      if (await realpath(source) !== source) throw new Error('Invalid notebook storage directory.');
-      mounts.push({source, target:'/workspace'});
-    }
-    return mounts.flatMap(({source, target}) => [
+  private projectMount(record: CourseRecord): string[] {
+    return this.projectBinds(record).flatMap(({source, target}) => [
       '--mount', 'type=bind,"source=' + source.replaceAll('"','""') + '",target=' + target
         + (process.platform === 'linux' ? ',relabel=shared' : '')
     ]);

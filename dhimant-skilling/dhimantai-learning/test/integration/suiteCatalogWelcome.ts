@@ -76,35 +76,28 @@ export async function run() {
       assert.ok(!vscode.window.tabGroups.all.some(g => g.tabs.some(t => /Instructor notebook|Doubt Solver notebook/.test(t.label))),
         'welcome does not start an unsolicited learning session');
     });
-    if (desktop) await check('Project Mentor opens the project catalog in an empty window', async () => {
-      const commands = extension.packageJSON.contributes.commands as {command:string; title:string}[];
-      assert.ok(commands.some(c => c.command === 'dhimantai.openProjectMentor' && c.title === 'Open Project Mentor'));
-      assert.ok(commands.every(c => !['dhimantai.openProjectCoach', 'dhimantai.openBuildStudio'].includes(c.command)));
-      await vscode.commands.executeCommand('dhimantai.openProjectMentor');
-      const view = await learningFrame(desktop, '#results [data-project]');
-      assert.equal(await view.locator('input[name=category]:checked').inputValue(), 'type:project');
-    });
-    if (desktop) await check('Explore category chips select projects and bundles directly by click and keyboard', async () => {
+    if (desktop) await check('Category arrow keys filter courses, projects and bundles in the desktop webview', async () => {
       const view = await learningFrame(desktop,'#open-guide');
       await view.getByRole('button',{name:'Explore',exact:true}).click();
-      const categories = view.getByRole('group', {name:'Category', exact:true});
+      if (await view.locator('#toggle-filters').isVisible()) await view.locator('#toggle-filters').click();
+      const category = view.getByRole('combobox', {name:'Category', exact:true});
       const count = view.locator('#result-count');
-      await categories.getByText('Projects',{exact:true}).click();
+      await category.selectOption({label:'Courses'});
+      await category.press('ArrowDown');
+      await view.locator('#results [data-project]:visible').first().waitFor({timeout:5000});
       assert.equal(await count.textContent(), `${CATALOG_PROJECTS.length} matching projects`);
-      const bundles = categories.getByRole('radio',{name:'Bundles',exact:true});
-      await bundles.focus(); await bundles.press('Space');
-      await view.locator('#results [data-bundle]:visible').first().waitFor();
+      await category.press('ArrowDown');
+      await view.locator('#results [data-bundle]:visible').waitFor({timeout:5000});
       assert.equal(await count.textContent(), '1 matching bundle');
-      await categories.getByText('All',{exact:true}).click();
-      assert.equal(await view.locator('[data-group="type:project"] .course:visible').count(),6);
-      const colors = await view.locator('#results .course').evaluateAll(cards => cards.map(card => ({
-        group:card.closest('section')?.dataset.group, color:getComputedStyle(card).backgroundColor
-      })));
-      assert.equal(new Set(colors.filter(c => c.group === 'type:project').map(c => c.color)).size,1);
-      assert.ok(new Set(colors.map(c => c.color)).size >= 3);
-      if (process.env.DHIMANTAI_UX_OUT) await desktop.screenshot({path:join(process.env.DHIMANTAI_UX_OUT,'explore.png')});
-      await view.locator('[data-group="type:project"] .group-more').click();
-      assert.equal(await view.locator('[data-group="type:project"] .course:visible').count(),12);
+      await category.press('ArrowUp');
+      assert.equal(await count.textContent(), `${CATALOG_PROJECTS.length} matching projects`);
+      assert.equal(await category.evaluate(el => document.activeElement === el), true);
+      assert.equal(await view.locator('#results .course:visible').count(), CATALOG_PROJECTS.length);
+      await category.press('Space');
+      await desktop.keyboard.press('ArrowDown');
+      await desktop.keyboard.press('Enter');
+      assert.equal(await count.textContent(), '1 matching bundle');
+      await category.selectOption('');
     });
     if (desktop) await check('Home track shortcuts open filtered Explore using the keyboard', async () => {
       const view = await learningFrame(desktop,'#open-guide');

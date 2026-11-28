@@ -8,28 +8,12 @@ export interface LearnerMessage {
   readonly attachments: readonly File[];
 }
 
-export function bindMessageShortcut(field: HTMLTextAreaElement, submit: () => void) {
-  field.addEventListener('keydown', event => {
-    if (event.key !== 'Enter') return;
-    event.stopPropagation(); // Keep editing keys inside the webview.
-    if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey ||
-        event.isComposing || event.keyCode === 229) return;
-    event.preventDefault();
-    if (!event.repeat) submit();
-  });
-}
-
 export function bindInstructorComposer(host: {postMessage(value: unknown): void}, form: HTMLFormElement,
     deliver: (message: LearnerMessage) => unknown) {
-  let live: ReturnType<NonNullable<Window['installLearningVoice']>>;
-  const playback = window.installCoachAudio?.(host, window.installLearningVoice ? {
-    muted:()=>live?.updateAudio(), output:async id=>{await live?.output(id);}, speed:async speed=>{await live?.speed(speed);},
-  } : undefined);
-  live = window.installLearningVoice?.(host, playback);
+  const playback = window.installCoachAudio?.(host);
   const field = form.querySelector<HTMLTextAreaElement>('.composer-input textarea')!;
-  const composer = bindComposer(form, deliver);
-  const dictation = live ?? window.installDictation?.(host, field, () => playback?.listenForReply(), composer.sendDictation);
-  return {...composer, playback, dictation};
+  const dictation = window.installDictation?.(host, field, () => playback?.listenForReply());
+  return {...bindComposer(form, deliver), playback, dictation};
 }
 
 export function bindComposer(form: HTMLFormElement, deliver: (message: LearnerMessage) => unknown,
@@ -95,9 +79,10 @@ export function bindComposer(form: HTMLFormElement, deliver: (message: LearnerMe
     const message: LearnerMessage = {text:field.value, attachments:attachments.snapshot()};
     if (message.text.trim() || message.attachments.length) void deliver(message);
   };
-  bindMessageShortcut(field, () => {
-    if (!stopping) send.click();
-  });
+  form.addEventListener('keydown', event => {
+    // Keep multiline editing inside the webview without invoking a workbench shortcut.
+    if (event.target === field && event.key === 'Enter') event.stopPropagation();
+  }, true);
   function setAvailable(enabled: boolean, stop = false) {
     available = enabled;
     stopping = stop;
@@ -105,10 +90,5 @@ export function bindComposer(form: HTMLFormElement, deliver: (message: LearnerMe
     lockAttachments(!enabled || stop);
   }
   setAvailable(false);
-  function sendDictation() {
-    if (send.disabled || stopping || attachments.count) return false;
-    send.click();
-    return true;
-  }
-  return {attachments, cancelCapture, setAvailable, sendDictation};
+  return {attachments, cancelCapture, setAvailable};
 }

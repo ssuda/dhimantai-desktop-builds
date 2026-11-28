@@ -10,38 +10,18 @@ const LAYOUT = new Set(['Section Break', 'Column Break', 'Tab Break', 'HTML', 'B
 interface DocField { fieldname: string; label?: string; fieldtype: string; reqd?: number; read_only?: number; hidden?: number; options?: string }
 interface DocType { name: string; fields: DocField[]; is_submittable?: number }
 
-export class FrappeLoginError extends Error {
-  constructor() {super('ERPNext did not accept the training login. Check the account and password.');}
-}
-
 /** Frappe applications (ERPNext, Frappe HR, CRM…): REST resources and DocType metadata. */
 export class FrappeServer implements AppServer {
   readonly app = 'frappe';
   private cookie = '';
-  private deskPath?: string;
   constructor(private readonly origin: string, private readonly user: string, private readonly password: string,
       private readonly request: Fetch = fetch) {}
   async login() {
-    if (this.cookie) return;
-    let response: Response;
-    try {
-      response = await this.request(this.origin + '/api/method/login', {method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: new URLSearchParams({usr: this.user, pwd: this.password}), redirect: 'error', signal: AbortSignal.timeout(15000)});
-    } catch (error) {
-      const cause = error instanceof Error ? error.cause as {code?: string; message?: string} | undefined : undefined;
-      if (cause?.code && /CERT|SELF_SIGNED|ISSUER/.test(cause.code))
-        throw new Error('The ERPNext training site’s HTTPS certificate could not be verified.');
-      if (cause?.message === 'unexpected redirect')
-        throw new Error('The ERPNext training login redirected. Use the site’s final HTTPS origin and a training account with ERPNext password login.');
-      const reason = cause?.code && /^[A-Z0-9_]{1,48}$/.test(cause.code) ? ` (${cause.code})` : '';
-      throw new Error('Could not reach the ERPNext training site at ' + this.origin + reason + '. Check its address and network connection.');
-    }
+    const response = await this.request(this.origin + '/api/method/login', {method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({usr: this.user, pwd: this.password}), signal: AbortSignal.timeout(15000)});
     const sid = /(?:^|[,;\s])sid=([^;,\s]+)/.exec(response.headers.get('set-cookie') ?? '')?.[1];
-    if (response.status === 401 || response.status === 403) throw new FrappeLoginError();
-    if (!response.ok || !sid || sid === 'Guest') throw new Error('This site did not return an ERPNext training session. Check the site URL and its sign-in method.');
-    const home = (await response.json().catch(() => ({})) as {home_page?: unknown}).home_page;
-    this.deskPath = home === '/app' || home === '/desk' ? home : undefined;
+    if (!response.ok || !sid || sid === 'Guest') throw new Error('The Frappe sandbox did not accept the login.');
     this.cookie = 'sid=' + sid;
   }
   private async get(path: string, body?: unknown): Promise<Response> {
@@ -49,7 +29,7 @@ export class FrappeServer implements AppServer {
       if (!this.cookie) await this.login();
       const response = await this.request(this.origin + path, {headers: {Cookie: this.cookie, Accept: 'application/json',
         ...(body === undefined ? {} : {'Content-Type': 'application/json'})}, ...(body === undefined ? {} : {method: 'POST', body: JSON.stringify(body)}),
-        redirect: 'error', signal: AbortSignal.timeout(30000)});
+        signal: AbortSignal.timeout(30000)});
       if (response.status === 401 || response.status === 403) { this.cookie = ''; continue; }
       return response;
     }
@@ -95,11 +75,4 @@ export class FrappeServer implements AppServer {
   }
   async createdBy(record: Record<string, unknown>, login: string) { return record.owner === login; }
   sessionCookie() { return this.cookie ? {name: 'sid', value: this.cookie.slice(4)} : undefined; }
-  landingPath() {return this.deskPath;}
-
-  async logout() {
-    const cookie = this.cookie;
-    this.cookie = '';
-    if (cookie) await this.request(this.origin + '/api/method/logout', {headers: {Cookie: cookie}, redirect: 'error', signal: AbortSignal.timeout(5000)});
-  }
 }

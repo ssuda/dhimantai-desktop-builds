@@ -93,8 +93,6 @@ test('Doubt Solver requires an entitled course chapter and runs in that course c
     await panel.send({type:'join',mode:'doubt_solver',attempt:1,chapterId:'java'});
     assert.equal(panel.posted.find((m:any)=>m.type==='grant')?.codeRuntime,'Java Programming · Podman');
     assert.equal(panel.posted.find((m:any)=>m.type==='grant')?.doubtContext.chapter_id,'java');
-    assert.equal(panel.posted.find((m:any)=>m.type==='restoreNotebook' && m.attempt===1)?.codeLanguage,'java');
-    assert.equal(panel.posted.find((m:any)=>m.type==='grant')?.codeLanguage,'java');
     for(const [request,language,source] of [[1,'java','class Main { public static void main(String[] a) {} }'],[2,'c','int main() { return 0; }']] as const) {
       await panel.send({...snapshot,type:'codeAction',attempt:1,request,snippet:'code-'+request,language,source,action:'run',message:''});
       assert.equal(panel.posted.find((m:any)=>m.type==='codeResult' && m.request===request)?.execution?.exit_code,0);
@@ -125,76 +123,6 @@ test('Doubt Solver requires an entitled course chapter and runs in that course c
   } finally {
     Api.prototype.practiceCatalog=catalog;NotebookCells.prototype.run=run;NotebookCells.prototype.restart=restart;Api.prototype.learningRoom=grant;vscode.window.activeTextEditor=editor;
     for(const panel of panels)if(!panel.disposed)panel.dispose();
-    await rm(storage,{recursive:true,force:true});
-  }
-});
-
-test('Terminal and Linux Basics opens Zsh for new and reopened Instructor notebooks', async t => {
-  const course = 'Terminal and Linux Basics', chapter = 'shell-intro';
-  const storage = await mkdtemp(join(tmpdir(),'instructor-shell-'));
-  const context:any = {subscriptions:[], extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
-    globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:()=>undefined,update:async()=>{}}};
-  const auth:any = {session:async()=>({user:{id:'learner'},access_token:'token'})};
-  t.mock.method(Api.prototype,'practiceCatalog',async()=>({courses:[{name:course,chapters:[{id:chapter,name:'Shell navigation'}]}]}));
-  t.mock.method(Api.prototype,'learningRoom',async()=>({url:'wss://lk-prod.dhimant.ai',token:'grant'}));
-  try {
-    registerLearningRoom(context,()=> 'production',()=>({apiUrl:'https://api.example'}) as any,auth);
-    await commands.get('dhimantai.openLearningRoom')!(course,chapter);
-    const panel = panels.at(-1);
-    const join = (attempt:number) => panel.send({type:'join',mode:'tutor',attempt,chapterId:chapter});
-    const restored = () => panel.posted.filter((m:any)=>m.type==='restoreNotebook').at(-1);
-    await join(1);
-    assert.equal(restored().terminal,'zsh');
-    assert.equal(restored().autoOpenTerminal,true);
-    assert.equal(restored().codeLanguage,'bash');
-    const code = {id:'old-bash',kind:'code',text:'pwd',packet:{language:'bash'}};
-    // A notebook saved by an earlier release has only the learner's code cell.
-    await panel.send({type:'notebookChanged',documentKey:restored().documentKey,sequence:1,notebook:{...restored().notebook,cells:[code]}});
-    await panel.send({type:'reloadNotebook',documentKey:restored().documentKey});
-    assert.equal(restored().terminal,'zsh');
-    assert.equal(restored().autoOpenTerminal,true);
-    assert.deepEqual(restored().notebook.cells,[code]);
-    await join(2);
-    assert.equal(restored().terminal,'zsh');
-    assert.equal(restored().autoOpenTerminal,true);
-    assert.deepEqual(restored().notebook.cells,[code]);
-  } finally {
-    for (const panel of panels) if (!panel.disposed) panel.dispose();
-    await rm(storage,{recursive:true,force:true});
-  }
-});
-
-test('Instructor restores the selected course terminal policy and code language when changing lessons', async t => {
-  const cases = [
-    ['Git for Everyday Engineering','zsh',true,'python'],
-    ['VS Code for Everyday Engineering','zsh',false,'python'],
-    ['AI-Assisted PostgreSQL DBA','postgres',false,'sql'],
-    ['IBM Db2 LUW Administration (DBA)','db2',true,'python'],
-    ['Python',undefined,false,'python'],
-  ] as const;
-  const storage = await mkdtemp(join(tmpdir(),'instructor-terminals-'));
-  const context:any = {subscriptions:[],extensionUri:{fsPath:resolve(__dirname,'../..')},extensionPath:resolve(__dirname,'../..'),
-    globalStorageUri:{fsPath:storage},secrets:{onDidChange:()=>disposable},globalState:{get:()=>undefined,update:async()=>{}}};
-  const auth:any = {session:async()=>({user:{id:'learner'},access_token:'token'})};
-  t.mock.method(Api.prototype,'practiceCatalog',async()=>({courses:cases.map(([name],i)=>({name,chapters:[{id:'lesson-'+i,name:'First lesson'}]}))}));
-  t.mock.method(Api.prototype,'learningRoom',async()=>({url:'wss://lk-prod.dhimant.ai',token:'grant'}));
-  try {
-    registerLearningRoom(context,()=> 'production',()=>({apiUrl:'https://api.example'}) as any,auth);
-    await commands.get('dhimantai.openLearningRoom')!();
-    const panel=panels.at(-1);
-    for (const [i,[course,terminal,autoOpenTerminal,codeLanguage]] of cases.entries()) {
-      await panel.send({type:'join',mode:'tutor',attempt:i+1,chapterId:'lesson-'+i});
-      assert.ok(panel.posted.some((m:any)=>m.type==='grant' && m.attempt===i+1),course);
-      const restored=panel.posted.filter((m:any)=>m.type==='restoreNotebook').at(-1);
-      assert.deepEqual([restored.terminal,restored.autoOpenTerminal,restored.codeLanguage],[terminal,autoOpenTerminal,codeLanguage],course);
-      if (terminal === 'db2') {
-        await panel.send({...snapshot,type:'codeAction',attempt:i+1,request:72,action:'run',language:'sql',source:'VALUES CURRENT SERVER;',message:''});
-        const result=panel.posted.find((m:any)=>m.type==='codeResult' && m.request===72 && (m.error || m.execution));
-        assert.match(result?.error ?? result?.execution?.stderr ?? '',/Db2 SQL terminal/);
-      }
-    }
-  } finally {
-    for(const panel of panels) if(!panel.disposed) panel.dispose();
     await rm(storage,{recursive:true,force:true});
   }
 });
@@ -786,53 +714,6 @@ test('Course Notes follows notebook edits and writes through the lesson that own
   } finally {
     Api.prototype.learningRoom=grant;
     for(const panel of panels) if(!panel.disposed) panel.dispose();
-    await rm(storage,{recursive:true,force:true});
-  }
-});
-
-test('Equipment Desk chapter links and accessible picker selections open their guided project', async t => {
-  const course = 'Web App Development with PHP, Laravel, MySQL & React';
-  const request = '6050fa5c-6bfc-5532-a4b9-39e464db5810', php = '70b4d92f-63de-53bb-affc-1307a9fd387e';
-  const schema = '34d9fc95-4cce-54aa-a875-bc408b5b5e0c';
-  const chapters = [{id:request, name:'Follow a checkout'}, {id:php, name:'Model stock', locked:true},
-    {id:schema, name:'Design the inventory'}];
-  const storage = await mkdtemp(join(tmpdir(),'equipment-chapter-'));
-  const context:any = {subscriptions:[], extensionUri:{fsPath:resolve(__dirname,'../..')}, extensionPath:resolve(__dirname,'../..'),
-    globalStorageUri:{fsPath:storage}, secrets:{onDidChange:()=>disposable}, globalState:{get:()=>undefined,update:async()=>{}}};
-  const auth:any = {session:async()=>({user:{id:'learner'}})};
-  const launches:unknown[] = [];
-  t.mock.method(vscode.commands,'executeCommand',async (id:string, target:unknown) => {
-    if (id === 'dhimantai.openProjectMentor') launches.push(target);
-  });
-  t.mock.method(Api.prototype,'practiceCatalog',async()=>({courses:[{name:course,chapters}],languages:[],question_pools:[]}));
-  const grants = t.mock.method(Api.prototype,'learningRoom',async()=>({url:'wss://lk-prod.dhimant.ai',token:'grant'}));
-  try {
-    registerLearningRoom(context,()=> 'production',()=>({apiUrl:'https://api.example'}) as any,auth);
-    const open = commands.get('dhimantai.openLearningRoom')!;
-    const before = panels.length;
-    await open(course,request);
-    assert.equal(panels.length,before);
-    await open();
-    const picker = panels.at(-1);
-    const choose = (attempt:number, chapterId:string) => picker.send({type:'join', mode:'tutor', attempt, chapterId});
-    await choose(1,request);
-    await choose(2,php);
-    assert.equal(picker.posted.at(-1).type,'failed');
-    chapters[1].locked = false;
-    await choose(3,php);
-    assert.equal(picker.posted.at(-1).type,'projectLesson');
-    assert.deepEqual(launches,['request','request','php'].map(lesson=>({project:'equipment-desk',mode:'guided',lesson})));
-    assert.equal(grants.mock.callCount(),0);
-    const manifest=JSON.parse(readFileSync(resolve(__dirname,'../../media/build-studio/entries.json'),'utf8'));
-    assert.equal(manifest.entries.length,8);
-    for (const [index, entry] of manifest.entries.slice(2).entries()) {
-      if(entry.chapter!==schema)chapters.push({id:entry.chapter,name:entry.title});
-      await choose(4+index,entry.chapter);
-      assert.deepEqual(launches.at(-1),{project:'equipment-desk',mode:'guided',lesson:entry.id});
-    }
-    assert.equal(grants.mock.callCount(),0);
-  } finally {
-    for (const panel of panels) if (!panel.disposed) panel.dispose();
     await rm(storage,{recursive:true,force:true});
   }
 });

@@ -18,7 +18,6 @@ export class SpeakerControl {
   constructor(private readonly main: HTMLButtonElement, private readonly options: {
     supported: () => boolean;
     select: (deviceId: string) => Promise<void>;
-    onChosen?: () => void;
     actions?: HTMLElement;
     menuLabel?: string;
     playback?: (speed: number) => Promise<void>;
@@ -138,13 +137,12 @@ export class SpeakerControl {
     const revision = ++this.revision;
     this.devices.replaceChildren();
     this.notice.textContent = 'Loading audio outputs…';
+    if (!this.options.supported() || !navigator.mediaDevices?.enumerateDevices) {
+      this.notice.textContent = 'Use your computer’s sound settings to choose the audio output.';
+      return;
+    }
     try {
-      const canList = this.options.supported() && !!navigator.mediaDevices?.enumerateDevices;
-      if (!canList && !this.options.onChosen) {
-        this.notice.textContent = 'Use your computer’s sound settings to choose the audio output.';
-        return;
-      }
-      const all = canList ? await navigator.mediaDevices.enumerateDevices() : [];
+      const all = await navigator.mediaDevices.enumerateDevices();
       if (revision !== this.revision) return;
       const outputs = all.filter(d => d.kind === 'audiooutput' && d.deviceId && d.deviceId !== 'default');
       if (this.selected !== 'default' && !outputs.some(d => d.deviceId === this.selected)) {
@@ -164,8 +162,7 @@ export class SpeakerControl {
         option.onclick = () => { void this.choose(device.deviceId); };
         this.devices.append(option);
       }
-      this.notice.textContent = !canList ? 'Use your computer’s sound settings to choose the audio output.'
-        : outputs.length ? '' : 'Your computer’s default output is available.';
+      this.notice.textContent = outputs.length ? '' : 'Your computer’s default output is available.';
       if (focus && !this.picker.hidden) this.devices.querySelector<HTMLButtonElement>('[aria-pressed=true]')?.focus();
     } catch {
       if (revision === this.revision) this.notice.textContent = 'Could not list audio outputs. Try opening the picker again.';
@@ -182,7 +179,6 @@ export class SpeakerControl {
     try {
       await this.options.select(deviceId);
       this.selected = deviceId;
-      this.options.onChosen?.();
       restoreFocus = !this.picker.hidden;
       this.close(false);
     } catch {

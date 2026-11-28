@@ -2,18 +2,16 @@ import type { NotebookCell } from './tutorNotebook';
 import type { CodeSnapshot, observedRun } from './roomCode';
 
 export interface SharedNotebookCell {
-  id: string; kind: 'code' | 'terminal' | 'board' | 'message' | 'diagram' | 'recap' | 'voice';
+  id: string; kind: 'code' | 'board' | 'message' | 'diagram' | 'recap' | 'voice';
   text: string; language?: string; stdin?: string;
   run?: {success:boolean; output:string; stderr:string; incomplete:boolean};
   truncated: boolean;
 }
 export interface SharedNotebookContext {cells: SharedNotebookCell[]; truncated: boolean}
 type Context = {snapshot: CodeSnapshot; run?: ReturnType<typeof observedRun>};
-/** The visible tail of a live terminal cell: commands the learner typed and the program's replies. */
-export type TerminalScreen = {id: string; program: string; text: string; truncated: boolean};
 
 /** Only public, active-notebook material. Never include private notes, drafts or input files. */
-export function notebookContext(cells: NotebookCell[], code: Context[], selected?: string, terminals: TerminalScreen[] = []): SharedNotebookContext {
+export function notebookContext(cells: NotebookCell[], code: Context[], selected?: string): SharedNotebookContext {
   const entries: SharedNotebookCell[] = [
     ...[...code].sort((a,b) => Number(b.snapshot.snippet === selected) - Number(a.snapshot.snippet === selected)).map(({snapshot:s,run}) => ({
       id:s.snippet, kind:'code' as const, language:s.language, text:s.source.slice(0,2400), stdin:s.stdin.slice(0,600),
@@ -21,9 +19,7 @@ export function notebookContext(cells: NotebookCell[], code: Context[], selected
         incomplete:run.incomplete || run.output.length>1000 || run.stderr.length>400}} : {}),
       truncated:s.source.length>2400 || s.stdin.length>600,
     })),
-    ...terminals.map(t => ({id:t.id, kind:'terminal' as const, language:t.program.slice(0,32), text:t.text.slice(-1500),
-      truncated:t.truncated || t.text.length>1500})),
-    ...cells.filter(c => c.kind !== 'note' && c.kind !== 'code' && c.kind !== 'terminal').slice().reverse().map(c => ({
+    ...cells.filter(c => c.kind !== 'note' && c.kind !== 'code').slice().reverse().map(c => ({
       id:c.id,kind:c.kind as SharedNotebookCell['kind'],text:c.text.slice(0,1500),truncated:c.text.length>1500,
     })),
   ];
@@ -45,7 +41,7 @@ export function sharedNotebookContext(value: unknown): SharedNotebookContext | u
   if (!Array.isArray(v.cells) || v.cells.length>24 || typeof v.truncated!=='boolean'
       || new TextEncoder().encode(JSON.stringify(v)).length>10000) return;
   if (v.cells.some(c => !c || typeof c.id!=='string' || !/^[\w-]{1,100}$/.test(c.id)
-      || !['code','terminal','board','message','diagram','recap','voice'].includes(c.kind) || typeof c.text!=='string' || c.text.length>3000
+      || !['code','board','message','diagram','recap','voice'].includes(c.kind) || typeof c.text!=='string' || c.text.length>3000
       || typeof c.truncated!=='boolean' || (c.stdin!==undefined && (typeof c.stdin!=='string' || c.stdin.length>600))
       || (c.language!==undefined && (typeof c.language!=='string' || c.language.length>32))
       || (c.run!==undefined && (!c.run || typeof c.run.success!=='boolean' || typeof c.run.output!=='string' || c.run.output.length>1000

@@ -7,7 +7,7 @@ import type { DiagramLanguage } from './diagramBlocks';
 // Keep labels as SVG text so they pass through our existing passive-image sanitizer.
 mermaid.initialize({startOnLoad:false, securityLevel:'strict', htmlLabels:false,
   suppressErrorRendering:true, maxTextSize:30000, maxEdges:500, theme:'default',
-  flowchart:{htmlLabels:false, useMaxWidth:false, wrappingWidth:240, nodeSpacing:48, rankSpacing:56, padding:14, curve:'linear'},
+  flowchart:{htmlLabels:false, useMaxWidth:false, wrappingWidth:240},
   secure:['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'maxEdges', 'htmlLabels',
     'flowchart', 'theme', 'themeCSS', 'fontFamily', 'suppressErrorRendering']});
 let graphviz: ReturnType<typeof instance> | undefined, sequence = 0;

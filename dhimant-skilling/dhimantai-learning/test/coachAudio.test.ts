@@ -150,52 +150,9 @@ test('blocked or interrupted audio exposes a gesture; silent output never report
     m.nodes[0].port.onmessage({data: {type: 'empty'}});
     assert.match(m.btn('audio-status').textContent!, /No spoken explanation/);
     assert.match(m.btn('audio-toggle').title, /No spoken explanation/, 'failure recovery is available without visible status text');
-    assert.equal(m.contexts[0].state, 'running');
-    assert.equal(m.btn('audio-toggle').getAttribute('aria-label'), 'Retry spoken explanation');
-    assert.equal(m.btn('audio-status').classList.contains('audio-sr-only'), false);
+    assert.equal(m.contexts[0].state, 'closed');
     m.btn('audio-toggle').click(); m.post({...m.sent.at(-1), type: 'audioError'});
-    assert.match(m.btn('audio-status').textContent!, /speech service is unavailable/);
-  } finally { m.off(); m.dom.window.close(); }
-});
-
-test('an explicit output choice enables speech, retries the failed reply once, and keeps subsequent replies audible', async () => {
-  const m = mount();
-  const choose = async (label: string) => {
-    m.win.document.querySelector<HTMLButtonElement>('.audio-chevron')!.click(); await tick();
-    const buttons = m.win.document.querySelectorAll<HTMLButtonElement>('[aria-label="Audio output devices"] button');
-    [...buttons].find(button => button.textContent === label)!.click(); await tick();
-  };
-  try {
-    m.playback.reply('php');
-    await choose('System default');
-    const first = m.sent.at(-1);
-    assert.equal(first.type, 'audioJoin');
-    m.post({...first, type:'audioGrant'}); await m.subscribe();
-    m.rooms[0].handlers.get('DataReceived')!(new TextEncoder().encode('error'), {identity:'dhimantai-coach'}, 0, 'dhimantai.coach.playback');
-    assert.match(m.btn('audio-status').textContent!, /could not generate/);
-    assert.equal(m.rooms[0].disconnected, true);
-    assert.equal(m.btn('audio-toggle').getAttribute('aria-pressed'), 'true');
-    const count = m.sent.length;
-    m.playback.reply('php');
-    m.win.navigator.mediaDevices.dispatchEvent(new m.win.Event('devicechange'));
-    await tick(); assert.equal(m.sent.length, count, 'refreshing devices or the same text cannot start a retry');
-    await choose('USB headset');
-    const retry = m.sent.at(-1);
-    assert.equal(m.sent.length, count + 1);
-    assert.equal(retry.id, 'php'); assert.ok(retry.attempt > first.attempt);
-    m.post({...first, type:'audioError'}); m.post({...retry, type:'audioGrant'}); await m.subscribe();
-    m.rendered('playing');
-    assert.equal(m.btn('audio-status').textContent, 'Explaining…');
-    assert.deepEqual(m.contexts[0].sinks, ['usb']);
-    m.post({...retry, type:'audioError', message:'Could not reach the speech service. Check your connection, then select the speaker to retry.'});
-    assert.match(m.btn('audio-status').textContent!, /Check your connection/);
-    m.playback.reply('laravel');
-    const next = m.sent.at(-1);
-    assert.equal(next.id, 'laravel'); assert.equal(next.type, 'audioJoin');
-    m.post({...next, type:'audioGrant'}); await m.subscribe(); m.rendered('playing');
-    assert.equal(m.btn('audio-status').textContent, 'Explaining…');
-    assert.equal(m.contexts.length, 1);
-    assert.equal(m.elements.at(-1), m.elements[0]);
+    assert.match(m.btn('audio-status').textContent!, /Spoken explanation unavailable/);
   } finally { m.off(); m.dom.window.close(); }
 });
 

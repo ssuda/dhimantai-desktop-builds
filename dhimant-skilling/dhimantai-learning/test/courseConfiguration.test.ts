@@ -10,8 +10,7 @@ const fresh=()=>{const c=authoredConfiguration('A newly published course');c.rec
 test('a new title and its tools, notebooks and ports need no desktop registration',()=>{
  const c=fresh();c.ports=[{port:3000,protocol:'tcp'}];assert.equal(courseConfiguration(c,c.title),c);
  for(const corrupt of [(x:any)=>x.ports=[{port:22,protocol:'tcp'}],(x:any)=>x.notebooks[0].name='../../escape.ipynb',
- (x:any)=>x.instructor_terminal={kind:'db2',auto_open:'yes'},(x:any)=>x.instructor_terminal={kind:'postgres',auto_open:true},
- (x:any)=>x.instructor_terminal={kind:'arbitrary',auto_open:true},(x:any)=>x.compute.default={nodes:1,gpusPerNode:1,totalGpus:8},(x:any)=>x.recipe.language='arbitrary',
+ (x:any)=>x.compute.default={nodes:1,gpusPerNode:1,totalGpus:8},(x:any)=>x.recipe.language='arbitrary',
  (x:any)=>x.datasets.bad={sql:'altered',sha256:'0'.repeat(64),about:{}}]) {const value=fresh();corrupt(value);assert.throws(()=>courseConfiguration(value,value.title));}
 });
 test('configuration scopes account and environment, refreshes without a release, and refuses an account switch during fetch',async()=>{

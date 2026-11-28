@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { mentorLanguageControl } from '../src/coachingLanguage';
 import { messageComposer } from '../src/learningComposer';
 import { JSDOM } from 'jsdom';
 
@@ -11,7 +10,7 @@ function panel(withSpeaker = false) {
   const source = readFileSync(join(__dirname, '../../src/projectCoach.ts'), 'utf8');
   const html = source.slice(source.indexOf('<body>'), source.indexOf('</body>') + 7).replace(/<script[\s\S]*?<\/script>/g, '')
     .replace(/\$\{instructorComposer\(webview, media, nonce, \{[\s\S]*?support:`([\s\S]*?)`\}\)\}/, (_, support) =>
-      messageComposer({assistant:'Project Mentor', maxlength:600, sendId:'ask', camera:true, audio:withSpeaker ? '<div id="coach-audio"><button type="button" id="audio-toggle"></button><span id="audio-status"></span></div>' : '', support:support + mentorLanguageControl}));
+      messageComposer({assistant:'Instructor', maxlength:600, sendId:'ask', camera:true, audio:withSpeaker ? '<div id="coach-audio"><button type="button" id="audio-toggle"></button><span id="audio-status"></span></div>' : '', support}));
   const dom = new JSDOM(html, {runScripts: 'outside-only'}), sent: any[] = [];
   (dom.window as any).acquireVsCodeApi = () => ({postMessage: (m: unknown) => sent.push(m)});
   dom.window.eval(readFileSync(join(__dirname, '../../media/coachMarkdown.js'), 'utf8'));
@@ -94,7 +93,7 @@ test('project refresh preserves message nodes, reading position and a draft whil
     post({messages: [...messages, {role: 'tutor', text: 'A delayed reply.'}], revision: 3});
     assert.equal(content.scrollTop, 400, 'new replies do not drag someone away from earlier messages');
     assert.equal(draft.value, 'My next question');
-    assert.equal(row?.querySelector('strong')?.textContent, 'Project Mentor');
+    assert.equal(row?.querySelector('strong')?.textContent, 'Instructor');
   } finally { dom.window.close(); }
 });
 
@@ -227,7 +226,7 @@ test('milestone references expose anchors and help progresses without losing the
     assert.equal(doc.getElementById('expected')!.textContent, 'Groups by decade.');
     assert.equal(doc.getElementById('hint')!.textContent, 'Try a smaller step');
     post({hintLevel: 2, signedIn: true});
-    assert.equal(doc.getElementById('hint')!.textContent, 'Ask the mentor');
+    assert.equal(doc.getElementById('hint')!.textContent, 'Ask the Instructor');
     post({hintLevel: 2, signedIn: true, ai: false});
     assert.equal(doc.getElementById('hint')!.textContent, 'Review next step');
     assert.equal((doc.getElementById('hint') as HTMLButtonElement).disabled, false);

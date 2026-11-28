@@ -1,5 +1,5 @@
 /** No selectors, scripts, arbitrary URLs or values cross the Instructor action boundary. */
-export const BROWSER_ACTIONS=['open_source','prepare_draft','fill_routine','inspect_result','show_task'] as const;
+export const BROWSER_ACTIONS=['open_source','prepare_draft','fill_routine','inspect_result'] as const;
 export interface BrowserDemonstration {
   id:string; task:string; snapshot:string; action:typeof BROWSER_ACTIONS[number];
 }
@@ -9,8 +9,7 @@ export function validDemonstration(value:unknown):value is BrowserDemonstration 
   const v=value as Record<string,unknown>;
   return Object.keys(v).sort().join(',')==='action,id,snapshot,task'&&typeof v.id==='string'&&/^[a-f0-9]{32}$/.test(v.id)
     &&typeof v.snapshot==='string'&&/^[a-f0-9]{32}$/.test(v.snapshot)&&typeof v.task==='string'
-    &&(v.action==='show_task' ? /^[a-z0-9-]{1,40}$/.test(v.task) : ['stock','payables','delivery','receivables'].includes(v.task))
-    &&BROWSER_ACTIONS.includes(v.action as typeof BROWSER_ACTIONS[number]);
+    &&['stock','payables','delivery','receivables'].includes(v.task)&&BROWSER_ACTIONS.includes(v.action as typeof BROWSER_ACTIONS[number]);
 }
 export function validDemonstrationResult(value:unknown):value is DemonstrationResult {
   if(!value||typeof value!=='object'||Array.isArray(value))return false;

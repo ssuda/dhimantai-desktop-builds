@@ -1,9 +1,6 @@
-import {bindNotebookMicrophone, notebookMicrophoneScript} from './learningVoice';
-import {practiceVoiceMode} from './practiceVoiceMode';
-import { audioPolicy } from './voiceHosts';
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
-import { dictationStatus, microphoneControl } from './dictation';
+import { bindDictation, dictationStatus, microphoneControl } from './dictation';
 import { Api, WrittenPractice } from './api';
 import { practiceReviews } from './crtPracticeReview';
 import { assessmentForTask } from './crtAssessmentForms';
@@ -46,15 +43,15 @@ function taskHtml(question: string): string {
   }
   return html + escape(question.slice(position));
 }
-export function writtenHtml(task: WrittenPractice, draft: Draft, nonce: string, help: Help = {next: 1, waiting: false}, media?: (file: string) => string, cspSource = '', capture?: Capture, canGoBack = false, microphoneScript = 'dictation.js'): string {
+export function writtenHtml(task: WrittenPractice, draft: Draft, nonce: string, help: Help = {next: 1, waiting: false}, media?: (file: string) => string, cspSource = '', capture?: Capture, canGoBack = false): string {
   const guide = practiceReviews[task.id];
   const labels = JSON.stringify(HELP_LEVELS.map(level => ({label: level.label, message: level.message}))).replace(/</g, '\\u003c');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Written practice</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src ${audioPolicy}; style-src 'nonce-${nonce}' ${cspSource}; script-src 'nonce-${nonce}'; media-src ${recordingRoot}; img-src ${cspSource} ${recordingRoot}">
-  ${media ? `<link rel="stylesheet" href="${media('audioControls.css')}"><script nonce="${nonce}" src="${media('livekit-client.umd.js')}"></script><script nonce="${nonce}" src="${media(microphoneScript)}"></script><script nonce="${nonce}" src="${media('learning-room/composer.js')}"></script>` : ''}
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}' ${cspSource}; script-src 'nonce-${nonce}'; media-src ${recordingRoot}; img-src ${cspSource} ${recordingRoot}">
+  ${media ? `<link rel="stylesheet" href="${media('audioControls.css')}"><script nonce="${nonce}" src="${media('dictation.js')}"></script>` : ''}
   <style nonce="${nonce}">${UI_TOKENS}body{max-width:1280px;margin:24px auto;padding:0 clamp(14px,3vw,36px);font: max(15px,var(--vscode-font-size,13px))/1.55 var(--vscode-font-family,sans-serif);color:var(--vscode-foreground);background:var(--vscode-editor-background)}
   h1{font-size:1.5em}pre{white-space:pre-wrap;font:inherit}code.figure{display:block;overflow-x:auto;white-space:pre;font-family:var(--vscode-editor-font-family,monospace)}.chart{display:block;max-width:100%;height:auto}.recording audio{max-width:100%;vertical-align:middle}label{display:block;margin-top:18px}textarea,input{box-sizing:border-box;width:100%;padding:10px;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,var(--vscode-panel-border));font:inherit}
-  textarea{resize:vertical}#answer{min-height:220px}button{margin:14px 8px 0 0;padding:8px 14px;color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground);border:1px solid var(--dh-button-border)}
+  textarea{min-height:220px;resize:vertical}button{margin:14px 8px 0 0;padding:8px 14px;color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground);border:1px solid var(--dh-button-border)}
   .muted{color:var(--dh-muted)}.ladder{margin-top:14px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}.ladder button{margin:0}:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}#feedback:not(:empty){border-inline-start:3px solid var(--dh-accent);padding:12px;background:var(--dh-surface)}
   header h1{margin:4px 0 16px;font-size:clamp(21px,2.2vw,32px)}header p{margin:0}.written-workspace{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.2fr);align-items:start;gap:16px}
   .written-brief,.written-answer{min-width:0;padding:clamp(12px,2vw,24px);border:1px solid var(--dh-border);border-radius:var(--dh-radius);background:var(--dh-surface)}
@@ -73,23 +70,14 @@ export function writtenHtml(task: WrittenPractice, draft: Draft, nonce: string, 
   <label for="assistance">Help used</label><input id="assistance" maxlength="900" value="${escape(draft.assistance)}" placeholder="Documentation, Instructor, AI or peer help; write none if unaided">
   <div class="ladder"><span>Stuck?</span><button type="button" id="hint" class="secondary"></button><span id="help-steps" class="muted"></span></div>
   <p id="help-note" class="muted" hidden></p>
-  <label for="message">Question for Instructor (optional)</label><textarea id="message" rows="2" maxlength="600" placeholder="Enter to ask, Shift+Enter for a new line"></textarea>${microphoneControl}${dictationStatus}
+  <label for="message">Question for Instructor (optional)</label><input id="message" maxlength="600">${microphoneControl}${dictationStatus}
   <div class="ladder"><button type="button" id="attach" class="secondary">Attach photo or PDF</button><button type="button" id="detach" class="secondary" hidden>Remove</button><span id="attached" class="muted">A screenshot, a diagram or handwritten working. Up to 4 files, 2 MB each.</span></div>
   <button type="button" id="review">Submit for feedback</button>
   <p class="muted">Your draft stays on this computer. Feedback is guidance, not a verified grade or mastery award. You can start any other course without completing this task.</p>
   <p id="status" role="status"></p><div class="written-feedback" hidden><strong class="speaker-name"><span class="speaker-avatar" aria-hidden="true"></span>Instructor</strong><pre id="feedback" aria-live="polite"></pre></div></section></main>
   <script nonce="${nonce}">
   const host=acquireVsCodeApi(), answer=document.getElementById('answer'), assistance=document.getElementById('assistance'), message=document.getElementById('message'), status=document.getElementById('status');
-  const dictation=window.installLearningVoice?.(host,undefined,()=>{
-    usedTutor=true;save();host.postMessage({type:'writtenVoiceHelp'});
-  }) ?? window.installDictation?.(host,message,undefined,()=> {
-    const hint=document.getElementById('hint');
-    if(hint.disabled || !document.getElementById('detach').hidden)return false;
-    hint.click();return true;
-  });
-  window.LearningComposer?.bindMessageShortcut(message,()=>{
-    if(message.value.trim() || !document.getElementById('detach').hidden) document.getElementById('hint').click();
-  });
+  const dictation=window.installDictation?.(host,message);
   dictation?.setScope('written');
   const levels=${labels}, max=${MAX_HELP_LEVEL};
   let busy=false, usedTutor=${draft.usedTutor}, sequence=0, saveTimer, help={next:${Number(help.next)},waiting:${help.waiting === true}};
@@ -165,26 +153,20 @@ export async function openWrittenPractice(context: vscode.ExtensionContext, task
   const {level, waiting} = helpState(opened);
   const nonce = randomBytes(16).toString('base64');
   const media = (file:string) => panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri,'media',file)).toString();
-  panel.webview.html = writtenHtml(task,draft,nonce,{next:level,waiting},media,panel.webview.cspSource,context.globalState.get<Capture>(key + '.first'),!!navigation,notebookMicrophoneScript(vscode.env.appName));
+  panel.webview.html = writtenHtml(task,draft,nonce,{next:level,waiting},media,panel.webview.cspSource,context.globalState.get<Capture>(key + '.first'),!!navigation);
   // A changed answer after help is the written equivalent of running code: it earns the next rung.
   const tokenKey = 'written\0' + task.id;
   let answerAtHelp: string | undefined, attempted = true;
   let closed = false, pending: AbortController | undefined, writes = Promise.resolve(), sequence = 0;
   const active = async () => !closed && environment() === env && (await auth.session())?.user.id === account;
-  const dictation = bindNotebookMicrophone(panel.webview, vscode.env, () => !closed && panel.visible && environment() === env &&
-    vscode.workspace.getConfiguration('dhimantai').get('aiAssistance',true) ? {key:'written', api, environment:env, path:'/notebook-coach/written/' + encodeURIComponent(task.id), mode:practiceVoiceMode(task.id,task.title,task.question,task.course,'written'),
+  const dictation = bindDictation(panel.webview, () => !closed && panel.visible && environment() === env &&
+    vscode.workspace.getConfiguration('dhimantai').get('aiAssistance',true) ? {key:'written', api,
       language:context.globalState.get<string>(`dhimantai.coachingLanguage.${env}.${account}`)} : undefined);
   const dispose = () => {dictation.dispose();closed=true;pending?.abort();receiver.dispose();disposal.dispose();};
   const disposal = panel.onDidDispose(dispose);
   let files: PracticeAttachment[] = [];
   const receiver = panel.webview.onDidReceiveMessage(async msg => {
     const guide = practiceReviews[task.id];
-    if (msg?.type === 'writtenVoiceHelp' && panel.visible && await active()) {
-      const records = await store.note(account,{type:'ask', id:task.id});
-      const {level,waiting} = helpState(records);
-      if (await active()) await panel.webview.postMessage({type:'helpState',next:level,waiting});
-      return;
-    }
     if (msg?.type === 'firstCapture' && guide && await active()) {
       const firstKey = key + '.first';
       const update = (captureWrites.get(firstKey) ?? Promise.resolve()).catch(() => {}).then(async () => {

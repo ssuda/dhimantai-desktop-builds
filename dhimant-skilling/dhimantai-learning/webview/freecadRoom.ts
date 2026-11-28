@@ -1,9 +1,5 @@
 import type {Room} from 'livekit-client';
-import {cadAction, CadAction, FREECAD_CHAPTER} from '../src/freecadCourse';
-
-export function needsFreeCADVoiceGesture(chapter:string, mode:string, voice:boolean, activated?:boolean) {
-  return chapter === FREECAD_CHAPTER && mode === 'tutor' && voice && activated === false;
-}
+import {cadAction, CadAction} from '../src/freecadCourse';
 
 interface State {status:string;radius?:number;jpeg?:string}
 export class FreeCADRoom {
@@ -18,7 +14,7 @@ export class FreeCADRoom {
     const id=crypto.randomUUID();
     return new Promise(resolve=>{
       const finish=(result:State)=>{clearTimeout(timer);this.pending.delete(id);resolve(result);};
-      const timer=setTimeout(()=>finish({status:'timeout'}),action==='state' || action==='observe' ? 5000 : 20000);
+      const timer=setTimeout(()=>finish({status:'timeout'}),5000);
       this.pending.set(id,finish);
       this.post({type:'freecadAction',id,attempt:this.attempt,action});
     });

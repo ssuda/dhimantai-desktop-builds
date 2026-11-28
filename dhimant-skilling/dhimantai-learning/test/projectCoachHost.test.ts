@@ -52,7 +52,7 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
     vscode,
     './coachAudio': {},
     './skillingMenu': {courseAction: () => vscode.commands.executeCommand},
-    './coachSurface': {CoachSurface: class { select() {} async show() {} async hide() {} release() {} webviewFor() { return webview; } dispose() {} }},
+    './coachSurface': {CoachSurface: class { select() {} async show() {} async hide() {} webviewFor() { return webview; } dispose() {} }},
     './projectCore': {...core, projectIdentity: async () => 'course-agent', isEnabledProject: async () => true,
       loadProjectCurriculum: async () => curriculum, trackedProjectFiles: () => [],
       projectFiles: async () => { calls.projectFiles++; return options.projectFiles ? options.projectFiles() : ['course_agent/tools.py']; },
@@ -69,12 +69,12 @@ function harness(options: {session?: () => Promise<unknown>; snapshot?: () => Pr
   const sandbox = {exports: {}, Error, AbortController, Buffer, URLSearchParams, setTimeout, clearTimeout, console,
     require: (name: string) => name in modules ? modules[name] : name.startsWith('./') ? require('../src/' + name.slice(2)) : require(name)};
   runInNewContext(readFileSync(join(extension, 'out/src/projectCoach.js'), 'utf8'), sandbox);
-  const context = {extensionUri: uri(extension), globalState: {get: () => undefined}, workspaceState: {get: (key: string) => store.get(key) ?? (key === "projectCoach:production:learner:" + (options.root ?? "/project") ? options.saved : undefined),
+  const context = {extensionUri: uri(extension), globalState: {get: () => undefined}, workspaceState: {get: (key: string) => store.get(key) ?? options.saved,
     update: async (key: string, value: unknown) => { store.set(key, JSON.parse(JSON.stringify(value))); }}};
   const auth = {onDidChange: listener, session: options.session ?? (async () => ({user: {id: 'learner'}}))};
   const results = {get: () => undefined, save: async () => {}};
   const courses = {forProject: async () => { calls.engines++; return {bin:'podman', execArgs:() => []}; }, recordFor: () => options.workspace};
-  const coach: any = new (sandbox.exports as any).ProjectCoach(context, auth, () => 'production', () => ({}), courses, new (modules['./coachSurface'] as any).CoachSurface(), results);
+  const coach: any = new (sandbox.exports as any).ProjectCoach(context, auth, () => 'production', () => ({}), courses, results);
   const state = () => posted.filter(m => m.type === 'state').at(-1);
   const message = (type: string, data = {}) => ({type, scope: coach.key(), step: coach.step, conversationId: coach.conversationId, ...data});
   return {coach, open: () => coach.open(options.root ?? '/project'), posted, state, store, calls, message};
@@ -306,28 +306,6 @@ test('automatic feedback uses evidence once, keeps questions available and omits
   app.coach.dispose();
 });
 
-test('the mentor uses a current debugger stop and discards a reply after the learner continues', async () => {
-  const pending = deferred<any>(), requests: any[] = [];
-  const app = harness({notebookCoach: async (_path, body) => { requests.push(body); return pending.promise; }});
-  try {
-    await app.open();
-    app.coach.surface.visible = true;
-    let paused = true;
-    const stop = {event:'debug_pause',path:'course_agent/tools.py',line:1,current:()=>paused};
-    const review = app.coach.review(stop);
-    await settle();
-    assert.equal(requests[0].project_context.selected_file,stop.path);
-    assert.equal(requests[0].project_context.observation_line,1);
-    assert.equal(requests[0].project_context.observation,'debug_pause');
-    paused = false;
-    pending.resolve({guidance:'Inspect the value at this breakpoint.',prompt:'',line:1});
-    await review;
-    assert.equal(app.coach.messages.length,0);
-    await app.coach.review(stop);
-    assert.equal(requests.length,1);
-  } finally { app.coach.dispose(); }
-});
-
 test('a learner question supersedes an automatic review in flight', async () => {
   const pending = deferred<any>();
   const app = harness({notebookCoach:async (_path, body) => body.project_context.observation ? pending.promise :
@@ -342,24 +320,4 @@ test('a learner question supersedes an automatic review in flight', async () => 
   assert.equal(app.coach.messages.length, 2);
   assert.match(app.coach.messages.at(-1).text, /answer to your question/);
   app.coach.dispose();
-});
-
-
-test('Project Mentor uses the latest spoken language for guidance and playback in the same chat', async () => {
-  const bodies: any[] = [];
-  const app = harness({notebookCoach:async (_path, body) => {
-    bodies.push(body); return {guidance:'Inspect the change.', prompt:''};
-  }});
-  await app.open();
-  for (const [language, text] of [['en-IN','What changed?'],['te-IN','ఇప్పుడు ఏమి చేయాలి?'],['en-IN','What is next?']]) {
-    await app.coach.handle(app.message('ask', {text, spokenLanguage:language}));
-    assert.equal(bodies.at(-1).coaching_language, language);
-    assert.equal(new URLSearchParams(app.coach.spoken.query).get('language'), language);
-  }
-  await app.coach.handle(app.message('voiceLanguage', {value:'te-IN'}));
-  await app.coach.handle(app.message('ask', {text:'What is next?', spokenLanguage:'kn-IN'}));
-  assert.equal(bodies.at(-1).coaching_language, 'te-IN');
-  await app.coach.handle(app.message('newChat'));
-  await app.coach.handle(app.message('ask', {text:'What now?'}));
-  assert.equal(bodies.at(-1).coaching_language, undefined);
 });

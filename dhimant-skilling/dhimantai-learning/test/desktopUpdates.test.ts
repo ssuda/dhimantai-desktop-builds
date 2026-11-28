@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DESKTOP_RELEASES, DesktopUpdates, desktopArtifact, newerDesktopVersion } from '../src/desktopUpdates';
@@ -39,19 +38,6 @@ test('native update selection requires installation channel, exact CPU and owned
   assert.throws(() => desktopArtifact(manifest, { ...target, version: '1.143.10006' }));
 });
 
-test('stable desktop checks the production installer feed', async () => {
-  const stable = { ...target, environment: 'production', version: '1.143.10014' };
-  const updates = new DesktopUpdates(stable, tmpdir(), () => {}, async input => {
-    assert.equal(String(input), 'https://dhimant.ai/upskill/releases-production.json');
-    return new Response(JSON.stringify({ ...manifest, environment: 'production',
-      artifacts: [{ ...artifact, channel: 'stable', version: stable.version }] }));
-  });
-  try {
-    await updates.check();
-    assert.equal(updates.state.status, 'current');
-  } finally { updates.dispose(); }
-});
-
 async function fixture(fetcher: typeof fetch, run: (updates: DesktopUpdates, directory: string) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), 'desktop-updates-test-'));
   const updates = new DesktopUpdates(target, directory, () => {}, fetcher);
@@ -76,7 +62,7 @@ test('extension-only releases install automatically without downloading the unch
     throw new Error('An extension update must never request a desktop installer: ' + url);
   }) as typeof fetch;
   await fixture(fetcher, async (desktop, directory) => {
-    const learning = new ExtensionUpdates(join(directory, 'learning'), () => 'staging', '0.39.20', () => {}, fetcher);
+    const learning = new ExtensionUpdates(() => 'staging', '0.39.20', () => {}, fetcher);
     let installed = '';
     try {
       await Promise.all([desktop.check(), learning.check()]);
@@ -90,8 +76,7 @@ test('extension-only releases install automatically without downloading the unch
       assert.equal(learning.state.status, 'ready');
       assert.equal(desktop.state.status, 'current');
       assert.equal(await desktop.installerPath(), undefined);
-      assert.deepEqual(await readdir(directory), ['learning']);
-      assert.deepEqual(await readdir(join(directory, 'learning', 'staging')), []);
+      assert.deepEqual(await readdir(directory), []);
       assert.equal(requested.length, 3, 'only two small manifests and the VSIX were fetched');
       assert.ok(!requested.some(url => url.startsWith('https://github.com/')));
     } finally { learning.dispose(); }
@@ -129,12 +114,7 @@ test('bad checksums, truncation, excess bytes and untrusted redirects never prod
         await updates.check(); await updates.download();
         assert.equal(updates.state.status, 'available');
         assert.equal(await updates.installerPath(), undefined);
-        const files = await readdir(directory);
-        if (files.length) {
-          assert.equal(files.length, 1);
-          assert.match(files[0], /\.0\.part$/);
-          assert.equal(await readFile(join(directory, files[0]), 'utf8'), 'short');
-        }
+        assert.deepEqual(await readdir(directory), []);
       });
   }
 });
@@ -182,60 +162,5 @@ test('a missing architecture produces a compatibility warning and never download
     assert.equal(updates.state.status, 'incompatible'); assert.match(updates.state.message, /arm64/);
     await updates.download();
     assert.equal(await updates.installerPath(), undefined);
-  });
-});
-
-for (const mode of ['partial', 'full', 'invalid range', 'range refused', 'corrupt suffix'] as const) {
-  test(`desktop retry after restarting the app handles a ${mode} response`, async () => {
-    const offset = 7;
-    const requests: (string|null)[] = [];
-    const fetcher: typeof fetch = async (url, options) => {
-      if (url === DESKTOP_RELEASES) return Response.json(manifest);
-      const range = new Headers(options?.headers).get('range');
-      requests.push(range);
-      if (requests.length === 1) return new Response(bytes.subarray(0, offset), {headers:{'content-length':String(bytes.length)}});
-      if (!range || mode === 'full') return new Response(bytes);
-      if (mode === 'range refused') return new Response(null, {status:416});
-      const headers = {'content-range':`bytes ${mode === 'invalid range' ? 2 : offset}-${bytes.length-1}/${bytes.length}`};
-      return new Response(mode === 'corrupt suffix' ? Buffer.alloc(bytes.length-offset) : bytes.subarray(offset), {status:206, headers});
-    };
-    await fixture(fetcher, async (first, directory) => {
-      await first.check(); await first.download(); first.dispose();
-      assert.equal(first.state.retry, true);
-      assert.equal(await first.installerPath(), undefined);
-      const second = new DesktopUpdates(target, directory, () => {}, fetcher);
-      try {
-        await second.check(); await second.download();
-        const fallback = mode === 'invalid range' || mode === 'range refused';
-        assert.deepEqual(requests, fallback ? [null, `bytes=${offset}-`, null] : [null, `bytes=${offset}-`]);
-        if (mode === 'corrupt suffix') {
-          assert.equal(await second.installerPath(), undefined);
-          assert.deepEqual(await readdir(directory), []);
-        } else {
-          assert.equal(second.state.status, 'ready');
-          assert.deepEqual(await readFile((await second.installerPath())!), bytes);
-        }
-      } finally { second.dispose(); }
-    });
-  });
-}
-
-test('restart recovers a terminated writer and leaves a live window’s transfer alone', async () => {
-  const exited = spawnSync(process.execPath, ['-e', '']);
-  assert.equal(exited.status, 0);
-  const offset = 4;
-  const fetcher: typeof fetch = async (url, options) => {
-    if (url === DESKTOP_RELEASES) return Response.json(manifest);
-    assert.equal(new Headers(options?.headers).get('range'), `bytes=${offset}-`);
-    return new Response(bytes.subarray(offset), {status:206, headers:{'content-range':`bytes ${offset}-${bytes.length-1}/${bytes.length}`}});
-  };
-  await fixture(fetcher, async (updates, directory) => {
-    const name = (pid: number) => join(directory, `.update-${artifact.sha256}-${randomUUID()}.${pid}.part`);
-    const live = name(process.pid);
-    await writeFile(live, bytes.subarray(0, 9));
-    await writeFile(name(exited.pid), bytes.subarray(0, offset));
-    await updates.check(); await updates.download();
-    assert.equal(updates.state.status, 'ready');
-    assert.deepEqual(await readFile(live), bytes.subarray(0, 9));
   });
 });

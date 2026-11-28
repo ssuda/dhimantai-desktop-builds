@@ -91,7 +91,7 @@ async function checkCoursePreviews(page) {
  const previewPosts = () => page.evaluate(start => window.posts.slice(start), initialPostCount);
  await page.getByRole('button',{name:'Explore',exact:true}).click();
  if(await page.locator('#toggle-filters').isVisible()) await page.locator('#toggle-filters').click();
- await page.getByText('With chapter previews',{exact:true}).click();
+ await page.locator('#filter-status').selectOption('preview');
  assert.equal(await page.locator('#results .course:visible').count(),2);
  for(const [id, wrong, right, width] of [
    ['algorithms-python','4','15',1200],
@@ -236,40 +236,6 @@ async function checkStickyNotebook(page) {
    await page.locator('#notebook-edges').waitFor({state:'hidden'});
  }
 }
-async function checkDisconnectKeepsPlace(page) {
- await page.setViewportSize({width:1280, height:720});
- await page.goto(origin + '/room');
- await page.evaluate(() => { window.fixtureLessonNotebook = {notebook:{version:1, title:'Saved notebook', drafts:[], textDraft:'',
-   cells:Array.from({length:30}, (_, i) => ({kind:'board', id:'section-' + i, text:'## Notebook section ' + i + '\n\nRead this passage.'}))}}; });
- await page.getByRole('button', {name:'Gradients and parameter updates', exact:true}).click();
- await page.waitForFunction(() => window.rooms.length > 0 && document.getElementById('tutor').hidden);
- await page.locator('[data-cell-id="section-29"]').waitFor();
- await page.evaluate(() => { const page = window.notebookScroller(); page.scrollTop = page.scrollHeight; });
- assert.ok(await page.evaluate(() => window.notebookScroller().scrollTop) > 1000, 'the fixture notebook scrolls');
- // The passage being read stays where it was on screen.
- const reading = async () => (await page.locator('[data-cell-id="section-27"]').boundingBox()).y;
- const before = await reading();
- await page.evaluate(() => window.rooms.at(-1).listeners.get('Disconnected')());
- const banner = page.locator('#connection-banner');
- await banner.waitFor();
- assert.match(await banner.innerText(), /Disconnected\. Retry to reconnect\./);
- assert.ok(Math.abs(await reading() - before) < 2, 'a disconnect keeps the reading position');
- const toolbar = await page.getByRole('navigation', {name:'Learning notebook controls'}).boundingBox(), alert = await banner.boundingBox();
- assert.ok(alert.y >= toolbar.y + toolbar.height && alert.y < toolbar.y + toolbar.height + 20, 'the reconnect alert hangs just below the sticky toolbar');
- await page.screenshot({path:join(output, 'disconnect-banner.png')});
- const rooms = await page.evaluate(() => window.rooms.length);
- // A learner's click never scrolls; Playwright's actionability scroll would move a sticky control's page.
- await banner.getByRole('button', {name:'Retry Instructor'}).evaluate(button => button.click());
- await page.waitForFunction(count => window.rooms.length > count && document.getElementById('tutor').hidden, rooms);
- await banner.waitFor({state:'hidden'});
- await page.waitForTimeout(100);
- assert.ok(Math.abs(await reading() - before) < 2, 'reconnecting keeps the reading position');
- await page.evaluate(() => { window.notebookScroller().scrollTop = 0; });
- await page.evaluate(() => window.rooms.at(-1).listeners.get('Disconnected')());
- await page.waitForFunction(() => !document.getElementById('tutor').hidden);
- assert.equal(await banner.isVisible(), false, 'with the header in view, the header alert is enough');
- await page.evaluate(() => { delete window.fixtureLessonNotebook; });
-}
 async function checkRoomNavigation(page) {
  const python = require('../../../website/upskill/catalog.json').courses.find(c=>c.id==='algorithms-python');
  const chapters = python.chapters.map((name,i)=>({id:'algorithm-'+i,name,locked:i===1}));
@@ -322,16 +288,6 @@ async function checkWrittenRoom(page) {
  }
  await brief.locator('summary').click();
  assert.equal(await page.locator('#task').isVisible(),false);
- const question = page.getByLabel('Question for Instructor (optional)');
- await question.fill('I traced the first call.');
- await question.press('Shift+Enter');
- await page.keyboard.insertText('Which call returns next?');
- const text = 'I traced the first call.\nWhich call returns next?';
- assert.equal(await question.inputValue(), text);
- const requests = () => page.evaluate(() => window.posts.filter(message => message.type === 'feedback'));
- assert.deepEqual(await requests(), []);
- await question.press('Enter');
- assert.deepEqual((await requests()).map(({mode, message}) => [mode, message]), [['hint', text]]);
  await page.evaluate(()=>window.fixturePost({type:'feedback', feedback:'Check the base case.', next_step:'Trace one return.'}));
  const feedback = page.locator('.written-feedback');
  assert.equal(await feedback.locator('.speaker-name').innerText(), 'Instructor');
@@ -436,7 +392,6 @@ async function checkChapterCards(page) {
  await checkAccountLayout(page);
  await checkCoursePreviews(page);
  await checkSolutionLayout(page);
- await checkDisconnectKeepsPlace(page);
  await checkRoomNavigation(page);
  await checkWrittenRoom(page);
  await checkLessonStartsHigh(page);
@@ -560,8 +515,7 @@ async function checkChapterCards(page) {
  await page.waitForFunction(()=>document.getElementById('lesson-list').getAttribute('aria-busy')==='false');
  await page.locator('#course-toggle').click();
  await page.getByRole('option', {name:'Python', exact:true}).click();
- await page.getByRole('button',{name:'Locked chapter · Locked · View pricing',exact:true}).click();
- assert.equal(await page.evaluate(()=>window.posts.at(-1).type),'courseCatalog');
+ assert.equal(await page.getByRole('button',{name:'Locked chapter · Locked',exact:true}).isDisabled(),true);
  await page.getByRole('button',{name:'Expired chapter · Access ended · Buy again',exact:true}).focus();
  await page.keyboard.press('Enter');
  assert.equal(await page.evaluate(()=>window.posts.at(-1).type),'courseCatalog');

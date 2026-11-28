@@ -3,12 +3,12 @@ export type CoverageStatus = 'not_started' | 'in_progress' | 'covered' | 'conten
 export interface TopicCoverage {id: string; title: string; parent?: string; status: CoverageStatus; needs_review?: boolean}
 export interface ChapterCoverage {
   status: CoverageStatus; covered: number; total: number; topics: TopicCoverage[];
-  content_revision?: string | null; needs_review?: number; updated_at?: string | null;
+  needs_review?: number; updated_at?: string | null;
 }
 export const coverageNote = 'Taught means Instructor has explained it; it is not a mastery mark. Needs review means a topic check still needs follow-up practice. Practice and mastery are tracked separately.';
 export function coverageLabel(progress?: ChapterCoverage): string {
   if (!progress || progress.status === 'unavailable') return 'Progress unavailable';
-  if (progress.status === 'content_changed') return 'Updated · Starts from the beginning';
+  if (progress.status === 'content_changed') return 'Content updated · Revisit';
   const label = {not_started:'Not started', in_progress:'In progress', covered:'Taught'}[progress.status];
   return label + (progress.status === 'in_progress' && progress.total ? ` · ${progress.covered}/${progress.total} topics taught` : '')
     + (progress.needs_review ? ' · Needs review' : '');
@@ -40,8 +40,7 @@ export function topicCoverageHtml(progress?: ChapterCoverage): string {
 export function nextChapter<T extends {progress?: ChapterCoverage}>(chapters: T[], isOpen: (chapter: T) => boolean): T | undefined {
   if (!chapters.some(ch => ch.progress && ch.progress.status !== 'unavailable')) return undefined;
   const open = chapters.filter(isOpen);
-  return open.find(ch => ch.progress?.status === 'content_changed')
-    ?? open.filter(ch => ch.progress?.status === 'in_progress')
+  return open.filter(ch => ch.progress?.status === 'in_progress' || ch.progress?.status === 'content_changed')
     .sort((a, b) => (Date.parse(b.progress?.updated_at ?? '') || 0) - (Date.parse(a.progress?.updated_at ?? '') || 0))[0]
     ?? open.find(ch => ch.progress?.status !== 'covered');
 }

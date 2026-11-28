@@ -103,7 +103,7 @@ class PythonNotebookTests(unittest.TestCase):
         self.assertIn('same environment', result['stderr'])
         self.assertIn('Runtime above the notebook → Set up / rebuild course', result['stderr'])
         self.assertIn('Notebook options (⋯) → Restart runtime', result['stderr'])
-        self.assertIn('inspect the setup log', result['stderr'])
+        self.assertIn('Open course terminal', result['stderr'])
         self.assertNotIn('Traceback', result['stderr'])
         self.assertEqual(session.run('print("recovered")')['stdout'], 'recovered\n')
         error = session.run('1 / 0')

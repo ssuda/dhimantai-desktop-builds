@@ -13,12 +13,14 @@ window.installNotebookRuntime = api => {
       option.value = 'machine:' + machine;
       option.dataset.machine = machine;
       option.textContent = machine + (machine === data.machines.selected ? ' · selected' : '');
-      select.insertBefore(option, select.querySelector('[value="setup"]'));
+      select.insertBefore(option, select.querySelector('[value="terminal"]'));
     }
     select.disabled = data.busy || (!uri && !data.podman);
     create.disabled = data.busy;
-    const setup = select.querySelector('[value="setup"]');
-    if (setup) setup.disabled = !data.podman;
+    for (const value of ['terminal', 'setup']) {
+      const option = select.querySelector(`[value="${value}"]`);
+      if (option) option.disabled = !data.podman;
+    }
     select.querySelector('[value="colab"]').disabled = !data.colab;
     for (const value of ['cloud', 'jupyter']) {
       const option = select.querySelector(`[value="${value}"]`);
@@ -28,7 +30,7 @@ window.installNotebookRuntime = api => {
     select.querySelector('[value="podman"]').textContent = data.podman ? 'Course container' : 'Course container · setup needed';
     select.querySelector('[value="colab"]').textContent = data.colab ? 'Google Colab · remote Python' : 'Google Colab · Python notebooks only';
     document.getElementById('runtime-target').textContent = data.name
-      ? `${data.name}${data.machines?.selected ? ' · ' + data.machines.selected : ''} · The selected kernel is shown in the notebook toolbar.` : 'Choose a course to prepare its workstation. Source files use Run code.';
+      ? `${data.name}${data.machines?.selected ? ' · ' + data.machines.selected : ''} · The selected kernel is shown in the notebook toolbar.` : 'Choose a course to prepare its workstation or open its terminal. Source files use Run code.';
     document.getElementById('runtime-status').textContent = data.status || (uri
       ? 'Kernel readiness is not verified here. Select a kernel in the notebook toolbar, then run a cell.' : 'No notebook selected.');
   });

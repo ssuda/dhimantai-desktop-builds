@@ -137,10 +137,10 @@ test('snapshot failures name the file or limit in plain words', async () => {
     assert.match(await projectContextProblem(new Error('Project context is too large.'), root, ['small.py'], new Map([['small.py', 'y'.repeat(600000)]])),
       /small\.py is larger than 512 KB/);
     assert.match(await projectContextProblem(new Error('Project context is too large.'), root, ['small.py']), /larger than 8 MB/);
-    assert.match(await projectContextProblem(new Error('Linked files cannot be shared with the mentor.'), root, ['small.py', 'linked.py']),
+    assert.match(await projectContextProblem(new Error('Linked files cannot be shared with the Instructor.'), root, ['small.py', 'linked.py']),
       /linked\.py is a link/);
     assert.match(await projectContextProblem(new Error('Too many public project source, test and fixture files.'), root, undefined),
-      /more public source, test and data files than the mentor can read \(64\)/);
+      /more public source, test and data files than the Instructor can read \(64\)/);
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 

@@ -17,13 +17,3 @@ test('public notebook context is bounded, excludes private notes and files, and 
   assert.equal(sharedNotebookContext({cells:[{id:'note',kind:'note',text:'private',truncated:false}],truncated:false}),undefined);
   assert.equal(sharedNotebookContext({cells:[{...current.cells[0],run:null}],truncated:false}),undefined);
 });
-
-test('live terminal screens reach Instructor as bounded terminal entries',()=>{
-  const screen = {id:'zsh-console',program:'zsh',text:'learner$ chmod +x run.sh\nchmod: cannot access run.sh: No such file or directory\nlearner$ ',truncated:false};
-  const shared = notebookContext([{id:'zsh-console',kind:'terminal' as const,text:''}],[],undefined,[screen]);
-  assert.deepEqual(shared.cells,[{id:'zsh-console',kind:'terminal',language:'zsh',text:screen.text,truncated:false}]);
-  assert.deepEqual(sharedNotebookContext(shared),shared);
-  const long = notebookContext([],[],undefined,[{...screen,text:'x'.repeat(1000)+'END'.repeat(600)}]);
-  assert.equal(long.cells[0].text.length,1500); assert.ok(long.cells[0].text.endsWith('END'));
-  assert.equal(long.cells[0].truncated,true); assert.equal(long.truncated,true);
-});

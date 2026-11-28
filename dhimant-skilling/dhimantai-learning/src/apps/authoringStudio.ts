@@ -6,7 +6,6 @@ import {Environment, EnvironmentName} from '../environments';
 import {authoringHtml, StudioView} from './authoringHtml';
 import {AuthorChapter, AuthorDraft, AuthorJob, demonstrationPrompt, pollAllowed, replayPassed, tasksFrom, tourFingerprint, updateRequest} from './authoringModel';
 import {AuthoringBrowser} from './authoringBrowser';
-import {ERP_SITE} from './hostedErp';
 
 type SavedDraft = AuthorDraft & {polls?: Record<string, {count: number; started: number}>};
 const initial = (): StudioView => ({courses: [], chapters: [], history: [], draft: {prompt: ''}, busy: false, notice: '', connected: false, capturing: false, replayed: false});
@@ -27,7 +26,7 @@ export class AuthoringStudio implements vscode.Disposable {
   constructor(private context: vscode.ExtensionContext, private auth: Auth, private env: () => EnvironmentName, private service: () => Environment) {
     this.subscriptions = [vscode.commands.registerCommand('dhimantai.authorPracticalCourse', () => this.open()),
       auth.onDidChange(s => {if (this.owner && s?.user.id !== this.owner) this.clear();}),
-      vscode.workspace.onDidChangeConfiguration(e => {if (e.affectsConfiguration('dhimantai.environment') || e.affectsConfiguration(ERP_SITE)) this.clear();})];
+      vscode.workspace.onDidChangeConfiguration(e => {if (e.affectsConfiguration('dhimantai.environment')) this.clear();})];
   }
   dispose() {this.clear(); this.subscriptions.forEach(s => s.dispose());}
   private clear() {

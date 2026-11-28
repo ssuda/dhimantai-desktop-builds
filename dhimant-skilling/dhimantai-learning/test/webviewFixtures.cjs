@@ -94,13 +94,12 @@ async function startFixtures(assetRoot = root){
      if(m.type==='tutorLessons' && !new URLSearchParams(location.search).has('holdLessons'))send({type:'tutorLessons',attempt:m.attempt,browse:m.browse,courses:[{name:'Developing Speech-to-Text Models',chapters},
        ...(document.body.dataset.notebookMode==='doubt_solver'?[{name:'Python',chapters:[{id:'python-lists',name:'Lists'},{id:'locked',name:'Locked chapter',locked:true},{id:'expired',name:'Expired chapter',expired:true}]}]:[])]});
      if(m.type==='join'){
-       send({type:'restoreNotebook',attempt:m.attempt,documentKey:'fixture',notebook:{version:1,title:'Learning notebook',cells:[],drafts:[],textDraft:''},...window.fixtureLessonNotebook});
+       send({type:'restoreNotebook',attempt:m.attempt,documentKey:'fixture',notebook:{version:1,title:'Learning notebook',cells:[],drafts:[],textDraft:''}});
        if(practice)send({type:'practiceReady',attempt:m.attempt,aiEnabled:true,codeRuntime:'Course container',
          practice:{id:'exercise',title:'Inspect a training batch',language:'python'}});
        else send({type:'grant',attempt:m.attempt,url:'unused',token:'unused',chapterId:m.chapterId});
      }
-     if(window.courseTerminalControl && ['codeAction','cellControl','notebookTerminal'].includes(m.type)) window.courseTerminalControl(m);
-     else if(m.type==='codeAction')send({...m,type:'codeResult',execution:{status:'exited',exit_code:0,stdout:m.source.includes('learning_rate')?'1.95':'tensor([4., 5., 6.])',stderr:'',truncated:false}});
+     if(m.type==='codeAction')send({...m,type:'codeResult',execution:{status:'exited',exit_code:0,stdout:m.source.includes('learning_rate')?'1.95':'tensor([4., 5., 6.])',stderr:'',truncated:false}});
    },0);}});
    const agent={identity:'worker',isAgent:true,trackPublications:new Map()};
    class Room{listeners=new Map();remoteParticipants=new Map([['worker',agent]]);localParticipant={registerRpcMethod(){},performRpc:async()=> 'ok',sendText:async text=>window.chat.push(text)};constructor(){window.rooms.push(this);}on(name,fn){this.listeners.set(name,fn);}async connect(){}async disconnect(){}registerTextStreamHandler(){}}

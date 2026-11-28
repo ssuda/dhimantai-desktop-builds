@@ -144,9 +144,9 @@ test('Submit for grading runs every case locally and keeps hidden data out of th
   const solved = await gradeLocally(async () => suite, results(['passed', 'passed', 'passed']), id);
   assert.equal(solved.all_passed, true);
   let r = record([], {type: 'open', id, title: 'Sum', language: 'python'}, 0);
-  r = record(r, {type: 'graded', declaration: 'none_reported', id, passed: report.passed, total: report.total}, 1);
+  r = record(r, {type: 'graded', id, passed: report.passed, total: report.total}, 1);
   assert.equal(r[0].solved, undefined, 'a partial graded pass does not solve');
-  r = record(r, {type: 'graded', declaration: 'none_reported', id, passed: solved.passed, total: solved.total}, 2);
+  r = record(r, {type: 'graded', id, passed: solved.passed, total: solved.total}, 2);
   assert.equal(r[0].solved?.at, 2);
   const missing = gradeLocally(async () => suite, async () => { throw new Error('Set up the course container before running notebook cells.'); }, id);
   await assert.rejects(missing, /Set up the course container/, 'no runtime: nothing is graded');

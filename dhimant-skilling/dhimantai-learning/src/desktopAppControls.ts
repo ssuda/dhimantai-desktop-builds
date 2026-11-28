@@ -1,18 +1,19 @@
 import * as vscode from 'vscode';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { CourseCatalog } from './courseCatalog';
 import { type Auth, learnerDisplayName } from './auth';
-import { type ControlView, combinedUpdate, standaloneControls } from './desktopControlView';
-import { applicationName, prepareDesktopApply, startDetached } from './desktopApply';
+import { type ControlKind, type ControlView, standaloneControls, updateCard } from './desktopControlView';
 import { WEB_APP_ORIGINS } from './appLinks';
 import type { EnvironmentName } from './environments';
-import { DesktopUpdates, type DesktopUpdateState, installedDesktop } from './desktopUpdates';
+import { DesktopUpdates, installedDesktop } from './desktopUpdates';
 import { automaticUpdates, ExtensionUpdates } from './updates';
 import { migrateDesktopAppBar } from './desktopConfiguration';
 
 interface OpenControl {
   id: string;
+  kind: ControlKind;
   panel: vscode.WebviewPanel;
   standalone: boolean;
   account?: string;
@@ -33,8 +34,6 @@ export class DesktopAppControls implements vscode.Disposable {
   private native?: DesktopUpdates;
   private nativeError?: string;
   private loadingNative?: Promise<void>;
-  private sidebarUpdate?: Promise<void>;
-  private applyError?: string;
   private openControl?: OpenControl;
   private account?: string;
   private displayName?: string;
@@ -51,8 +50,8 @@ export class DesktopAppControls implements vscode.Disposable {
     private readonly testing: boolean, private readonly legacyStatus?: vscode.StatusBarItem,
     private readonly catalog?: Pick<CourseCatalog, 'activeControlPanel' | 'continueLearning'>) {
     this.disposables.push(
-      vscode.commands.registerCommand('dhimantai.showUpdates', () => this.updateFromSidebar()),
-      vscode.commands.registerCommand('dhimantai.profile', () => this.showProfile()),
+      vscode.commands.registerCommand('dhimantai.showUpdates', () => this.show('updates')),
+      vscode.commands.registerCommand('dhimantai.profile', () => this.show('profile')),
       auth.onDidChange(() => { void this.refreshProfile(); }),
       context.secrets.onDidChange(() => { void this.refreshProfile(); }),
       vscode.workspace.onDidChangeConfiguration(e => {
@@ -111,14 +110,26 @@ export class DesktopAppControls implements vscode.Disposable {
   refresh() {
     if (this.disposed) return;
     this.render();
-    const update = combinedUpdate(this.learning.state, this.nativeView());
-    const state = this.applyError ? 'unavailable' : update.status;
-    const message = this.applyError ?? (state === 'downloading' && !this.sidebarUpdate
-      ? `${update.message} Click to apply when downloaded.` : update.message);
-    const busy = state === 'downloading', ready = state === 'ready', available = state === 'available';
+    const learning = this.learning.state, native = this.native?.state;
+    const busy = learning.status === 'installing' || native?.status === 'downloading';
+    const learningReady = learning.status === 'ready', desktopReady = native?.status === 'ready';
+    const ready = learningReady || desktopReady;
+    const available = learning.status === 'available' || native?.status === 'available';
+    const checking = learning.status === 'checking' || native?.status === 'checking';
+    const incompatible = learning.status === 'incompatible' || native?.status === 'incompatible';
+    const failed = incompatible || learning.retry || native?.retry || learning.status === 'unavailable' || native?.status === 'unavailable' || this.nativeError;
+    const current = learning.status === 'current' && native?.status === 'current';
+    const state = busy ? 'downloading' : ready ? 'ready' : failed ? 'unavailable' : available ? 'available' : checking ? 'checking' : current ? 'current' : 'unchecked';
+    const message = busy ? (native?.status === 'downloading' ? native.message : `Learning extension: ${learning.message}`)
+      : learningReady && desktopReady ? 'Learning extension and desktop app updates are ready'
+        : learningReady ? 'Learning extension updated — reload when you are ready'
+          : desktopReady ? 'Desktop update downloaded — open the installer when you are ready'
+            : incompatible ? 'Updates — review compatibility warning' : failed ? 'Updates — check details or retry'
+            : available ? 'Update available' : checking ? 'Checking for updates…' : current ? 'Updates — up to date' : 'Check for updates';
     if (this.legacyStatus) {
-      const attention = !this.nativeBar && (busy || ready || available || state === 'unavailable');
-      this.legacyStatus.text = attention ? `$(cloud-download) dhimantAI · ${ready ? 'Update ready' : busy ? 'Updating…' : available ? 'Update available' : 'Retry update'}` : '$(mortar-board) dhimantAI';
+      const attention = !this.nativeBar && (busy || ready || available);
+      const readyLabel = learningReady && desktopReady ? 'Updates ready' : learningReady ? 'Learning update ready' : 'App update ready';
+      this.legacyStatus.text = attention ? `$(cloud-download) dhimantAI · ${ready ? readyLabel : busy ? 'Updating…' : 'Update available'}` : '$(mortar-board) dhimantAI';
       this.legacyStatus.tooltip = attention ? message : 'Open Course Catalog, Instructor, and Doubt Solver.';
       this.legacyStatus.command = attention ? 'dhimantai.showUpdates' : 'dhimantai.courseCatalog';
     }
@@ -145,71 +156,28 @@ export class DesktopAppControls implements vscode.Disposable {
     this.lastCheck = Date.now();
     await Promise.all([this.checkLearning(), this.checkNative()]);
   }
-  /** A click is consent to install and restart, including from an open lesson.
-   * A background download never inherits that consent. Repeated clicks join the same operation. */
-  private updateFromSidebar() {
-    if (!this.sidebarUpdate) {
-      this.applyError = undefined;
-      this.sidebarUpdate = this.applyFromSidebar().catch(() => {
-        this.applyError = 'Could not apply the update. Click the update icon to retry.';
-      }).finally(() => { this.sidebarUpdate = undefined; this.refresh(); });
-    }
-    return this.sidebarUpdate;
-  }
-  private async applyFromSidebar() {
-    const environment = this.environment();
-    this.lastCheck = Date.now();
-    await this.loadNative();
-    const native = this.native;
-    if (!native) return;
-    await Promise.all([this.learning.check(), native.check()]);
-    if (this.disposed || environment !== this.environment()) return;
-    const learningStatus = this.learning.state.status;
-    await Promise.all([
-      learningStatus === 'available' || learningStatus === 'installing' ? this.installLearning() : undefined,
-      native.state.status === 'available' || native.state.status === 'downloading' ? native.download() : undefined,
-    ]);
-    if (this.disposed || environment !== this.environment()) return;
-    const update = combinedUpdate(this.learning.state, native.state);
-    if (update.status === 'ready') {
-      this.close();
-      await this.restart();
-    }
-  }
-  private async openInstaller(path: string) {
-    // Fallback when this installation cannot be replaced in place: hand the verified installer to the OS.
+  private async openInstaller() {
+    const path = await this.native?.installerPath();
+    if (!path) return;
+    // Explicit learner action opens the verified installer. Never terminate the app,
+    // launch a silent installer, or replace files belonging to a running process.
     const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open';
-    await startDetached({ command, args: [path] });
-  }
-  /** One explicit restart applies everything that is ready: the learning extension activates on the next start,
-   * and a verified desktop installer replaces the app after it quits. */
-  private async restart() {
-    if (this.native?.state.status !== 'ready') return vscode.commands.executeCommand('workbench.action.reloadWindow');
-    const installer = await this.native.installerPath();
-    if (!installer) return;
-    const appRoot = vscode.env.appRoot, pid = Number(process.env.VSCODE_PID);
-    const plan = await prepareDesktopApply({ platform: process.platform, appRoot, installer, pid,
-      applicationName: await applicationName(appRoot).catch(() => '') }).catch(() => undefined);
-    if (!plan) {
-      await this.openInstaller(installer);
-      return;
-    }
-    await startDetached(plan);
-    await vscode.commands.executeCommand('workbench.action.quit');
-  }
-  private nativeView(): DesktopUpdateState {
-    return this.native?.state ?? {status: this.nativeError ? 'unavailable' : 'checking', installed: '',
-      message: this.nativeError ?? 'Reading desktop installation details…'};
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(command, [path], { detached: true, stdio: 'ignore', windowsHide: true });
+      child.once('error', reject);
+      child.once('spawn', () => { child.unref(); resolve(); });
+    });
   }
   private view(open: OpenControl): ControlView {
+    const native = this.native?.state ?? {status: this.nativeError ? 'unavailable' : 'checking', installed: '',
+      message: this.nativeError ?? 'Reading desktop installation details…'};
     const env = this.environment();
-    return {id: open.id, name: this.displayName, contact: this.identity,
+    return {kind: open.kind, id: open.id, name: this.displayName, contact: this.identity,
       initials: profileInitials(this.identity, this.displayName), service: env[0].toUpperCase() + env.slice(1) + ' service',
-      manageProfile: !!this.account && !!WEB_APP_ORIGINS[env]};
+      manageProfile: !!this.account && !!WEB_APP_ORIGINS[env],
+      extension: updateCard('extension', this.learning.state), desktop: updateCard('desktop', native)};
   }
-  get canReloadLearningAtStartup() {
-    return !this.sidebarUpdate && !this.openControl && this.native?.state.status === 'current';
-  }
+  get isOpen() { return !!this.openControl; }
   private render() {
     const open = this.openControl;
     if (open) void open.panel.webview.postMessage({type:'desktopControlView', view:this.view(open)});
@@ -223,16 +191,16 @@ export class DesktopAppControls implements vscode.Disposable {
     if (open.standalone) open.panel.dispose();
     else void open.panel.webview.postMessage({type:'desktopControlView'});
   }
-  private async showProfile() {
+  private async show(kind: ControlKind) {
     const opening = ++this.opening;
     await this.refreshProfile();
     if (this.disposed || opening !== this.opening) return;
     this.close();
     const catalog = this.catalog?.activeControlPanel;
     const panel = catalog ?? vscode.window.createWebviewPanel('dhimantai.desktopControls',
-      'Your profile', vscode.ViewColumn.Active,
+      kind === 'updates' ? 'dhimantAI Updates' : 'Your profile', vscode.ViewColumn.Active,
       { enableScripts:true, localResourceRoots:[] });
-    const open: OpenControl = {id:randomUUID(), panel, standalone:!catalog,
+    const open: OpenControl = {kind, id:randomUUID(), panel, standalone:!catalog,
       environment:this.environment(), account:this.account, listeners:[]};
     this.openControl = open;
     open.listeners.push(panel.onDidDispose(() => this.close(true)),
@@ -250,28 +218,53 @@ export class DesktopAppControls implements vscode.Disposable {
       this.render();
     }
     else panel.webview.html = standaloneControls(randomUUID());
+    if (kind === 'updates' && (this.learning.state.status === 'unchecked' || this.native?.state.status === 'unchecked')) void this.check();
   }
   private async act(open: OpenControl, action: string) {
     if (action === 'close') { this.close(); return; }
     const session = await this.auth.session();
     if (open !== this.openControl || open.environment !== this.environment() || open.account !== session?.user.id) return;
     const command = (id: string, ...args: unknown[]) => vscode.commands.executeCommand(id, ...args);
-    const origin = WEB_APP_ORIGINS[open.environment];
-    const actions = new Map<string, () => Thenable<unknown>>([
-      ['settings', () => command('workbench.action.openSettings')], ['catalog', () => command('dhimantai.courseCatalog')],
-    ]);
-    if (session) {
-      actions.set('continue', () => this.catalog ? this.catalog.continueLearning(session.user.id) : command('dhimantai.openLearningRoom'));
-      actions.set('courses', () => command('dhimantai.myCourses'));
-      actions.set('certificates', () => command('dhimantai.courseGrade', '__certificates__'));
-      actions.set('signOut', () => command('dhimantai.signOut'));
-      if (origin) actions.set('manage', () => vscode.env.openExternal(vscode.Uri.parse(`${origin}/#/profile${session.user.email ? '?signin=email' : ''}`)));
-    } else {
-      actions.set('signIn', () => command('dhimantai.signIn'));
-      actions.set('signUp', () => command('dhimantai.signUp'));
+    if (open.kind === 'profile') {
+      const origin = WEB_APP_ORIGINS[open.environment];
+      const actions = new Map<string, () => Thenable<unknown>>([
+        ['settings', () => command('workbench.action.openSettings')], ['catalog', () => command('dhimantai.courseCatalog')],
+      ]);
+      if (session) {
+        actions.set('continue', () => this.catalog ? this.catalog.continueLearning(session.user.id) : command('dhimantai.openLearningRoom'));
+        actions.set('courses', () => command('dhimantai.browsePractice'));
+        actions.set('certificates', () => command('dhimantai.courseGrade', '__certificates__'));
+        actions.set('signOut', () => command('dhimantai.signOut'));
+        if (origin) actions.set('manage', () => vscode.env.openExternal(vscode.Uri.parse(`${origin}/#/profile${session.user.email ? '?signin=email' : ''}`)));
+      } else {
+        actions.set('signIn', () => command('dhimantai.signIn'));
+        actions.set('signUp', () => command('dhimantai.signUp'));
+      }
+      const run = actions.get(action);
+      if (run) { this.close(); await run(); }
+      return;
     }
-    const run = actions.get(action);
-    if (run) { this.close(); await run(); }
+    const {extension, desktop} = this.view(open);
+    if (action === 'check' && !extension.busy && !desktop.busy) return this.check();
+    if (action === 'updateSettings') { this.close(); return command('dhimantai.updateSettings'); }
+    if (action === 'extensionNotes') {
+      this.close();
+      return command('markdown.showPreview', vscode.Uri.joinPath(this.context.extensionUri, 'changelog.md'));
+    }
+    if (action === 'desktopNotes') {
+      const version = desktop.available;
+      const releases = 'https://github.com/ssuda/dhimantai-downloads/releases';
+      return vscode.env.openExternal(vscode.Uri.parse(version ? releases + '/tag/v' + encodeURIComponent(version) : releases));
+    }
+    if (action !== extension.action && action !== desktop.action) return;
+    switch (action) {
+      case 'checkExtension': return this.checkLearning();
+      case 'checkDesktop': return this.checkNative();
+      case 'install': return this.installLearning();
+      case 'download': return this.native?.download();
+      case 'openInstaller': return this.openInstaller();
+      case 'reload': return command('workbench.action.reloadWindow');
+    }
   }
   dispose() {
     this.disposed = true; ++this.accountRequest; this.close();

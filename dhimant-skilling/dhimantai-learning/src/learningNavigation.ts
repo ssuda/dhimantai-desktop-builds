@@ -41,7 +41,6 @@ class LearningNavigation implements vscode.WebviewViewProvider {
       vscode.workspace.onDidCreateFiles(updateProject), vscode.workspace.onDidDeleteFiles(updateProject), vscode.workspace.onDidRenameFiles(updateProject),
       vscode.window.onDidChangeActiveTextEditor(() => { if (this.workspaceRoot()?.uri.toString() !== this.root?.uri.toString()) updateProject(); }),
       vscode.window.tabGroups.onDidChangeTabs(() => this.updateSelected()),
-      vscode.window.tabGroups.onDidChangeTabGroups(() => this.updateSelected()),
     ];
     view.onDidDispose(() => {
       for (const listener of listeners) listener.dispose();
@@ -95,7 +94,7 @@ class LearningNavigation implements vscode.WebviewViewProvider {
     if (!target) return;
     const owner = (await this.auth.session())?.user.id;
     if ((target !== this.menuResume && target !== this.resume) || owner !== target.owner || this.environment() !== target.environment) return;
-    return target.course === ERP_COURSE ? vscode.commands.executeCommand('dhimantai.openBrowserCourse','erpnext-essentials',true,target.chapter)
+    return target.course === ERP_COURSE ? vscode.commands.executeCommand('dhimantai.openBrowserCourse','erpnext-essentials')
       : vscode.commands.executeCommand('dhimantai.openLearningRoom',target.course,target.chapter);
   }
 
@@ -104,9 +103,6 @@ class LearningNavigation implements vscode.WebviewViewProvider {
     const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
     if (!key && input instanceof vscode.TabInputWebview) {
       if (input.viewType.endsWith('dhimantai.courseCatalog')) key = 'courses';
-      else if (input.viewType.endsWith('dhimantai.myCourses')) key = 'mine';
-      else if (input.viewType.endsWith('dhimantai.practicePage')) key = 'practice';
-      else if (input.viewType.endsWith('dhimantai.buildStudio')) key = 'studio';
       else if (input.viewType.endsWith('dhimantai.courseGrade')) key = 'certificates';
       else if (input.viewType.endsWith('dhimantai.learningRoom')) {
         const mode = this.activeLesson().mode;

@@ -47,8 +47,6 @@ export interface AppServer {
   createdBy(record: Record<string, unknown>, login: string): Promise<boolean>;
   /** After login: the application's session cookie, which the desktop hands to the browser tab. */
   sessionCookie(): {name: string; value: string} | undefined;
-  /** The application's desk route reported by the authenticated server. */
-  landingPath?(): string | undefined;
 }
 
 export type Fetch = typeof fetch;

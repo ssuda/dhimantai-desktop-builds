@@ -160,35 +160,3 @@ test('typing cancels an automatic Instructor request so a new Run does not wait 
   finish(feedback); await pending;
   assert.equal(results.length, 1, 'the old guidance is discarded');
 });
-
-test('Run in another cell stops an earlier run that is still waiting for input, then runs', async () => {
-  const results: CodeResult[] = [];
-  const stopped = {...execution, status: 'cancelled', exit_code: null, stdout: '', stderr: 'Stopped.'};
-  const session = new RoomCodeSession({current: async () => true, aiEnabled: () => true, coach: async () => feedback,
-    run: (snapshot, signal) => snapshot.snippet === 'code-1'
-      ? new Promise(resolve => signal!.addEventListener('abort', () => resolve(stopped), {once: true}))
-      : Promise.resolve(execution)});
-  const waiting = session.handle(message, r => results.push(r));
-  await new Promise(resolve => setImmediate(resolve));
-  await session.handle({...message, snippet: 'code-2', source: 'print(2)', request: 2}, r => results.push(r));
-  await waiting;
-  assert.deepEqual(results.map(r => [r.snippet, r.execution?.status, r.error]),
-    [['code-1', 'cancelled', undefined], ['code-2', 'exited', undefined]]);
-});
-
-test('a run that ignores Stop does not block forever: the new Run explains and the next one works', async () => {
-  const results: CodeResult[] = [];
-  let release!: () => void;
-  const previousWait = RoomCodeSession.stopWait; RoomCodeSession.stopWait = 10;
-  try {
-    const session = new RoomCodeSession({current: async () => true, aiEnabled: () => true, coach: async () => feedback,
-      run: snapshot => snapshot.snippet === 'code-1' ? new Promise(resolve => { release = () => resolve(execution); }) : Promise.resolve(execution)});
-    const stuck = session.handle(message, r => results.push(r));
-    await new Promise(resolve => setImmediate(resolve));
-    await session.handle({...message, snippet: 'code-2', request: 2}, r => results.push(r));
-    assert.match(results.at(-1)?.error ?? '', /still starting or stopping/);
-    release(); await stuck;
-    await session.handle({...message, snippet: 'code-2', request: 3}, r => results.push(r));
-    assert.equal(results.at(-1)?.execution?.status, 'exited');
-  } finally { RoomCodeSession.stopWait = previousWait; }
-});

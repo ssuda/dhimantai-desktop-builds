@@ -1,12 +1,10 @@
 // A learner gesture enables spoken explanations for this and subsequent Instructor replies.
-window.installCoachAudio = (api, live) => {
+window.installCoachAudio = api => {
   const controls = document.getElementById('coach-audio');
   if (!controls) return;
   const toggle = document.getElementById('audio-toggle'), status = document.getElementById('audio-status');
   let enabled = false, id, attempt = 0, room, context, source, buffer, media, timer, drainTimer;
-  let paused = false, muted = false, phase = 'off', retryPlay;
-  // Keep actionable messages visible below the composer instead of squeezing its controls.
-  controls.closest('form')?.append(status);
+  let paused = false, muted = false, phase = 'off', retryPlay, failure = '';
   const actions = document.createElement('div'), off = document.createElement('button'), mute = document.createElement('button');
   actions.className = 'audio-actions';
   mute.type = off.type = 'button'; off.textContent = 'Turn off spoken explanations'; actions.append(mute, off);
@@ -14,32 +12,22 @@ window.installCoachAudio = (api, live) => {
     supported: () => typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype,
     select: async deviceId => {
       const current = context;
-      const sink = deviceId === 'default' ? '' : deviceId;
-      if (current && current.state !== 'closed' && (current.sinkId ?? '') !== sink) await current.setSinkId(sink);
-      await live?.output?.(deviceId);
+      if (current) await current.setSinkId(deviceId === 'default' ? '' : deviceId);
       if (context !== current) throw new Error('Playback changed');
-    },
-    onChosen: () => {
-      if (toggle.disabled) return;
-      if (!enabled || phase === 'failed') enable();
-      else if (phase === 'blocked') void retryPlay?.();
     },
     actions,
     menuLabel: 'Spoken explanation options',
-    playback: async speed => { await live?.speed?.(speed); },
+    playback: async () => {},
   });
 
   function draw() {
     const explaining = phase === 'playing' || phase === 'buffering' || phase === 'muted';
     const label = !enabled ? 'Enable spoken explanations' : paused ? 'Resume spoken explanation' :
-      phase === 'failed' ? 'Retry spoken explanation' : phase === 'blocked' ? 'Play explanation' : explaining ? 'Pause spoken explanation' :
+      phase === 'blocked' ? 'Play explanation' : explaining ? 'Pause spoken explanation' :
       phase === 'complete' ? 'Explain again' : 'Turn off spoken explanations';
-    speaker.update(!enabled || muted, false, label, paused || phase === 'failed' || phase === 'blocked' || phase === 'complete' ? 'play' : explaining ? 'pause' : 'speaker');
+    speaker.update(!enabled || muted, false, label, paused || phase === 'blocked' || phase === 'complete' ? 'play' : explaining ? 'pause' : 'speaker');
     toggle.setAttribute('aria-pressed', String(enabled));
-    if (live) queueMicrotask(() => live.muted(!enabled || muted || paused));
-    const needsAction = phase === 'failed' || phase === 'blocked';
-    status.classList.toggle('audio-sr-only', !needsAction);
-    toggle.title = needsAction ? status.textContent : muted ? `${label} (muted)` : label;
+    toggle.title = failure ? `${failure} ${label}` : phase === 'blocked' ? `${status.textContent}. ${label}` : muted ? `${label} (muted)` : label;
     mute.textContent = muted ? 'Unmute speaker' : 'Mute speaker';
     mute.setAttribute('aria-pressed', String(muted));
     mute.disabled = off.disabled = !enabled;
@@ -71,10 +59,8 @@ window.installCoachAudio = (api, live) => {
   function enable(waitForNext = false) {
     enabled = true;
     start(waitForNext);
-  }
-  function prepareOutput() {
-    if (context?.state === 'closed') closeOutput();
-    if (!context) {
+    if (context) return;
+    try {
       // Chromium grants playback to the element and context used during the gesture.
       // Keep them for subsequent replies while releasing each finished remote track.
       context = new AudioContext();
@@ -87,30 +73,25 @@ window.installCoachAudio = (api, live) => {
       void media.play().catch(() => {}).finally(() => {
         for (const track of silent.getTracks()) track.stop();
       });
-    }
+    } catch { fail(); }
   }
   function turnOff() {
-    closeOutput(); enabled = false; muted = false; phase = 'off'; status.textContent = 'Spoken explanations off'; draw();
+    closeOutput(); enabled = false; muted = false; failure = ''; phase = 'off'; status.textContent = 'Spoken explanations off'; draw();
   }
   function start(waitForNext = false) {
     stop();
-    try { prepareOutput(); }
-    catch {
-      closeOutput();
-      fail('The desktop audio player could not open. Check your sound output, then select the speaker to retry.');
-      return;
-    }
+    failure = '';
     const play = id && !waitForNext;
     phase = play ? 'connecting' : 'waiting';
     status.textContent = play ? 'Connecting audio…' : 'Spoken explanations on · waiting for a reply';
     draw();
     if (!play) return;
-    timer = setTimeout(() => fail('The speech service took too long to connect. Select the speaker to retry.'), 45000);
     api.postMessage({type: 'audioJoin', id, attempt});
+    timer = setTimeout(fail, 45000);
   }
-  function fail(message) {
-    stop(); phase = 'failed';
-    status.textContent = message;
+  function fail(message = 'Spoken explanation unavailable. Select the speaker to retry.') {
+    closeOutput(); enabled = false; phase = 'off';
+    failure = message; status.textContent = message;
     draw();
   }
   off.onclick = turnOff;
@@ -120,7 +101,7 @@ window.installCoachAudio = (api, live) => {
     draw();
   };
   toggle.onclick = () => {
-    if (!enabled || phase === 'failed') { enable(); return; }
+    if (!enabled) { enable(); return; }
     if (phase === 'blocked' || paused) { void retryPlay?.(); return; }
     if (phase === 'complete') { start(); return; }
     if (phase === 'playing' || phase === 'buffering' || phase === 'muted') {
@@ -159,11 +140,7 @@ window.installCoachAudio = (api, live) => {
         await audio.audioWorklet.addModule(controls.dataset.worklet);
         if (!active()) return;
         if (speaker.deviceId !== 'default' && audio.sinkId !== speaker.deviceId) {
-          try { await audio.setSinkId(speaker.deviceId); }
-          catch {
-            if (active()) fail('The selected speaker is unavailable. Choose another audio output to retry.');
-            return;
-          }
+          await audio.setSinkId(speaker.deviceId);
           if (!active()) return;
         }
         buffer = new AudioWorkletNode(audio, 'coach-audio-buffer', {channelCount: 1, channelCountMode: 'explicit', outputChannelCount: [1],
@@ -171,10 +148,7 @@ window.installCoachAudio = (api, live) => {
         buffer.port.postMessage({type: 'mute', value: muted});
         buffer.port.onmessage = ({data}) => {
           if (!active()) return;
-          if (data.type === 'overflow') {
-            fail('The playback buffer filled up. Select the speaker to replay the explanation.'); return;
-          }
-          if (data.type === 'empty') {
+          if (data.type === 'overflow' || data.type === 'empty') {
             fail('No spoken explanation was received. Select the speaker to retry.'); return;
           }
           if (data.type === 'playback') {
@@ -187,7 +161,7 @@ window.installCoachAudio = (api, live) => {
             drained = true; complete();
           }
         };
-        buffer.onprocessorerror = () => { if (active()) fail('Audio playback stopped. Select the speaker to retry.'); };
+        buffer.onprocessorerror = () => { if (active()) fail(); };
         buffer.connect(audio.destination);
         const stream = new MediaStream([track.mediaStreamTrack]);
         // Chromium can supply only silence to Web Audio for an unattached remote
@@ -209,21 +183,16 @@ window.installCoachAudio = (api, live) => {
             if (drained) { complete(); return; }
             if (!requested) {
               requested = true;
-              clearTimeout(timer);
-              timer = setTimeout(() => fail('The spoken explanation timed out. Select the speaker to retry.'), 185000 / Math.min(speaker.playbackSpeed, 1));
+              clearTimeout(timer); timer = setTimeout(fail, 185000 / Math.min(speaker.playbackSpeed, 1));
               api.postMessage({type: 'audioStart', id, attempt: number, speed: speaker.playbackSpeed});
             }
-          } catch (error) {
-            if (!active()) return;
-            if (audio.state === 'running' && error.name !== 'NotAllowedError') {
-              fail('Audio playback could not start. Check your sound output, then select the speaker to retry.'); return;
-            }
-            paused = false; phase = 'blocked'; status.textContent = 'Audio paused · select the play icon to continue'; draw();
+          } catch {
+            if (active()) { paused = false; phase = 'blocked'; status.textContent = 'Audio paused · select the play icon to continue'; draw(); }
           }
         };
         audio.onstatechange = () => {
           if (!active()) return;
-          if (audio.state === 'closed') { fail('The audio output closed. Select the speaker to reconnect.'); return; }
+          if (audio.state === 'closed') { fail(); return; }
           if (audio.state !== 'running') {
             buffer.port.postMessage({type: 'pause', value: true});
             phase = 'blocked'; paused = false;
@@ -233,13 +202,11 @@ window.installCoachAudio = (api, live) => {
         // Expose the gesture fallback even when resume() remains pending.
         phase = 'blocked'; status.textContent = 'Ready · select the play icon to start'; draw();
         void retryPlay();
-      } catch { if (active()) fail('The desktop player could not prepare audio. Select the speaker to retry.'); }
+      } catch { if (active()) fail(); }
     });
     live.on(sdk.RoomEvent.DataReceived, (bytes, peer, _kind, topic) => {
       if (!active() || peer?.identity !== 'dhimantai-coach' || topic !== 'dhimantai.coach.playback') return;
-      if (new TextDecoder().decode(bytes) !== 'done' || !requested) {
-        fail('The speech service could not generate this explanation. Select the speaker to retry.'); return;
-      }
+      if (new TextDecoder().decode(bytes) !== 'done' || !requested) { fail(); return; }
       if (finished) return;
       finished = true;
       clearTimeout(timer);
@@ -251,24 +218,20 @@ window.installCoachAudio = (api, live) => {
         void live.disconnect().catch(() => {});
       }, 500);
     });
-    live.on(sdk.RoomEvent.Disconnected, () => {
-      if (active() && !finished) fail('The audio connection was lost. Check your connection, then select the speaker to retry.');
-    });
+    live.on(sdk.RoomEvent.Disconnected, () => { if (active() && !finished) fail(); });
     try {
       await live.connect(grant.url, grant.token, {autoSubscribe: false});
       if (!active()) { await live.disconnect(); return; }
       for (const peer of live.remoteParticipants.values()) for (const pub of peer.trackPublications.values()) subscribe(pub, peer);
-    } catch { if (active()) fail('Could not connect to the speech service. Check your connection, then select the speaker to retry.'); }
+    } catch { if (active()) fail(); }
   }
 
   window.addEventListener('message', ({data}) => {
     if (data?.type === 'audioOff') { if (Object.hasOwn(data, 'audioId')) id = data.audioId; turnOff(); return; }
     if (data?.type === 'audioGrant' || data?.type === 'audioError') {
       if (!enabled || data.attempt !== attempt || data.id !== id) return;
-      if (data.type === 'audioError') fail(data.message || 'The speech service is unavailable. Select the speaker to retry.');
-      else void connect(data).catch(() => {
-        if (enabled && data.attempt === attempt && data.id === id) fail('The desktop player could not open the audio connection. Select the speaker to retry.');
-      });
+      if (data.type === 'audioError') fail();
+      else void connect(data).catch(() => { if (enabled && data.attempt === attempt && data.id === id) fail(); });
       return;
     }
     // A Practice notebook decides which replies were shown and forwards only those (reply() below).
@@ -285,9 +248,6 @@ window.installCoachAudio = (api, live) => {
   window.addEventListener('pagehide', turnOff);
   draw();
   return {
-    get deviceId() { return speaker.deviceId; },
-    get playbackSpeed() { return speaker.playbackSpeed; },
-    get muted() { return !enabled || muted || paused; },
     reply: audioId => accept(typeof audioId === 'string' ? audioId : null),
     // A microphone gesture interrupts this reply and opts into the next one.
     listenForReply() {

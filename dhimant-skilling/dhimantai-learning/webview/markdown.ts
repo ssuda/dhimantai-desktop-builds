@@ -60,69 +60,17 @@ markdown.renderer.rules.board_markup = (tokens, i) => {
 const fence = markdown.renderer.rules.fence!;
 const svgFence = (token: Token) => ['', 'svg', 'xml'].includes(token.info.trim().toLowerCase())
   && /^\s*(?:<\?xml\b[^?]*\?>\s*)?<svg\b/i.test(token.content);
-
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function highlightCodeLine(line: string, lang: string): string {
-  const escaped = escapeHtml(line);
-  if (!['python', 'py', 'python3', 'javascript', 'js', 'typescript', 'ts', 'sql', 'bash', 'sh'].includes(lang)) {
-    return escaped;
-  }
-  const pyKeywords = new Set([
-    'def', 'return', 'if', 'elif', 'else', 'for', 'while', 'in', 'not', 'and', 'or', 'is',
-    'import', 'from', 'as', 'class', 'try', 'except', 'finally', 'with', 'pass', 'break',
-    'continue', 'yield', 'lambda', 'True', 'False', 'None', 'raise', 'assert', 'async', 'await',
-    'function', 'const', 'let', 'var', 'SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE', 'DELETE',
-  ]);
-  const pyBuiltins = new Set([
-    'print', 'len', 'range', 'int', 'str', 'float', 'list', 'dict', 'set', 'tuple', 'input',
-    'enumerate', 'zip', 'sum', 'min', 'max', 'sorted', 'type', 'isinstance', 'open', 'abs',
-  ]);
-  // Tokenize comments, strings, numbers, and identifiers in one pass to avoid nested spans.
-  const tokenRe = /(#.*$|\/\/.*$|&quot;(?:\\.|[^&]|&(?!quot;))*?&quot;|'(?:\\.|[^'])*?'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_]\w*\b)/g;
-  return escaped.replace(tokenRe, (tok) => {
-    if (tok.startsWith('#') || tok.startsWith('//')) return `<span class="tok-comment">${tok}</span>`;
-    if (tok.startsWith('&quot;') || tok.startsWith("'")) return `<span class="tok-string">${tok}</span>`;
-    if (/^\d/.test(tok)) return `<span class="tok-number">${tok}</span>`;
-    if (pyKeywords.has(tok)) return `<span class="tok-keyword">${tok}</span>`;
-    if (pyBuiltins.has(tok)) return `<span class="tok-builtin">${tok}</span>`;
-    return tok;
-  });
-}
-
-function renderStyledCodeBlock(code: string, info: string, expectedError?: string): string {
-  const rawLang = info.trim().split(/\s+/)[0]?.toLowerCase() || '';
-  const langLabel = rawLang === 'py' || rawLang === 'python3' ? 'python' : rawLang;
-  const displayLang = langLabel ? langLabel.charAt(0).toUpperCase() + langLabel.slice(1) : 'Code';
-  const isPrediction = /\bprediction-only\b/.test(info);
-  const isExplanation = /\bexplanation-only\b/.test(info);
-  const readOnlyBadge = isPrediction ? 'Prediction only · not executable'
-    : isExplanation ? 'Explanation only · not executable' : '';
-  const hasTrailingNewline = /\r?\n$/.test(code);
-  const trimmed = code.replace(/\r?\n$/, '');
-  const lines = trimmed.split('\n');
-  const lineNumsHtml = lines.map((_, idx) => `<span>${idx + 1}</span>`).join('');
-  const codeHtml = lines.map(line => highlightCodeLine(line, langLabel)).join('\n') + (hasTrailingNewline ? '\n' : '');
-  const errAttr = expectedError ? ` data-expected-error="${escapeHtml(expectedError)}"` : '';
-  const classAttr = langLabel ? ` class="language-${escapeHtml(langLabel)}"` : '';
-  const cardClass = readOnlyBadge ? 'code-block-card code-reading-only' : 'code-block-card';
-  return `<div class="${cardClass}" data-code-lang="${escapeHtml(langLabel || 'text')}">`
-    + `<div class="code-block-header"><span class="code-block-lang">${escapeHtml(displayLang)}</span>`
-    + (readOnlyBadge ? `<small class="code-block-badge">${readOnlyBadge}</small>` : '')
-    + `<button type="button" class="quiet code-copy-btn" data-copy-code aria-label="Copy code">Copy</button></div>`
-    + `<div class="code-block-body"><div class="code-line-nums" aria-hidden="true">${lineNumsHtml}</div>`
-    + `<pre><code${classAttr}${errAttr}>${codeHtml}</code></pre></div></div>\n`;
-}
-
 markdown.renderer.rules.fence = (tokens, i, options, env, renderer) => {
   const token = tokens[i];
   const language = diagramLanguage(token.info, token.content);
   if (language) return diagramBlock(language, token.content);
-  if (svgFence(token)) return diagram(token.content);
+  if(/\b(?:prediction-only|explanation-only)\b/.test(token.info)) {
+    const kind=token.info.includes('prediction-only')?'Prediction only':'Explanation only';
+    return '<div class="code-reading-only"><small>'+kind+' · not executable</small>'+fence(tokens,i,options,env,renderer)+'</div>';
+  }
   const expected = token.info.trim().match(/^\S+\s+expected-error=([A-Z]\w{0,60})$/);
-  return renderStyledCodeBlock(token.content, token.info, expected?.[1]);
+  if (expected) token.attrSet('data-expected-error', expected[1]);
+  return svgFence(token) ? diagram(token.content) : fence(tokens, i, options, env, renderer);
 };
 const codeBlock = markdown.renderer.rules.code_block!;
 markdown.renderer.rules.code_block = (tokens, i, options, env, renderer) => {
@@ -147,18 +95,6 @@ markdown.renderer.rules.text_diagram = (tokens, i) => diagramBlock(tokens[i].met
 
 export const renderBoard = (text: string) => markdown.render(text);
 export const renderHeading = (text: string) => markdown.renderInline(text);
-
-/** Keep older unfurled examples usable alongside the concise answer. Editors mount inside these disclosures. */
-export function foldDoubtCode(body: HTMLElement) {
-  if (!body.querySelector(':scope > p, :scope > ul, :scope > ol')) return;
-  for (const pre of body.querySelectorAll<HTMLElement>(':scope > pre, :scope > .code-block-card')) {
-    const code = pre.querySelector('code');
-    if (!code) continue;
-    const details = document.createElement('details'), summary = document.createElement('summary');
-    summary.textContent = code.className.startsWith('language-') ? 'Code example' : 'Code or output';
-    pre.replaceWith(details); details.append(summary, pre);
-  }
-}
 
 /** Compact previews use parsed text so code and literal punctuation stay intact. */
 export function markdownPlainText(text: string): string {

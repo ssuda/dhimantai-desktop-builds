@@ -89,27 +89,6 @@ export async function run() {
       answers = view.getByRole('group',{name:/pandas sales table/});
       await view.getByRole('status').filter({hasText:'Exercise complete.'}).waitFor();
       assert.equal(await answers.getByRole('button',{name:'10',exact:true}).isDisabled(),true);
-      if (!delayed) {
-        const warning = vscode.window.showWarningMessage;
-        try {
-          (vscode.window as any).showWarningMessage = async (message:string) => {
-            assert.equal(message, 'Start this chapter over?'); return 'Start over';
-          };
-          await view.getByLabel('Notebook options').click();
-          await view.getByRole('button',{name:'Start chapter over',exact:true}).click();
-          await answers.getByRole('button',{name:'10',exact:true,disabled:false}).click();
-          await view.getByRole('status').filter({hasText:'Exercise complete.'}).waitFor();
-        } finally { (vscode.window as any).showWarningMessage = warning; }
-        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-        await call('/__settings',{chapterRevision:'2'});
-        await vscode.commands.executeCommand('dhimantai.courseCatalog');
-        view = await learningPanel(page, '#open-guide');
-        await view.getByRole('button',{name:'Explore',exact:true}).click();
-        await view.getByRole('button',{name:'Start updated chapter 1',exact:true}).click();
-        view = await learningPanel(page, '[role="group"][aria-label*="sales table"]');
-        assert.equal(await view.getByRole('group',{name:/pandas sales table/}).getByRole('button',{name:'10',exact:true}).isEnabled(),true);
-        verified.push('manual chapter restart and automatic restart after publication');
-      }
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
       await auth.signOut();
       verified.push(delayed ? 'email confirmation and later sign-in' : 'immediate signup');

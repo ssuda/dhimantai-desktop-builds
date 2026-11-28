@@ -1,13 +1,12 @@
 import type { LocalAudioTrack, Room } from 'livekit-client';
 
 type Connection = {room: Room; agent: string};
-type Opening = {connection:Connection; track?:LocalAudioTrack; timer:ReturnType<typeof setTimeout>};
 
 /** Capture is explicit, scoped to one connection, and never restarted automatically. */
 export class LearningDevices {
   private microphone?: {track: LocalAudioTrack; connection: Connection};
   private revision = 0;
-  private opening?: Opening;
+  private busy = false;
   private notifications: Promise<void> = Promise.resolve();
   constructor(private readonly options: {
     current(): Connection | undefined;
@@ -18,7 +17,7 @@ export class LearningDevices {
   }) {}
 
   private changed() {
-    this.options.changed({microphone: !!this.microphone, busy: !!this.opening});
+    this.options.changed({microphone: !!this.microphone, busy: this.busy});
   }
   private async notify(connection: Connection, enabled: boolean, commit = false) {
     const notification = this.notifications.then(async () => {
@@ -36,15 +35,6 @@ export class LearningDevices {
   }
   stop(commit = false) {
     const revision = ++this.revision;
-    const opening = this.opening;
-    this.opening = undefined;
-    if (opening) {
-      clearTimeout(opening.timer);
-      if (opening.track) {
-        this.release(opening.track, opening.connection);
-        void this.notify(opening.connection, false).catch(() => {});
-      }
-    }
     const entry = this.microphone;
     this.microphone = undefined;
     if (entry) this.release(entry.track, entry.connection);
@@ -57,48 +47,35 @@ export class LearningDevices {
   async toggle() {
     if (this.microphone) {
       this.stop(true);
-      this.options.report('Microphone off.');
+      this.options.report('Microphone off. Sending your response…');
       return;
     }
     const connection = this.options.current();
-    if (this.opening || !connection) return;
+    if (this.busy || !connection) return;
+    this.busy = true; this.changed();
     const revision = this.revision;
-    const timer = setTimeout(() => {
-      if (this.revision !== revision) return;
-      this.stop();
-      this.options.report('Microphone connection timed out. Check your input device and try again.');
-    }, 30000);
-    const opening: Opening = {connection, timer};
-    this.opening = opening;
-    this.changed();
     const current = () => revision === this.revision && this.options.current()?.room === connection.room;
+    let track: LocalAudioTrack | undefined;
     try {
       if (!await this.options.pause()) throw new Error('Pause the lesson video before starting the microphone.');
       if (!current()) return;
-      const track = await this.options.capture();
+      track = await this.options.capture();
       if (!current()) { track.stop(); return; }
-      opening.track = track;
       await this.notify(connection, true);
-      if (!current()) return;
+      if (!current()) { track.stop(); void this.notify(connection, false).catch(() => {}); return; }
       await connection.room.localParticipant.publishTrack(track);
-      if (!current()) { void connection.room.localParticipant.unpublishTrack(track, true).catch(() => {}); return; }
+      if (!current()) { this.release(track, connection); void this.notify(connection, false).catch(() => {}); return; }
       this.microphone = {track, connection};
       track.mediaStreamTrack.addEventListener('ended', () => {
         if (this.microphone?.track === track) { this.stop(); this.options.report('The microphone stopped. Select it again to reconnect.'); }
       }, {once: true});
       this.options.report('Microphone on. You can speak now.');
     } catch (error) {
-      if (this.opening !== opening) return;
-      if (opening.track) {
-        this.release(opening.track, connection);
-        void this.notify(connection, false).catch(() => {});
-      }
+      if (track) this.release(track, connection);
+      void this.notify(connection, false).catch(() => {});
       if (current()) this.options.report(error instanceof Error && error.name === 'NotAllowedError'
         ? 'Device permission was denied. You can keep typing or allow access in your system settings.'
         : error instanceof Error ? error.message : 'Could not start the device.');
-    } finally {
-      clearTimeout(timer);
-      if (this.opening === opening) { this.opening = undefined; this.changed(); }
-    }
+    } finally { this.busy = false; this.changed(); }
   }
 }

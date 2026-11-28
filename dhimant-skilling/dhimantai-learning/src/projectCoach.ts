@@ -10,16 +10,15 @@ import { CoachSurface, CoachRenderer } from './coachSurface';
 import { CoachAudio, SpokenReply, instructorComposer, audioPolicy } from './coachAudio';
 import { practiceAttachments, PracticeAttachment, attachmentNote } from './practiceAttachments';
 import { bindDictation } from './dictation';
-import { coachingLanguage, coachingLanguages } from './coachingLanguage';
+import { coachingLanguage } from './coachingLanguage';
 import { courseAction, type SkillingTarget } from './skillingMenu';
 import { CourseWorkspaces } from './courseWorkspace';
 import { courseTerminalOptions } from './courseTerminal';
 import { Environment, EnvironmentName } from './environments';
 import { checkState, isEnabledProject, projectIdentity, loadProjectCurriculum, trackedProjectFiles, personalSource, ProjectCheckpoint, ProjectCurriculum, ProjectRun,
-  prepareProjectHandoff, projectFiles, projectDebugTarget, projectSnapshot, checkDigest, evidenceFingerprint, publicProjectFile, runProjectCheck, ProjectSnapshot } from './projectCore';
+  prepareProjectHandoff, projectFiles, projectSnapshot, checkDigest, evidenceFingerprint, publicProjectFile, runProjectCheck, ProjectSnapshot } from './projectCore';
 import { CODE_READING_PAUSED, desktopProjectEnabled } from './desktopFeatures';
 import { projectContextProblem, projectReferences, publicContextPath, redactSecrets } from './projectContext';
-import type { ProjectDebugger } from './projectDebugger';
 import { runManagedProject } from './projectLive';
 import { onRecordsChanged } from './helpRecord';
 import type { CourseworkOutbox } from './courseworkProgress';
@@ -46,7 +45,7 @@ function milestoneLinks(curriculum: ProjectCurriculum, step: ProjectCurriculum['
 /** The existing Coach surface, scoped to one multi-file project and account at a time. */
 const watchesArchitecture = (id: string) => ['personal-project', 'skilling-project', 'shelf', 'course-agent'].includes(id);
 type ProjectMessage = {topic?:ArchitectureTopic; role:'learner' | 'tutor'; text:string; digest?:string; observation?:Observation['event']; references?:ReturnType<typeof projectReferences>};
-type Observation = {event:'opened' | 'saved' | 'check' | 'git' | 'debug_pause'; path?:string; line?:number; current?:()=>boolean};
+type Observation = {event:'opened' | 'saved' | 'check' | 'git'; path?:string; line?:number};
 
 function practiceHintLevel(help: readonly string[] = []) {
   if (help.some(key => ['design_hint', 'isolate_hint', 'regression_hint'].includes(key))) return 2;
@@ -54,6 +53,7 @@ function practiceHintLevel(help: readonly string[] = []) {
 }
 
 export class ProjectCoach implements vscode.Disposable {
+  private readonly surface: CoachSurface;
   private readonly menuChanged = new vscode.EventEmitter<void>();
   readonly onMenuChange = this.menuChanged.event;
   private readonly subscriptions: vscode.Disposable[] = [this.menuChanged];
@@ -71,7 +71,6 @@ export class ProjectCoach implements vscode.Disposable {
   private busy = false;
   private status = '';
   private run?: ProjectRun;
-  private debugger?: ProjectDebugger;
   private checkpoint?: ProjectCheckpoint;
   private progress: ProjectProgress = {visited: [], checkpoints: {}};
   private assistance = 0;
@@ -90,8 +89,6 @@ export class ProjectCoach implements vscode.Disposable {
   private conversationId = randomBytes(16).toString('hex');
   private spoken?: SpokenReply;
   private lastGuide?: string;
-  private conversationLanguage?: string;
-  private selectedVoiceLanguage?: string;
   private handoff?: HandoffAvailability;
   private receipt?: HandoffReceipt;
   private handoffRequest?: {id: string; fingerprint: string};
@@ -108,12 +105,13 @@ export class ProjectCoach implements vscode.Disposable {
 
   constructor(private readonly context: vscode.ExtensionContext, private readonly auth: Auth,
     private readonly environment: () => EnvironmentName, private readonly service: () => Environment,
-    private readonly courses: CourseWorkspaces, private readonly surface: CoachSurface, private readonly results?: ProjectResults,
+    private readonly courses: CourseWorkspaces, private readonly results?: ProjectResults,
     private readonly recordCoursework?: (environment: EnvironmentName, owner: string, curriculum: ProjectCurriculum, submission: ProjectSubmission) => Promise<void>,
     private readonly coursework?: CourseworkOutbox) {
     this.subscriptions.push(onRecordsChanged(() => { if (this.inProject) void this.refresh(); }));
     const media = vscode.Uri.joinPath(context.extensionUri, 'media');
     this.curriculum = loadProjectCurriculum(media.fsPath, 'course-agent');
+    this.surface = new CoachSurface(media, async () => {});
     let lastTab: vscode.Tab | undefined;
     const editedLine = new WeakMap<vscode.TextDocument, number>();
     const followTab = () => {
@@ -124,7 +122,7 @@ export class ProjectCoach implements vscode.Disposable {
       if (!this.root || this.opening) return;
       const input = tab?.input;
       // On older hosts the Coach itself occupies an adjacent editor tab.
-      if (input instanceof vscode.TabInputWebview && input.viewType.endsWith('dhimantai.buildStudio')) return;
+      if (input instanceof vscode.TabInputWebview && input.viewType.endsWith('dhimantai.coach')) return;
       let uri: vscode.Uri | undefined;
       if (input instanceof vscode.TabInputText || input instanceof vscode.TabInputNotebook || input instanceof vscode.TabInputCustom)
         uri = input.uri;
@@ -144,7 +142,9 @@ export class ProjectCoach implements vscode.Disposable {
         void this.hide();
       }
     };
-    this.subscriptions.push(vscode.commands.registerCommand('dhimantai.discussProjectSelection', async () => {
+    this.subscriptions.push(vscode.commands.registerCommand('dhimantai.openProjectCoach', (target?: string | vscode.Uri) =>
+      this.open(typeof target === 'string' ? target : target ? vscode.workspace.getWorkspaceFolder(target)?.uri.fsPath : undefined)),
+      vscode.commands.registerCommand('dhimantai.discussProjectSelection', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!this.root || !editor || !this.path(editor.document.uri) || editor.selection.isEmpty) return;
         const chat = this.conversationId;
@@ -159,11 +159,11 @@ export class ProjectCoach implements vscode.Disposable {
       }),
       auth.onDidChange(session => {
         if ((session?.user.id ?? 'local') === this.owner) return;
-        this.clearChat(); this.invalidate('Account changed. Reopen Project Mentor to continue.'); this.run = undefined; this.checkpoint = undefined; void this.resetOwner();
+        this.clearChat(); this.invalidate('Account changed. Reopen the Project Instructor to continue.'); this.run = undefined; this.checkpoint = undefined; void this.resetOwner();
       }),
       vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('dhimantai.environment') || e.affectsConfiguration('dhimantai.aiAssistance')) {
-          this.clearChat(); this.invalidate('Project Mentor settings changed.'); this.run = undefined; void this.resetOwner();
+          this.clearChat(); this.invalidate('Instructor settings changed.'); this.run = undefined; void this.resetOwner();
         }
       }),
       vscode.workspace.onDidChangeTextDocument(e => {
@@ -197,7 +197,6 @@ export class ProjectCoach implements vscode.Disposable {
     const path = relative(this.root, uri.fsPath).replace(/\\/g, '/');
     return path && !path.startsWith('..') && !path.startsWith('/') ? path : undefined;
   }
-  // Existing workspaces store checkpoints, chat and submission retry IDs under this key.
   private key() { return `projectCoach:${this.environment()}:${this.owner}:${this.root}`; }
   private async resetOwner() {
     // Load into locals and assign together, so a later save never writes another
@@ -236,8 +235,6 @@ export class ProjectCoach implements vscode.Disposable {
     }));
     this.milestone = step.id; this.messages = this.chats[step.id];
     this.checkpoint = this.progress.checkpoints[step.id];
-    if (curriculum.id === 'market-checkout' && this.root)
-      this.run = this.results?.get(this.environment(), owner, this.root)?.submissions.at(-1)?.runs.at(-1);
     if (!this.progress.visited.includes(step.id)) this.progress.visited.push(step.id);
     this.loadedKey = key;
     if (curriculum.architecture || curriculum.gitPractice) {
@@ -278,13 +275,12 @@ export class ProjectCoach implements vscode.Disposable {
   }
   private clearChat() {
     this.lastEvidence = ''; this.lastPublicGit = ''; this.lastReviewAt = 0;
-    this.messages = []; this.spoken = undefined; this.lastGuide = undefined;
-    this.conversationLanguage = undefined; this.selectedVoiceLanguage = undefined; this.conversationId = randomBytes(16).toString('hex');
+    this.messages = []; this.spoken = undefined; this.lastGuide = undefined; this.conversationId = randomBytes(16).toString('hex');
   }
   async hide() {
     this.inProject = false;
     void this.surface.webviewFor(this.render)?.postMessage({type: 'audioOff'});
-    this.invalidate(''); await this.surface.hide(this.render);
+    this.invalidate(''); await this.surface.hide();
   }
 
   async menuTarget(uri: vscode.Uri): Promise<SkillingTarget> {
@@ -316,12 +312,26 @@ export class ProjectCoach implements vscode.Disposable {
     return target;
   }
 
-  async canRestore(root: string) {
-    return await isEnabledProject(root) || vscode.workspace.isTrusted && !!this.context.workspaceState.get('personalInstructor:' + root);
+  async restore() {
+    const roots = (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === 'file');
+    for (const folder of roots) if (await isEnabledProject(folder.uri.fsPath) || vscode.workspace.isTrusted &&
+      this.context.workspaceState.get('personalInstructor:' + folder.uri.fsPath)) { await this.open(folder.uri.fsPath, true); break; }
   }
-  async open(root: string, restoring = false) {
+  async open(root?: string, restoring = false) {
     const opening = ++this.openSequence;
     try {
+      if (!root) {
+        const folders = [];
+        for (const folder of vscode.workspace.workspaceFolders ?? [])
+          if (folder.uri.scheme === 'file') folders.push(folder);
+        if (!folders.length) {
+          void vscode.window.showInformationMessage('Open your project folder, then open Project Instructor.');
+          return;
+        }
+        root = folders.length === 1 ? folders[0].uri.fsPath : (await vscode.window.showQuickPick(
+          folders.map(f => ({label: f.name, root: f.uri.fsPath})), {placeHolder: 'Choose a course project'}))?.root;
+      }
+      if (!root) return;
       const id = await projectIdentity(root) ?? 'personal-project';
       if (id === 'personal-project') {
         if (!vscode.workspace.isTrusted || !vscode.workspace.workspaceFolders?.some(folder => folder.uri.scheme === 'file' && folder.uri.fsPath === root))
@@ -381,8 +391,9 @@ export class ProjectCoach implements vscode.Disposable {
       this.watcher = vscode.Disposable.from(watcher, ...gitWatchers);
       await this.resetOwner();
       if (opening !== this.openSequence || this.disposed) return;
+      await vscode.commands.executeCommand('setContext', 'dhimantai.projectOpen', true);
       const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-      if (restoring && activeTab instanceof vscode.TabInputWebview && !activeTab.viewType.endsWith('dhimantai.buildStudio')) return;
+      if (restoring && activeTab instanceof vscode.TabInputWebview && !activeTab.viewType.endsWith('dhimantai.coach')) return;
       if (!this.personal && !this.path(vscode.window.activeTextEditor?.document.uri ?? vscode.Uri.parse('untitled:'))) {
         const guide = join(root, curriculum.mode === 'reading' ? 'READING.md' : 'README.md');
         const firstFile = curriculum.id === 'shelf-reading' && curriculum.steps[this.step].id === 'map'
@@ -394,10 +405,10 @@ export class ProjectCoach implements vscode.Disposable {
       this.inProject = true;
       this.showProjectFiles();
       this.surface.select(this.render);
-      await this.surface.show(true, !restoring);
+      await this.surface.show(true);
       await this.refresh();
       this.queueReview({event:'opened'});
-    } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Could not open Project Mentor.'); }
+    } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Could not open Project Instructor.'); }
     finally { if (opening === this.openSequence) { this.opening = false; void this.refresh(); } }
   }
 
@@ -439,7 +450,7 @@ export class ProjectCoach implements vscode.Disposable {
   }
 
   private queueReview(observation: Observation) {
-    if (!this.reviewingAllowed() && !(observation.event === 'debug_pause' && this.busy)) return;
+    if (!this.reviewingAllowed()) return;
     this.cancelReview();
     this.reviewTimer = setTimeout(() => {
       this.reviewTimer = undefined;
@@ -448,7 +459,7 @@ export class ProjectCoach implements vscode.Disposable {
   }
 
   private async review(observation: Observation) {
-    if (!this.reviewingAllowed() || observation.current?.() === false) return;
+    if (!this.reviewingAllowed()) return;
     const controller = this.reviewRequest = new AbortController(), revision = this.revision;
     try {
       const curriculum = await this.curriculum;
@@ -458,14 +469,14 @@ export class ProjectCoach implements vscode.Disposable {
         await this.rememberGitProgress(curriculum,controller.signal);
         if (controller.signal.aborted || revision !== this.revision) return;
         void this.refresh();
-        // The repository can demonstrate progress without the mentor suggesting the next move.
+        // The repository can demonstrate progress without the Instructor suggesting the next move.
         if (waitsForIndependentAttempt(curriculum.id,this.architectureAttempts[curriculum.id])) return;
       }
       await this.ask('', curriculum, curriculum.steps[this.step], [], observation, controller);
     } catch (error) {
       if (!controller.signal.aborted && this.reviewingAllowed()) {
         this.status = error instanceof ApiError && [402, 403, 429].includes(error.status)
-          ? error.message : 'Mentor feedback is unavailable for this change.';
+          ? error.message : 'Instructor feedback is unavailable for this change.';
         void this.refresh();
       }
     } finally { if (this.reviewRequest === controller) this.reviewRequest = undefined; }
@@ -475,34 +486,6 @@ export class ProjectCoach implements vscode.Disposable {
     return {sharedFiles: snapshot.files.map(f => f.path + ':' + f.start_line + '–' + (f.start_line + f.text.split('\n').length - 1) + (f.truncated ? ' (excerpt)' : '')),
       omitted: snapshot.omitted, omittedCount: snapshot.omitted_count, structure: snapshot.structure, git: snapshot.git};
   }
-  private checkoutProgress(curriculum: ProjectCurriculum, snapshot?: ProjectSnapshot) {
-    if (curriculum.id !== 'market-checkout' || !this.root) return;
-    const saved = this.results?.get(this.environment(), this.owner, this.root);
-    const last = saved?.submissions.at(-1);
-    const complete = !!snapshot && last?.outcome === 'completed' && last.digest === snapshot.digest;
-    const attempt = this.architectureAttempts[curriculum.id];
-    const accountRecorded = !!attempt?.repair_digest;
-    const identified = complete || accountRecorded || !!attempt?.recognition_help || attempt?.first_diagnosis === 'after_edit';
-    const status = !snapshot ? 'Current files unavailable' : saved ? projectResultStatus(saved, snapshot.digest) : 'In progress';
-    let guide: string;
-    if (!snapshot) guide = 'Reopen the project files to check their completion status.';
-    else if (complete) guide = this.checkpoint?.note && checkpointCurrent(this.checkpoint, snapshot)
-      ? 'All required steps are complete. Your reflection is saved on this computer.'
-      : 'All required steps are complete. You can save a before-and-after observation in the optional checkpoint.';
-    else if (last && last.digest !== snapshot.digest) guide = 'The files changed after the last check. Save your work and select Verify repair.';
-    else if (last) guide = 'Inspect the check output, revise pricing.py and select Verify repair again.';
-    else if (identified || this.owner === 'local')
-      guide = 'Trace the ledger write in pricing.py, make your repair, then save the file and select Verify repair.';
-    else guide = 'Read pricing.py and trace one preview followed by one purchase. Record your prediction before editing. If you already made the repair, save your work and select Verify repair.';
-    let sync = '';
-    if (complete) {
-      if (this.owner === 'local') sync = 'Saved on this computer.';
-      else if (accountRecorded) sync = 'Practice completion recorded in your account.';
-      else sync = attempt ? 'Practice completion is awaiting account sync.' : 'Account completion could not be confirmed.';
-    }
-    return {status, complete, guide, sync, accountRecorded, identified};
-  }
-
   private async refresh() {
     if (!this.root || this.disposed || this.opening) return;
     const sequence = ++this.refreshSequence, root = this.root;
@@ -519,19 +502,18 @@ export class ProjectCoach implements vscode.Disposable {
       const step = curriculum.steps[this.step];
       const workspace = this.courses.recordFor(vscode.Uri.file(root));
       const milestones = projectMilestones(curriculum, this.progress, snapshot);
-      const saved = this.results?.get(this.environment(), this.owner, root);
-      const last = saved?.submissions.at(-1);
-      const checkout = this.checkoutProgress(curriculum, snapshot);
-      if (checkout) milestones[0].status = checkout.complete ? 'complete' : 'in_progress';
-      else if ((curriculum.architecture || curriculum.gitPractice) && snapshot) {
+      if ((curriculum.architecture || curriculum.gitPractice) && snapshot) {
+        const last = this.results?.get(this.environment(), this.owner, root)?.submissions.at(-1);
         if ((last?.outcome === 'completed' && last.digest === snapshot.digest) || (curriculum.gitPractice && this.architectureAttempts[curriculum.id]?.complete_digest === snapshot.digest)) milestones[0].status = 'complete';
       }
       const check = checkState(this.run, snapshot ? checkDigest(snapshot, step) : '', step.id);
+      const saved = this.results?.get(this.environment(), this.owner, root);
+      const last = saved?.submissions.at(-1);
       const completion = saved ? projectResultStatus(saved, snapshot?.digest, true, snapshot) : 'In progress';
       const sameSubmission = last?.outcome === 'completed' && snapshot && completion.startsWith('Completed locally');
       const sync = sameSubmission && this.owner !== 'local' && ['shelf','course-agent'].includes(curriculum.id)
         ? this.coursework?.projectSync(this.environment(), this.owner, last.id) : undefined;
-      const guide = checkout?.guide ?? readingGuidance(curriculum, this.step, milestones, this.progress, check, snapshot);
+      const guide = readingGuidance(curriculum, this.step, milestones, this.progress, check, snapshot);
       const voiceAvailable = this.canUseInstructor();
       if (voiceAvailable && guide && (guide !== this.lastGuide || (!this.spoken && !this.busy))) {
         this.lastGuide = guide;
@@ -540,17 +522,17 @@ export class ProjectCoach implements vscode.Disposable {
       }
       void this.surface.webviewFor(this.render)?.postMessage({type: 'state', revision: this.revision, conversationId: this.conversationId, title: curriculum.title,
         scope: this.key(), personal:this.personal, followup:!curriculum.gitPractice && !curriculum.architecture && this.followup?.project && transferTitles[this.followup.project], reading: curriculum.mode === 'reading', guided:curriculum.mode==='guided',
-        debugAvailable:!this.personal && !curriculum.gitPractice && !!projectDebugTarget(step,snapshot?.structure?.files),
         steps: curriculum.steps.map(s => s.title), step: this.step, current: {...step, files: milestoneLinks(curriculum, step)}, busy: this.busy,
         status: [problem, this.status].filter(Boolean).join(' '), contextProblem: problem,
-        checkout, architecture:(curriculum.architecture || curriculum.gitPractice) && {prediction:curriculum.architecture?.prediction, git:!!curriculum.gitPractice, debug:isDebugProject(curriculum.id),
-          identified:checkout?.identified ?? (!!curriculum.gitPractice || this.architectureAttempts[curriculum.id]?.recognition_help != null || !!this.architectureAttempts[curriculum.id]?.repair_digest),
-          summary:[this.architectureProblem, architectureSummary(curriculum.id,this.architectureAttempts), originSummary(this.followup?.origins[curriculum.id])].filter(Boolean).join(' ')},
+        architecture:(curriculum.architecture || curriculum.gitPractice) && {prediction:curriculum.architecture?.prediction, git:!!curriculum.gitPractice, debug:isDebugProject(curriculum.id),
+          identified:!!curriculum.gitPractice || this.architectureAttempts[curriculum.id]?.recognition_help != null || !!this.architectureAttempts[curriculum.id]?.repair_digest,
+          summary:[this.architectureProblem, architectureSummary(curriculum.id,this.architectureAttempts), originSummary(this.followup?.origins[curriculum.id])].filter(Boolean).join(' '),
+          next:curriculum.id === 'market-checkout' && !!this.architectureAttempts[curriculum.id]?.repair_digest},
         milestones, guide, verifiedWorkflow:curriculum.steps.every(s => s.checkpointCheck),
         hintLevel: curriculum.architecture ? practiceHintLevel(this.architectureAttempts[curriculum.id]?.help) : this.messages.some(m => m.role === 'tutor' && m.text === smallerProjectStep(step)) ? 2
           : this.messages.some(m => m.role === 'tutor' && m.text === step.hint) ? 1 : 0,
         signedIn: this.owner !== 'local', audioId: this.spoken?.id ?? null,
-        voiceAvailable, selectedVoiceLanguage:this.selectedVoiceLanguage ?? 'auto',
+        voiceAvailable,
         coachCourse: workspace?.account === this.owner && workspace.environment === this.environment() ? workspace.course : undefined,
         messages: this.messages, sourceDigest:snapshot?.digest, selection:snapshot?.selection, checkpoint: this.checkpoint, runtime: 'course',
         finalStep: curriculum.id === 'course-agent' && step.id === 'handoff', liveStep: curriculum.id === 'course-agent' && step.id === 'live',
@@ -569,14 +551,13 @@ export class ProjectCoach implements vscode.Disposable {
   }
 
   private readonly render: CoachRenderer = webview => {
-    void vscode.commands.executeCommand('setContext', 'dhimantai.projectOpen', true);
     const media = vscode.Uri.joinPath(this.context.extensionUri, 'media'), nonce = randomBytes(16).toString('hex');
     const asset = (file: string) => webview.asWebviewUri(vscode.Uri.joinPath(media, file));
     webview.options = {enableScripts: true, localResourceRoots: [media]};
     webview.html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; connect-src ${audioPolicy}; media-src blob:; style-src ${webview.cspSource} 'nonce-${nonce}'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource}">
 <link rel="stylesheet" href="${asset('coach.css')}"><link rel="stylesheet" href="${asset('coachMarkdown.css')}"><link rel="stylesheet" href="${asset('learning-room/composer.css')}"><link rel="stylesheet" href="${asset('projectCoach.css')}"></head>
-<body><main id="coach" aria-label="Project Mentor"><h2 id="title">Course project</h2>
+<body><main id="coach" aria-label="Project Instructor"><h2 id="title">Course project</h2>
 <div class="milestone-picker"><span id="stepTitle" aria-hidden="true"></span><select id="step" aria-label="Project milestone"></select></div>
 <div class="milestone-progress"><p id="progressText" role="status"></p><progress id="progress" value="0" max="1" aria-label="Milestones marked complete"></progress>
 <button id="previous" class="secondary" aria-label="Previous milestone" title="Previous milestone">‹</button><button id="next" class="secondary" aria-label="Next milestone" title="Next milestone">›</button></div>
@@ -590,7 +571,7 @@ export class ProjectCoach implements vscode.Disposable {
 <input id="architectureLocation" placeholder="file.py:line" maxlength="120">
 <label id="architectureQuestion" for="architectureCount"></label><input id="architectureCount" type="number" min="0" max="999">
 <button id="architecturePredict" class="secondary">Record prediction</button></div>
-</div>
+<button id="architectureNext" class="secondary" hidden>Try Field service dispatch</button></div>
 <div class="row"><button id="check">Check this step</button><button id="hint" class="secondary">I’m stuck</button></div></section>
 <section id="checkResult" aria-label="Check result"><p id="checkState" role="status"></p><div id="checkDiagnostic" hidden><p id="checkCause"></p><button type="button" class="link" id="checkLocation" hidden></button></div><p id="checkRecovery" class="muted"></p><details id="checkDetails" hidden><summary id="checkSummary">Show check output</summary><pre id="output"></pre></details></section>
 <section id="liveRun" hidden><button id="runLive">Run live model</button><p class="muted">Uses platform access in the project container. No personal API key. Up to six model calls per run and 36 per day. These calls are separate from scripted checks.</p><pre id="liveOutput"></pre></section>
@@ -598,16 +579,15 @@ export class ProjectCoach implements vscode.Disposable {
 <div id="instructions"></div><section aria-labelledby="expectedTitle"><h3 id="expectedTitle">Expected outcome</h3><p id="expected"></p></section>
 <p id="goal"></p><p id="opening"></p><div id="files" class="row"></div>
 <details id="milestoneReflection"><summary>Reflect on this step</summary><p id="reflection"></p></details></details>
-<details id="checkpointDetails"><summary id="checkpointTitle">Checkpoint</summary><div class="checkpoint-form">
+<details id="checkpointDetails"><summary>Checkpoint</summary><div class="checkpoint-form">
 <label for="note" id="evidencePrompt">What did you find?</label>
 <textarea id="note" rows="2" maxlength="1000" placeholder="Required to complete this milestone" aria-describedby="noteError"></textarea>
 <p id="noteError" role="alert"></p>
 <div class="row"><button id="checkpoint">Complete milestone</button><button id="saveDraft" class="link">Save draft</button></div>
 <p id="saved" class="muted" role="status"></p><p id="milestoneStatus" class="muted"></p></div></details>
 <section id="submission" hidden><button id="submitProject">Submit Project</button><p id="completion" role="status"></p><p class="muted" id="submissionHelp">Runs the final checks in your project container. Eligible checks also count toward the associated course grade for signed-in learners.</p></section>
-<button id="architectureNext" class="secondary" hidden>Try Field service dispatch</button>
 <details id="projectTools"><summary>Project tools</summary>
-<div class="runtime-row"><label for="runtime">Runtime</label><select id="runtime"><option value="course">Project container</option><option value="setup">Set up and verify environment…</option><option value="terminal">Open project terminal</option><option value="run" hidden>Run this step</option><option value="debug" hidden>Debug this step</option></select></div>
+<div class="runtime-row"><label for="runtime">Runtime</label><select id="runtime"><option value="course">Project container</option><option value="setup">Set up and verify environment…</option><option value="terminal">Open project terminal</option></select></div>
 <p id="runtimeTip" class="muted">The first check or terminal session prepares this project’s environment.</p>
 <label for="externalHelp">Other assistance (optional)</label><select id="externalHelp"><option value="unknown">Not reported</option><option value="reported">I used other help</option><option value="none_reported">No other help reported</option></select>
 <label for="projectActions">Project actions</label><select id="projectActions"><option value="">Choose an action…</option><option value="structure">Discuss project structure</option><option value="preview">Preview running application</option><option value="roadmap">Course roadmap & assessment</option><option value="results">View saved results</option><option value="publish">Publish to GitHub…</option><option value="pullRequest">Create pull request…</option></select>
@@ -615,17 +595,17 @@ export class ProjectCoach implements vscode.Disposable {
 </details>
 <div id="conversation" class="log" role="log" aria-live="polite"></div><p id="status" role="status"></p>
 </div>
-${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxlength:600, sendId:'ask', support:`<p id="selectionContext" class="muted" hidden></p><div class="project-chat-tools"><details id="sharingDetails"><summary id="sharedSummary" class="muted shared-summary">Files shared with the mentor</summary><p id="reviewSharing" class="muted" hidden>Your mentor reviews saved project work, check results and public Git activity while this panel is open. AI assistance controls this in Settings.</p><p id="courseAccess" class="muted"></p><pre id="shared"></pre></details><button id="newChat" type="button" class="link">New chat</button></div>`})}
+${instructorComposer(webview, media, nonce, {maxlength:600, sendId:'ask', support:`<p id="selectionContext" class="muted" hidden></p><div class="project-chat-tools"><details id="sharingDetails"><summary id="sharedSummary" class="muted shared-summary">Files shared with the Instructor</summary><p id="reviewSharing" class="muted" hidden>Your Instructor reviews saved project work, check results and public Git activity while this panel is open. AI assistance controls this in Settings.</p><p id="courseAccess" class="muted"></p><pre id="shared"></pre></details><button id="newChat" type="button" class="link">New chat</button></div>`})}
 </main><script nonce="${nonce}" src="${asset('coachMarkdown.js')}"></script><script nonce="${nonce}" src="${asset('learning-room/composer.js')}"></script><script nonce="${nonce}" src="${asset('projectCoach.js')}"></script></body></html>`;
     const playback = new CoachAudio(this.context.secrets, this.service).bind(webview,
       () => this.surface.visible && this.canUseInstructor() ? this.spoken : undefined);
     const dictation = bindDictation(webview, () => {
       if (!this.surface.visible || this.busy || !this.canUseInstructor()) return;
       const service = this.service();
-      return {key: this.conversationId, api: new Api(this.auth, () => service, this.owner), language:this.selectedVoiceLanguage ?? 'auto'};
+      return {key: this.conversationId, api: new Api(this.auth, () => service, this.owner), language: 'auto'};
     });
     return vscode.Disposable.from(playback, dictation, webview.onDidReceiveMessage(message => {
-      if (message?.type === 'audioJoin' || message?.type === 'audioStart' || message?.type === 'voiceInputGrant' || message?.type === 'cancelDictation') return;
+      if (message?.type === 'audioJoin' || message?.type === 'audioStart' || message?.type === 'dictate' || message?.type === 'cancelDictation') return;
       const scope = this.key(), conversation = this.conversationId;
       void this.handle(message).catch(error => {
         if (scope !== this.key() || conversation !== this.conversationId) return;
@@ -639,11 +619,6 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
     }));
   };
 
-  async openProjectTerminal() {
-    if (this.inProject && !this.personal) await this.handle({type:'runtime', value:'terminal', scope:this.key(),
-      step:this.step, conversationId:this.conversationId});
-  }
-
   private async handle(message: any): Promise<void> {
     if (message?.type === 'ready') return this.refresh();
     // The panel disables its controls on click; an ignored message must repaint them.
@@ -651,15 +626,6 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
       || this.loadedKey !== this.key()) return this.refresh();
     const curriculum = await this.curriculum, step = curriculum.steps[this.step];
     if (message.scope !== this.key() || message.step !== this.step || message.conversationId !== this.conversationId) return this.refresh();
-    if (message.type === 'voiceLanguage') {
-      if (this.busy || typeof message.value !== 'string' || message.value !== 'auto' && !Object.hasOwn(coachingLanguages, message.value)) return this.refresh();
-      this.selectedVoiceLanguage = message.value === 'auto' ? undefined : message.value;
-      this.conversationLanguage = this.selectedVoiceLanguage;
-      this.cancelReview();
-      if (this.spoken) this.spoken = {...this.spoken, id:randomUUID(),
-        query:this.voiceQuery(curriculum, this.voiceLanguage(), this.coachWorkspace()?.course)};
-      return this.refresh();
-    }
     if (message.type === 'reportGitHelp' && curriculum.gitPractice && this.owner !== 'local') {
       await this.architectureEvent(curriculum,{event:'external_help'}); return this.refresh();
     }
@@ -669,23 +635,8 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
       return;
     }
     if (this.personal && ['check','checkpoint','submitProject','runtime','projectAction'].includes(message.type)) return this.refresh();
-    if (curriculum.id === 'market-checkout' && ['architectureNext', 'syncPractice'].includes(message.type)) {
-      if (this.busy) return;
-      const scope = this.key(), revision = this.revision;
-      const snapshot = await this.snapshot();
-      if (this.busy || scope !== this.key() || revision !== this.revision || !this.checkoutProgress(curriculum, snapshot)?.complete) return this.refresh();
-      if (message.type === 'architectureNext') {
-        await vscode.commands.executeCommand('dhimantai.startCapstone', 'field-dispatch'); return;
-      }
-      const saved = this.results?.get(this.environment(), this.owner, this.root)?.submissions.at(-1);
-      if (this.owner === 'local' || !saved || saved.id !== message.id) return this.refresh();
-      this.busy = true; this.status = ''; void this.refresh();
-      try {
-        if (saved.assistance.otherHelp === 'reported') await this.architectureEvent(curriculum, {event:'external_help'});
-        if (scope === this.key() && revision === this.revision)
-          await this.architectureEvent(curriculum, {event:'passed', digest:snapshot.digest});
-      } finally { if (scope === this.key() && revision === this.revision) { this.busy = false; void this.refresh(); } }
-      return;
+    if (curriculum.architecture && message.type === 'architectureNext' && curriculum.id === 'market-checkout' && this.architectureAttempts[curriculum.id]?.repair_digest) {
+      await vscode.commands.executeCommand('dhimantai.startCapstone', 'field-dispatch'); return;
     }
     if (curriculum.architecture && message.type === 'diagnosis') {
       if (this.busy || typeof message.location !== 'string' || !Number.isInteger(message.prediction)) return this.refresh();
@@ -813,40 +764,14 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
       const smaller = smallerProjectStep(step);
       if (this.messages.some(m => m.role === 'tutor' && m.text === smaller)) {
         if (vscode.workspace.getConfiguration('dhimantai').get('aiAssistance', true) && this.owner !== 'local')
-          return this.handle({...message, type: 'ask', text: 'I am still stuck after both help steps. If the current files and check result do not show what went wrong, first ask what I tried, what I expected and what happened. If they show a concept I am missing, explain it using this project and suggest one action I can try.'});
+          return this.handle({...message, type: 'ask', text: 'I am still stuck after both help steps. Use the current files and check result to help me take one smaller action. Ask what I tried before giving a solution.'});
         this.status = 'Use the smaller step above, then record your prediction and observation in a checkpoint. ' +
-          (this.owner === 'local' ? 'Sign in to ask the mentor a follow-up.' : 'Turn on AI assistance to ask the mentor a follow-up.');
+          (this.owner === 'local' ? 'Sign in to ask the Instructor a follow-up.' : 'Turn on AI assistance to ask the Instructor a follow-up.');
         return this.refresh();
       }
       const text = this.messages.some(m => m.role === 'tutor' && m.text === step.hint) ? smaller : step.hint;
       this.messages.push({role: 'tutor', text}); this.messages = this.messages.slice(-40);
       this.assistance++; await this.persist(); return this.refresh();
-    }
-    if (message.type === 'runtime' && (message.value === 'debug' || message.value === 'run')) {
-      const runOnly = message.value === 'run';
-      if (this.busy || curriculum.gitPractice) return this.refresh();
-      if (!vscode.workspace.isTrusted || this.dirty().size) throw new Error('Trust the workspace and save your project files before starting this step.');
-      const revision = this.revision, scope = this.key(), root = this.root;
-      const current = () => !this.disposed && revision === this.revision && this.key() === scope;
-      this.busy = true;
-      try {
-        const target = projectDebugTarget(step,await projectFiles(root,curriculum));
-        if (!current() || !target) return;
-        const engine = await this.courses.forProject(root,curriculum,'python');
-        if (!current()) return;
-        if (!engine) throw new Error('Set up the project container before starting this step.');
-        if (!this.debugger) {
-          const {ProjectDebugger} = await import('./projectDebugger');
-          if (!current()) return;
-          this.debugger = new ProjectDebugger((folder,path,line,atPause) => {
-            if (folder === this.root && atPause()) this.queueReview({event:'debug_pause',path,line,current:atPause});
-          });
-          this.subscriptions.push(this.debugger);
-        }
-        await this.debugger.start(root,engine,target,current,runOnly);
-        if (current()) this.status = runOnly ? 'See the program output in the Debug Console.' : 'Use a gutter breakpoint to pause. Inspect Variables, predict one change, then Step Over. Rerun the check after your edit.';
-      } finally { if (current()) {this.busy = false; void this.refresh();} }
-      return;
     }
     if (message.type === 'runtime') {
       this.invalidate(''); this.run = undefined;
@@ -856,10 +781,11 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
       }
       if (message.value === 'terminal') {
         if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace to open its runtime terminal.');
-        const engine = await this.courses.forProject(this.root,curriculum);
-        if (!engine) throw new Error('Open Project tools → Runtime → Set up and verify environment, then retry.');
-        const options = courseTerminalOptions(engine,curriculum.title,this.root);
-        const terminalKey = this.root + '|' + engine.name;
+        const engine = curriculum.gitPractice ? undefined : await this.courses.forProject(this.root,curriculum);
+        if (!engine && !curriculum.gitPractice) throw new Error('Open Project tools → Runtime → Set up and verify environment, then retry.');
+        const options:vscode.TerminalOptions = engine ? courseTerminalOptions(engine,curriculum.title,this.root)
+          : {name:curriculum.title + ' · Git',cwd:this.root};
+        const terminalKey = this.root + '|' + (engine?.name ?? 'local-git');
         options.env = {...options.env, DHIMANTAI_PROJECT_TERMINAL: terminalKey};
         const terminal = vscode.window.terminals.find(t => !t.exitStatus && 'env' in t.creationOptions && t.creationOptions.env?.DHIMANTAI_PROJECT_TERMINAL === terminalKey)
           ?? vscode.window.createTerminal(options);
@@ -868,7 +794,6 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
       return this.refresh();
     }
     if (message.type === 'checkpoint') {
-      if (curriculum.id === 'market-checkout' && message.completed) return this.refresh();
       if (typeof message.note !== 'string' || message.note.length > 1000 || !['reported','none_reported','unknown'].includes(message.help)) return;
       if (message.completed && !message.note.trim()) throw new Error('Add your evidence or explanation before marking this milestone complete.');
       if (this.busy) return;
@@ -998,8 +923,7 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
                 else if (event) await this.architectureEvent(curriculum, {event, digest:submission.digest});
                 if (revision === this.revision) await this.loadFollowup();
               }
-            } catch { if (revision === this.revision) this.status += curriculum.id === 'market-checkout' && submission.outcome === 'completed'
-              ? ' Select Sync practice to record the saved result.' : ' Practice memory could not sync. Run the check again to record it.'; }
+            } catch { if (revision === this.revision) this.status += ' Practice memory could not sync. Run the check again to record it.'; }
           }
         } else if (owner !== 'local' && curriculum.mode !== 'reading' && this.recordCoursework) {
           try {
@@ -1013,7 +937,6 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
         if (this.snapshotCheck === controller) this.snapshotCheck = undefined;
         if (revision === this.revision) { this.busy = false; this.request = undefined; await this.refresh(); }
       }
-      if (curriculum.id === 'market-checkout' && revision === this.revision) this.queueReview({event:'check'});
       return;
     }
     if (curriculum.id === 'course-agent' && (message.type === 'refreshHandoff' || message.type === 'finish' && step.id === 'handoff')) {
@@ -1046,8 +969,6 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
     }
     if (message.type !== 'ask' || typeof message.text !== 'string' || !message.text.trim() || message.text.length > 600) return this.refresh();
     if (!vscode.workspace.getConfiguration('dhimantai').get('aiAssistance', true)) throw new Error('AI assistance is off. The milestone guide and checks remain available.');
-    if (!this.selectedVoiceLanguage && typeof message.spokenLanguage === 'string' && Object.hasOwn(coachingLanguages, message.spokenLanguage))
-      this.conversationLanguage = message.spokenLanguage;
     const askingRevision = this.revision;
     this.busy = true;
     try { await this.ask(message.text, curriculum, step, practiceAttachments(message.attachments)); }
@@ -1105,7 +1026,7 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
   private async projectApi() {
     const owner = this.owner, scope = this.key();
     const session = await this.auth.session();
-    if (!session || session.user.id !== owner || scope !== this.key()) throw new Error('Sign in to dhimantAI and reopen Project Mentor.');
+    if (!session || session.user.id !== owner || scope !== this.key()) throw new Error('Sign in to dhimantAI and reopen Project Instructor.');
     return new Api(this.auth, this.service, owner);
   }
 
@@ -1124,7 +1045,7 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
   }
 
   private voiceLanguage() {
-    return this.conversationLanguage ?? coachingLanguage(this.context.globalState.get(`dhimantai.coachingLanguage.${this.environment()}.${this.owner}`));
+    return coachingLanguage(this.context.globalState.get(`dhimantai.coachingLanguage.${this.environment()}.${this.owner}`));
   }
 
   private voiceQuery(curriculum: ProjectCurriculum, language: string, course?: string) {
@@ -1246,16 +1167,17 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
     const snapshot = await this.snapshot(text, observation);
     const gitOnly = !snapshot.files.length && snapshot.git?.state === 'available' &&
       (!observation || observation.event === 'git');
-    const selected = (observation?.path ? snapshot.files.find(file => file.path === observation.path) : snapshot.files[0]) ?? (gitOnly ? {path:'', text:'', start_line:1} : undefined);
+    const selected = snapshot.files[0] ?? (gitOnly ? {path:'', text:'', start_line:1} : undefined);
     if (revision !== this.revision || reviewController?.signal.aborted) return;
+    if (observation?.path && !snapshot.files.some(file => file.path === observation.path)) return;
     if (!selected && observation) return;
-    if (!selected) throw new Error('Open an available project source file before asking the mentor.');
+    if (!selected) throw new Error('Open an available project source file before asking the Instructor.');
     const check = checkState(this.run, checkDigest(snapshot, step), step.id);
     const publicGit = JSON.stringify(snapshot.git ?? null);
-    const evidence = createHash('sha256').update(JSON.stringify([snapshot.digest, publicGit, check, observation?.event === 'debug_pause' ? [observation.path,observation.line] : null])).digest('hex');
+    const evidence = createHash('sha256').update(JSON.stringify([snapshot.digest, publicGit, check])).digest('hex');
     if (observation) {
-      if (!this.reviewingAllowed() || observation.current?.() === false || evidence === this.lastEvidence) return;
-      if (observation.event === 'opened' && curriculum.mode === 'reading' && !snapshot.git?.changed_files.length ||
+      if (!this.reviewingAllowed() || evidence === this.lastEvidence) return;
+      if (observation.event === 'opened' && !this.personal && !snapshot.git?.changed_files.length ||
           observation.event === 'git' && publicGit === this.lastPublicGit) {
         this.lastPublicGit = publicGit; return;
       }
@@ -1268,7 +1190,6 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
     const selectedLines = selection ? `Selected lines: ${selection.path}:${selection.start}–${selection.end}` : '';
     const observedLine = observation?.path === selected.path && observation.line && observation.line <= 100000 && observation.line >= selected.start_line
       && observation.line < selected.start_line + selected.text.split('\n').length ? observation.line : undefined;
-    if (observation?.event === 'debug_pause' && !observedLine) return;
     if (!observation) {
       this.spoken = undefined;
       void this.surface.webviewFor(this.render)?.postMessage({type:'questionAccepted', scope:this.key(), step:this.step,
@@ -1282,14 +1203,10 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
         if (controller.signal.aborted || revision !== this.revision) return;
       }
       const api = new Api(this.auth, () => backend, account);
-      const checkout = this.checkoutProgress(curriculum, snapshot);
-      const task = checkout ? [step.task, checkout.status, checkout.guide, checkout.sync,
-        'The checkpoint reflection and Git commit are optional. This practice has no certificate credit.'].filter(Boolean).join('\n')
-        : [step.task, step.evidencePrompt && 'Checkpoint evidence: ' + step.evidencePrompt].filter(Boolean).join('\n');
+      const task = [step.task, step.evidencePrompt && 'Checkpoint evidence: ' + step.evidencePrompt].filter(Boolean).join('\n');
       const reply = await api.notebookCoach('/notebook-coach/project' + courseQuery, {stage: 'guide', language: gitOnly ? 'git' : this.personal ? (vscode.workspace.textDocuments.find(doc =>
         this.path(doc.uri) === selected.path)?.languageId ?? selected.path.split('.').at(-1) ?? 'text') : curriculum.language ?? 'python',
-        ...(this.conversationLanguage ? {coaching_language:language} : {}),
-        question: [`${curriculum.title}: ${step.goal}\n${task}`, selectedLines].filter(Boolean).join('\n'), source: selected.text, message: text, history, ...(attachments.length ? {attachments} : {}),
+        coaching_language: language, question: [`${curriculum.title}: ${step.goal}\n${task}`, selectedLines].filter(Boolean).join('\n'), source: selected.text, message: text, history, ...(attachments.length ? {attachments} : {}),
         project_context: {project_id: curriculum.id,
           ...(watchesArchitecture(curriculum.id) ? {workspace_key:createHash('sha256').update(this.key()).digest('hex')} : {}),
           ...(requestedHelp ? {architecture_help:requestedHelp} : {}),
@@ -1308,7 +1225,7 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
       const currentSnapshot = await this.snapshot('', observation);
       // New chat, account changes and edits can happen during either await above.
       if (revision !== this.revision || environment !== this.environment() || currentAccount !== account || controller.signal.aborted) return;
-      if (observation && (!this.reviewingAllowed() || observation.current?.() === false)) return;
+      if (observation && !this.reviewingAllowed()) return;
       if (observation && JSON.stringify(currentSnapshot.git ?? null) !== publicGit) {
         this.queueReview({event:'git'}); return;
       }
@@ -1332,5 +1249,5 @@ ${instructorComposer(webview, media, nonce, {assistant:'Project Mentor', maxleng
       if (revision === this.revision && !controller.signal.aborted) throw observation ? error : projectAccessError(error, workspace?.course) ?? error;
     } finally { if (!observation && revision === this.revision) { this.busy = false; this.request = undefined; void this.refresh(); } }
   }
-  dispose() { clearTimeout(this.followupTimer); this.disposed = true; this.cancelReview(); this.request?.abort(); this.watcher?.dispose(); this.surface.release(this.render); this.subscriptions.forEach(s => s.dispose()); }
+  dispose() { clearTimeout(this.followupTimer); this.disposed = true; this.cancelReview(); this.request?.abort(); this.watcher?.dispose(); this.surface.dispose(); this.subscriptions.forEach(s => s.dispose()); }
 }

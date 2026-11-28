@@ -3,8 +3,7 @@ import type {NotebookCell, TutorNotebook} from './tutorNotebook';
 /** Local history is a stopping point, never execution or assessment evidence. */
 export function unfinishedQuestion(book: TutorNotebook): NotebookCell | undefined {
   const question = [...book.cells].reverse().find(cell => cell.kind === 'board' && cell.packet?.is_question_prompt);
-  // A skipped check is closed by the learner's choice: resume never treats it as awaiting an answer.
-  if (!question || question.packet?.feedback_received || question.packet?.skipped_check) return;
+  if (!question || question.packet?.feedback_received) return;
   const id = question.packet?.tutor_checkpoint_id;
   const later = book.cells.slice(book.cells.indexOf(question) + 1);
   if (later.some(cell => cell.packet?.tutor_feedback && (!id || cell.packet.tutor_checkpoint_id === id))) return;

@@ -23,14 +23,14 @@ export function messageComposer({assistant, maxlength, audio, camera, formId = '
 <button type="button" class="composer-expand" aria-controls="${inputId}" aria-expanded="false" aria-label="Expand input" title="Expand input"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button></div>
 <div class="composer-toolbar"><details id="attachment-menu" class="workspace-menu composer-menu"><summary aria-label="Add attachments" title="Add photos or PDFs"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></summary><div class="menu-content">
 <button type="button" id="attach-images">Attach photos</button><button type="button" id="attach-pdfs">Attach PDFs</button>${menuActions}</div></details>${toolbarAction}
-<small id="composer-shortcut">Press Enter to send or Shift+Enter for a new line.</small>
+<small id="composer-shortcut">Enter for a new line. Use the send button to send.</small>
 <div class="composer-controls"><div class="composer-audio">${audio}</div>${camera ? '<button type="button" id="audio-camera" disabled aria-haspopup="dialog" aria-label="Take photo" title="Take photo">' + mediaIcon('camera', true) + '</button>' : ''}
 <button id="${sendId}" type="submit" class="composer-submit" disabled title="Ask ${assistant}" aria-label="Ask ${assistant}"><span id="send-label">Ask ${assistant}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v14"/></svg></button></div></div>
 <small id="attachment-status" role="status"></small></div>${dictationStatus}</form>`;
 }
 
 /** The notebook surrounds the shared form with the lesson's help and checkpoint controls. */
-export function notebookMessageBar(assistant: 'Instructor' | 'Doubt Solver', practice: boolean, audio: string, camera = false, toolbarAction = '') {
+export function notebookMessageBar(assistant: 'Instructor' | 'Doubt Solver', practice: boolean, audio: string, camera = false) {
   const support = `<div class="composer-support">
 <div class="composer-quick-actions" role="group" aria-label="Learning actions"><div class="help-ladder"><strong>Stuck?</strong><button type="button" id="practice-help" disabled>Ask me a guiding question</button><span id="help-steps" class="help-steps" role="img" aria-label="No help steps used yet"></span></div><div id="composer-mode-actions"></div>
 <details class="more-asks"><summary>Other help</summary><div id="notebook-help-actions" class="lesson-actions" role="group" aria-label="${assistant} help"></div></details></div><small id="help-trend" class="help-trend"></small><small id="help-note" class="help-note" role="status"></small>
@@ -42,5 +42,5 @@ export function notebookMessageBar(assistant: 'Instructor' | 'Doubt Solver', pra
   const menuActions = `<button type="button" id="import-data" hidden>Import a CSV or Excel file for the Coach</button>
 ${practice ? '<small>Up to 4 files, 2 MB each.</small>' : ''}<hr>
 <button type="button" id="teach-back" disabled>Explain it in my own words</button><button type="button" id="video" ${practice ? 'hidden' : ''} disabled>Ask for a video</button>`;
-  return `<footer id="message-bar" aria-label="Talk to ${assistant}">${messageComposer({assistant, maxlength:4000, audio, camera, support, menuActions, toolbarAction})}</footer>`;
+  return `<footer id="message-bar" aria-label="Talk to ${assistant}">${messageComposer({assistant, maxlength:4000, audio, camera, support, menuActions})}</footer>`;
 }

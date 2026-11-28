@@ -9,7 +9,7 @@ const bundledProjects = [
     id: 'shelf-reading',
     level: 'Micro',
     title: 'Read a codebase · shelf',
-    description: 'Explore a small Python book catalog with the mentor. Follow its command line, data and tests before proposing a change.',
+    description: 'Explore a small Python book catalog with the Instructor. Follow its command line, data and tests before proposing a change.',
     difficulty: 'Beginner',
     estimatedTime: '1–2 hours',
     outcomes: [
@@ -22,7 +22,7 @@ const bundledProjects = [
     id: 'rich-reading',
     level: 'Minor',
     title: 'Read a codebase · Rich',
-    description: 'Navigate the real Rich Python library with the mentor, tracing how text and tables become terminal output.',
+    description: 'Navigate the real Rich Python library with the Instructor, tracing how text and tables become terminal output.',
     difficulty: 'Intermediate',
     estimatedTime: '3–5 hours',
     outcomes: [
@@ -59,7 +59,7 @@ const bundledProjects = [
   },
   {
     id: 'market-checkout', level: 'Micro', title: 'Checkout previews',
-    description: 'Trace an unexpected receipt, separate pricing from storage, and verify the repair with the mentor.',
+    description: 'Trace an unexpected receipt, separate pricing from storage, and verify the repair with the Instructor.',
     difficulty: 'Beginner', estimatedTime: '20–30 minutes',
     outcomes: ['Trace a side effect.', 'Test a decision independently of storage.'],
   },
@@ -109,7 +109,7 @@ export function projectCourseChoices(projectId: string, courses: readonly Course
     if (!access) return [];
     const companion = access.course_id === PROJECT_COURSES[projectId];
     return [{label: course.name, companion, description: companion ? 'Companion course' : undefined,
-      detail: course.chapters.some(ch => ch.locked) ? 'Project Mentor guidance with active chapter access' : 'Project Mentor guidance'}];
+      detail: course.chapters.some(ch => ch.locked) ? 'Project Instructor included with active chapter access' : 'Project Instructor included'}];
   }).sort((a, b) => Number(b.companion) - Number(a.companion));
 }
 

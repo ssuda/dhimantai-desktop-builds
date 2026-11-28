@@ -51,16 +51,6 @@ export function recipeLanguage(recipes: Record<string, Recipe>, course: string):
   return recipes[key]?.language ?? (COURSE_LANGUAGES.includes(key) ? key : undefined);
 }
 
-/**
- * Practice languages a course teaches, in the course's order: its notebook language, then any extra
- * toolchains. Courses whose languages the exercise service cannot run keep the full service list.
- */
-export function exerciseLanguages<T extends {id: string}>(available: T[], recipe: Pick<Recipe, 'language' | 'languages'> | undefined): T[] {
-  const wanted = recipe?.language ? [recipe.language, ...recipe.languages ?? []] : [];
-  const chosen = [...new Set(wanted)].flatMap(id => available.filter(l => l.id === id));
-  return chosen.length ? chosen : available;
-}
-
 /** Add newly required course packages to existing workspaces without replacing learner pins or comments. */
 export function courseRequirements(current: string | undefined, recipe: Recipe): string {
   const requirements = recipe.requirements ?? [];
