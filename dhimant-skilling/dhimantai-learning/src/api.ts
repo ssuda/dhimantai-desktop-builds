@@ -1,8 +1,13 @@
+import {validChapterEdition} from './tutorNotebook';
 import type { ArchitectureAttempts, ArchitectureEvent, ArchitectureTopic, PracticeFollowup } from './architectureMemory';
 import type { SkillingPathway, SkillingBrief } from './skilling';
 import { randomUUID } from 'node:crypto';
 import { Auth } from './auth';
-import { Environment } from './environments';
+import { Environment, EnvironmentName } from './environments';
+import { desktopRoom } from './desktopRoom';
+import { desktopExtensionPath } from './desktopConfiguration';
+import { trustedRoomUrl } from './voiceHosts';
+import { learnerRpc, type PublicCatalog } from './learnerCatalog';
 import type { StudyChoice, StudySource } from './studyContent';
 import type { NotebookApi, NotebookLink } from './notebookSubmission';
 import type { SessionNotebookLink, TransferBody, TransferReceipt } from './sessionNotebookTransfer';
@@ -122,7 +127,26 @@ export interface Draft {
   payload: DraftPayload;
 }
 
+export interface LessonTraceStep {
+  frame: number;
+  line: number;
+  function: string;
+  locals: Record<string, string>;
+  previous: Record<string, string | null>;
+  printed?: string;
+  outputLine?: number;
+}
+
+export interface LessonTrace {
+  functionCalls?: {args:string[]; result:string}[];
+  steps: LessonTraceStep[];
+  limited: boolean;
+  outputAligned: boolean;
+}
+
 export interface Execution {
+  postgres_environment?: {ps_available: boolean; pager_disabled: boolean; os_root: boolean};
+  lessonTrace?: LessonTrace;
   runtime_target?: string;
   status: string;
   exit_code: number | null;
@@ -207,8 +231,11 @@ export interface WrittenPractice { id: string; title: string; question: string; 
 export interface GeneratedExercise {
   exercise: { title: string; task: string; example_input: string; expected_output: string };
   course: string; chapter: string; language: string; kernel: string; difficulty: string;
-  validation?: 'reference_execution';
+  /** reference_execution: checked by an older service. local_reference: the desktop must run `reference` first. */
+  validation?: 'reference_execution' | 'local_reference';
   tests?: PublicTest[];
+  /** Model-written reference program for the example. Run locally, never shown or saved. */
+  reference?: { language: string; source: string };
 }
 
 export interface LearningPurchases {
@@ -322,6 +349,16 @@ export class Api {
     return this.request<{ courses: Course[]; languages: Language[]; question_pools?: QuestionPool[] }>('GET', '/notebook-coach/exercises', undefined, false, signal);
   }
 
+  async openInstructorChapter(chapter:string, restart?:{restart:string; expected:string; revision:string}) {
+    const result = await this.request<unknown>('POST', '/vscode-learning/chapters/' + encodeURIComponent(chapter) + '/open', restart ?? {});
+    if (!validChapterEdition(result)) throw new Error('The learning service could not identify this chapter edition. Reopen the chapter.');
+    return result;
+  }
+
+  projectPracticeProgress() {
+    return this.request<Record<string,'completed' | 'in_progress'>>('GET', '/notebook-coach/project/architecture-memory');
+  }
+
   architecturePractice(course?: string) {
     return this.request<PracticeFollowup>('GET', '/notebook-coach/project/architecture-memory/practice'
       + (course ? '?course=' + encodeURIComponent(course) : ''));
@@ -422,8 +459,30 @@ export class Api {
     return this.request<{url: string; token: string}>('POST', '/vscode-learning/session', {mode});
   }
 
-  dictate(pcm: string, language: string | undefined, signal: AbortSignal) {
-    return this.request<{text: string}>('POST', '/notebook-coach/dictation', {pcm, language}, false, signal, 35000);
+  async learningRoomGrant(mode: 'tutor' | 'doubt_solver', environment: EnvironmentName, appRoot?: string, notebookPath?: string) {
+    const project = notebookPath?.match(/^(\/(?:practice-code|doubt-practice)\/[a-zA-Z0-9_-]{1,100})\/notebook-coach$/);
+    if (project && !(await this.request<Workspace>('GET', project[1])).project.code_assistance_allowed)
+      throw new Error('AI assistance is off for this exercise.');
+    if (notebookPath === '/notebook-coach/tutor') {
+      const catalog = await this.practiceCatalog();
+      if (!catalog.courses.some(course => course.chapters.some(chapter => !chapter.expired && !chapter.locked))) {
+        const individual = catalog.question_pools ? !catalog.question_pools.includes('institution')
+          : (await learnerRpc<PublicCatalog>(this.env(), 'public_learning_catalog', {}, await this.auth.accessToken())).individual;
+        if (individual) throw new Error('Open a course with active access to use notebook audio.');
+      }
+    }
+    const written = notebookPath?.match(/^\/notebook-coach\/written\/([a-zA-Z0-9_-]{1,100})$/);
+    if (written) await this.writtenPractice(written[1]);
+    const owner = this.expectedAccount ?? (await this.auth.session())?.user.id;
+    if (!owner) throw new Error('Sign in to use the microphone.');
+    const initial = await this.learningRoom(mode);
+    const grant = appRoot ? await desktopRoom(desktopExtensionPath(appRoot), environment, this.env(), owner, initial) : initial;
+    if (!trustedRoomUrl(environment, grant.url)) throw new Error('Unexpected LiveKit service.');
+    return grant;
+  }
+
+  voiceInputGrant(language: string | undefined, signal: AbortSignal) {
+    return this.request<{url:string; token:string}>('POST', '/notebook-coach/voice-input', {language}, false, signal);
   }
 
   audioGrant(path: string, text: string, query = '') {

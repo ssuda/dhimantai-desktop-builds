@@ -28,6 +28,17 @@ export const engineeringSkills: {id:Exclude<SkillStage,'test'>;title:string;mean
   {id:'security',title:'Build securely and reliably',meaning:'Protect data and handle invalid input or failures without unexpected harm.',firstStep:'Identify one boundary or failure case and explain a safe, testable behavior.'},
   {id:'performance',title:'Measure performance',meaning:'Measure where time or memory goes before trying to make a program faster.',firstStep:'Choose a workload and baseline metric; compare a change under the same conditions.'},
 ];
+export const PYTHON_PROGRAMMING = 'Python Programming';
+
+/** The Python Programming syllabus introduces tests and the debugger in specific chapters. */
+export function pythonLessonSkills(course: string, chapter: string): SkillStage[] | undefined {
+  if (course !== PYTHON_PROGRAMMING) return undefined;
+  const skills: SkillStage[] = ['read_code'];
+  if (/\bexpense report\b/i.test(chapter)) skills.push('design');
+  if (/\bdebugging\b/i.test(chapter)) skills.push('debug');
+  if (/\btests?\b/i.test(chapter)) skills.push('unit_test', 'functional_test');
+  return skills;
+}
 export const caseKinds = ['typical', 'boundary', 'invalid', 'regression'] as const;
 export interface LearnerTestCase {
   kind: typeof caseKinds[number];

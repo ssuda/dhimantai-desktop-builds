@@ -45,7 +45,7 @@ export function executionFollowup(issues: ExecutionIssue[]): string {
     + (dependencies ? '\n\nFor a missing package in the course container:\n\n'
       + '1. Runtime → Set up / rebuild course. Wait for setup to finish.\n'
       + '2. Rerun prerequisite cells, then the failed cell.\n'
-      + '3. If setup fails again: Runtime → Open course terminal. Share the setup error with Instructor.\n\n'
+      + '3. If setup fails again: open the setup log and share the error with Instructor.\n\n'
       + 'For a connected external kernel, follow its course setup instructions.'
       : '\n\nNext: address the reported error or incomplete output, then rerun the affected cell.');
 }

@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { JSDOM } from 'jsdom';
 
 test('runtime setup distinguishes file runs, notebook availability and kernel verification', () => {
-  const dom = new JSDOM('<select id="runtime"><option value=""></option><option value="colab"></option><option value="podman"></option><option value="terminal"></option><option value="setup"></option></select><button id="new-notebook"></button><p id="runtime-target"></p><p id="runtime-status"></p>', {runScripts: 'outside-only'});
+  const dom = new JSDOM('<select id="runtime"><option value=""></option><option value="colab"></option><option value="podman"></option><option value="setup"></option></select><button id="new-notebook"></button><p id="runtime-target"></p><p id="runtime-status"></p>', {runScripts: 'outside-only'});
   try {
     const win = dom.window, sent: any[] = [];
     win.eval(readFileSync(resolve(__dirname, '../../media/notebookRuntime.js'), 'utf8'));
@@ -16,8 +16,9 @@ test('runtime setup distinguishes file runs, notebook availability and kernel ve
     assert.equal(select.disabled, true);
     assert.match(win.document.body.textContent!, /Source files use Run code/);
     post({podman: true});
-    select.value = 'terminal'; select.dispatchEvent(new win.Event('change'));
-    assert.equal(sent.at(-1).runtime, 'terminal', 'the dropdown opens a course terminal without a notebook');
+    assert.equal(select.querySelector('[value="terminal"]'), null);
+    select.value = 'setup'; select.dispatchEvent(new win.Event('change'));
+    assert.equal(sent.at(-1).runtime, 'setup', 'course setup is available without a notebook');
     post({uri: 'file:///test.ipynb', name: 'test.ipynb', colab: true, podman: false});
     assert.equal(select.disabled, false);
     assert.match(win.document.body.textContent!, /readiness is not verified/);
@@ -34,7 +35,7 @@ test('runtime setup distinguishes file runs, notebook availability and kernel ve
 });
 
 test('the existing runtime picker offers lab machines and clears stale machines on course change',()=>{
-  const dom=new JSDOM('<select id="runtime"><option value=""></option><option value="colab"></option><option value="podman"></option><option value="terminal"></option><option value="setup"></option></select><button id="new-notebook"></button><p id="runtime-target"></p><p id="runtime-status"></p>',{runScripts:'outside-only'});
+  const dom=new JSDOM('<select id="runtime"><option value=""></option><option value="colab"></option><option value="podman"></option><option value="setup"></option></select><button id="new-notebook"></button><p id="runtime-target"></p><p id="runtime-status"></p>',{runScripts:'outside-only'});
   try{
     const win=dom.window,sent:any[]=[];
     win.eval(readFileSync(resolve(__dirname,'../../media/notebookRuntime.js'),'utf8'));

@@ -18,6 +18,7 @@
 .audio-speed { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--vscode-widget-border, #888); }
 .audio-speed select { font: inherit; color: var(--vscode-dropdown-foreground, #eee); background: var(--vscode-dropdown-background, #333); border: 1px solid var(--vscode-dropdown-border, #888); border-radius: 4px; padding: 4px 8px; }
 .audio-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#audio-status:not(.audio-sr-only) { display: block; padding: 4px 8px; font-size: .9em; overflow-wrap: anywhere; color: var(--vscode-foreground); }
 #audio-microphone, #audio-camera { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 8px; border: 0; border-radius: 50%; background: transparent; color: var(--vscode-foreground); cursor: pointer; }
 #audio-microphone:disabled, #audio-camera:disabled { color: var(--vscode-disabledForeground, #888); cursor: default; }
 #audio-microphone[aria-pressed=true], #audio-camera[aria-pressed=true] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }

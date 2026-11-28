@@ -1,16 +1,23 @@
 import {test} from 'node:test';
 import * as assert from 'node:assert/strict';
+import {join} from 'node:path';
 const Module=require('node:module');
 const commands=new Map<string,Function>(), starts:any[]=[], stopped:string[]=[], revoked:string[]=[], opened:string[]=[];
+const inputAnswers: string[] = [];
+const inputTitles: string[] = [];
+const instructor: {course:string;chapter:string}[] = [];
 let release:(()=>void)|undefined;
 const disposable={dispose(){}};
 class EventEmitter{event=()=>disposable;fire(){}dispose(){}}
 const vscode={EventEmitter,commands:{registerCommand:(name:string,fn:Function)=>{commands.set(name,fn);return disposable;},
-  getCommands:async()=>['workbench.action.browser.open'],executeCommand:async(name:string,options:any)=>{
+  getCommands:async()=>['workbench.action.browser.open'],executeCommand:async(name:string,options:any,chapter:string)=>{
     if(name==='workbench.action.browser.open'){assert.equal(options.openToSide,true);assert.equal(options.reuseUrlFilter,'http://127.0.0.1:*/{desk,desk/**,app/**,login,assets/frappe/dhimantai/**}');opened.push(options.url);}
+    if(name==='dhimantai.openLearningRoom')instructor.push({course:options,chapter});
   }},
-  workspace:{onDidChangeConfiguration:()=>disposable},ProgressLocation:{Notification:1},
-  window:{withProgress:async(_:unknown,fn:Function)=>fn({report(){}}),showInformationMessage:async()=>undefined,showErrorMessage:async()=>undefined},
+  workspace:{onDidChangeConfiguration:()=>disposable,getConfiguration:()=>({get:()=>''})},ProgressLocation:{Notification:1},
+  window:{withProgress:async(_:unknown,fn:Function)=>fn({report(){}}),showInformationMessage:async()=>undefined,showErrorMessage:async()=>undefined,
+    showInputBox:async ({title, validateInput}: {title:string;validateInput?: (v:string)=>string|undefined})=>{
+      inputTitles.push(title);const answer=inputAnswers.shift();assert.equal(answer===undefined?undefined:validateInput?.(answer),undefined);return answer;}},
   Uri:{joinPath:(base:any,...parts:string[])=>({fsPath:[base.fsPath,...parts].join('/')}),parse:(value:string)=>value},
   env:{openExternal:async(url:string)=>{opened.push(url);},clipboard:{writeText:async()=>{}}}};
 class Runtime {
@@ -27,6 +34,7 @@ Module._load=function(request:string,...args:unknown[]){
   return original.call(this,request,...args);
 };
 const {BrowserCourses}=require('../src/browserCourses');
+const {HostedErpConnections}=require('../src/apps/hostedErp');
 Module._load=original;
 test('accounts share a local instance but use different ERPNext credentials; refresh does not stop work and switching revokes the old login',async()=>{
   let session:any={user:{id:'account-a'}}, listener:Function=()=>{};
@@ -48,4 +56,54 @@ test('accounts share a local instance but use different ERPNext credentials; ref
   assert.equal(opened.length,2);
   assert.ok(opened.every(url=>url.includes('/assets/frappe/dhimantai/launch.html#learner=')), 'login handoff never nests an encoded query');
   await courses.stop();courses.dispose();
+});
+
+test('the ERPNext catalog opens the Instructor before starting a browser runtime',async()=>{
+  const count=starts.length;
+  const auth={session:async()=>({user:{id:'account-a'}}),onDidChange:()=>disposable};
+  const context={extensionUri:{fsPath:join(__dirname,'../..')},globalStorageUri:{fsPath:'/profile'},globalState:{get:(_:string,value:unknown)=>value}};
+  const courses=new BrowserCourses(context,auth,()=> 'staging',{append(){},appendLine(){}},{latest:()=>undefined,stop:async()=>{}});
+  try {
+    const payload=require('../../media/browser/erpnext/course.json');
+    const chapter=payload.lessons[1].instructorChapter;
+    await commands.get('dhimantai.openBrowserCourse')!('erpnext-essentials',true,chapter);
+    assert.deepEqual(instructor.at(-1),{course:'ERPNext Essentials',chapter});
+    assert.equal(starts.length,count,'the learner can choose a hosted connection without starting Podman');
+  } finally {await courses.stop();courses.dispose();}
+});
+
+test('named ERPNext connections reuse secret-storage credentials and stay scoped to the signed-in account',async()=>{
+  const metadata=new Map(), secrets=new Map();
+  const get=(data:Map<string,unknown>)=>(key:string,fallback?:unknown)=>data.get(key)??fallback;
+  const store=new HostedErpConnections({globalState:{get:get(metadata),update:async(k:string,v:unknown)=>{metadata.set(k,v);}},
+    secrets:{get:async(k:string)=>get(secrets)(k),store:async(k:string,v:string)=>{secrets.set(k,v);}}});
+  const previousFetch=globalThis.fetch;
+  const requests: {url:string;password:string|null}[] = [];
+  globalThis.fetch=async (url,init)=>{
+    requests.push({url:String(url),password:(init?.body as URLSearchParams).get('pwd')});
+    return (init?.body as URLSearchParams).get('pwd')==='initial-password' && requests.length===2
+      ? new Response('{}',{status:401})
+      : new Response('{"home_page":"/app"}',{headers:{'Set-Cookie':'sid=erp-session; HttpOnly'}});
+  };
+  try {
+    inputTitles.length=0;
+    inputAnswers.push('https://west.example.com/app/purchase-receipt','West Distribution','warehouse@example.com','initial-password');
+    const first=await store.connect('staging','account-a','connect',async()=>true);
+    assert.equal(first.server.landingPath(),'/app');
+    assert.deepEqual(store.list('staging','account-a'),[],'cancelled or failed browser opens can avoid persisting credentials');
+    await first.save();
+    assert.deepEqual(store.list('staging','account-a'),[{id:first.id,name:'West Distribution',origin:'https://west.example.com'}]);
+    assert.deepEqual(store.list('production','account-a'),[]);
+    assert.deepEqual(store.list('staging','account-b'),[]);
+    assert.equal(JSON.stringify([...metadata]).includes('initial-password'),false);
+    assert.equal(secrets.size,1);
+    inputAnswers.push('rotated-password');
+    const reconnected=await store.connect('staging','account-a',first.id,async()=>true);
+    await reconnected.save();
+    const again=await store.connect('staging','account-a',first.id,async()=>true);
+    assert.equal(again.login,'warehouse@example.com');
+    assert.deepEqual(inputTitles.slice(4),['ERPNext training password']);
+    assert.deepEqual(requests.map(item=>item.password),['initial-password','initial-password','rotated-password','rotated-password']);
+    assert.ok(requests.every(item=>item.url==='https://west.example.com/api/method/login'));
+  } finally {globalThis.fetch=previousFetch;}
 });

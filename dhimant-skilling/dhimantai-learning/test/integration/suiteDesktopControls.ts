@@ -29,20 +29,28 @@ export async function run() {
   const browser = await chromium.connectOverCDP('http://127.0.0.1:' + process.env.DHIMANTAI_CDP_PORT);
   const page = browser.contexts()[0].pages().find(p => p.url().includes('workbench'))!;
   page.setDefaultTimeout(12000);
-  const view = page.frameLocator('iframe.webview:visible').last().frameLocator('#active-frame');
-  const dialog = view.getByRole('dialog'), rail = page.locator('.dhimantai-app-controls:visible');
+  const rail = page.locator('.dhimantai-app-controls:visible');
   const shots = process.env.DHIMANTAI_UX_OUT;
   if (shots) mkdirSync(shots, {recursive:true});
   const snap = async (name: string) => { if (shots) await page.screenshot({path: join(shots,name + '.png')}); };
   try {
     await catalog.open();
+    await page.locator('iframe.webview').first().waitFor();
+    const view = await Promise.any((await page.locator('iframe.webview').all()).map(async outer => {
+      const name = await outer.getAttribute('name');
+      const catalogFrame = page.frameLocator(`iframe[name="${name}"]`).frameLocator('#active-frame');
+      await catalogFrame.getByRole('heading', {name:'Course Catalog', exact:true}).waitFor();
+      return catalogFrame;
+    }));
+    const dialog = view.getByRole('dialog');
     await rail.locator('button').last().click();
     await dialog.getByRole('button',{name:/Sign In/}).waitFor();
     assert.equal(await dialog.getByRole('button',{name:/Sign Out/}).count(),0);
-    await page.keyboard.press('Escape');
+    await dialog.press('Escape');
     await dialog.waitFor({state:'hidden'});
     await auth.signUpWithPassword('Asha Kumar','asha@example.test','local-fixture-password');
     await catalog.refresh();
+    await view.getByRole('button',{name:'Explore',exact:true}).click();
     const search = view.locator('input[type=search]');
     await search.fill('Python');
     await rail.locator('button').last().click();
@@ -52,51 +60,47 @@ export async function run() {
       await dialog.evaluate(() => JSON.stringify({focus:document.hasFocus(), active:document.activeElement?.outerHTML.slice(0,140)})));
     assert.deepEqual(await dialog.getByRole('heading',{level:3}).allTextContents(), ['Learning','Account']);
     await snap('profile');
-    await page.keyboard.press('Escape');
+    await dialog.press('Escape');
     await dialog.waitFor({state:'hidden'});
     assert.equal(await search.inputValue(),'Python');
-    await rail.locator('button').first().click();
-    await dialog.getByText('Check failed',{exact:true}).waitFor();
-    await dialog.getByRole('button',{name:'Retry check'}).click();
-    await dialog.getByRole('button',{name:'Retry check'}).waitFor();
+    const update = rail.locator('button').first();
+    await update.click();
+    await rail.locator('button[data-status=unavailable]').waitFor();
+    assert.equal(await dialog.count(),0);
+    await update.click();
+    await rail.locator('button[data-status=unavailable]').waitFor();
     offline = false;
-    await dialog.getByRole('button',{name:'Retry check'}).click();
-    await dialog.locator('[data-part="extension"]').getByText('Up to date',{exact:true}).waitFor();
-    assert.equal(await dialog.getByText('Up to date',{exact:true}).count(),2);
+    await update.click();
+    await rail.locator('button[data-status=current]').waitFor();
+    assert.equal(await dialog.count(),0);
     await snap('updates');
     mismatch = true;
-    await dialog.getByRole('button',{name:'Check for Updates'}).click();
-    await dialog.getByText('Compatibility warning').waitFor();
-    assert.equal(await dialog.getByRole('button',{name:'Download installer'}).count(),0);
+    await update.click();
+    await rail.locator('button[data-status=unavailable]').waitFor();
+    assert.equal(await dialog.count(),0);
     const axe = readFileSync(require.resolve('axe-core/axe.min.js'),'utf8');
     for (const [theme, bodyClass] of [['Light Modern','vscode-light'],['Dark Modern','vscode-dark'],['Default High Contrast','vscode-high-contrast']]) {
       await vscode.workspace.getConfiguration('workbench').update('colorTheme',theme,vscode.ConfigurationTarget.Global);
       await view.locator('body.' + bodyClass).waitFor();
-      for (const kind of ['updates','profile']) {
-        await rail.locator('button').nth(kind === 'updates' ? 0 : 1).click();
-        await view.locator('#dc-dialog[open][data-kind=' + kind + ']').waitFor();
-        const content = await (await dialog.elementHandle())!.ownerFrame();
-        await content!.evaluate(axe);
-        const violations = await content!.evaluate(async () => (await (window as any).axe.run('#dc-dialog',{
-          runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']},resultTypes:['violations']})).violations.map((v:any) => [v.id,v.nodes.map((n:any)=>[n.target,n.failureSummary])]));
-        assert.deepEqual(violations,[],theme + ' ' + kind + ': ' + JSON.stringify(violations));
-      }
+      await rail.locator('button').last().click();
+      await dialog.waitFor();
+      const content = await (await dialog.elementHandle())!.ownerFrame();
+      await content!.evaluate(axe);
+      const violations = await content!.evaluate(async () => (await (window as any).axe.run('#dc-dialog',{
+        runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']},resultTypes:['violations']})).violations.map((v:any)=>v.id));
+      assert.deepEqual(violations,[],theme + ' profile: ' + JSON.stringify(violations));
+      await dialog.getByRole('button',{name:'Close',exact:true}).click();
     }
     await page.setViewportSize({width:640,height:520});
-    await rail.locator('button').first().click();
-    await view.locator('#dc-dialog[open][data-kind=updates]').waitFor();
+    await rail.locator('button').last().click();
+    await dialog.waitFor();
     const narrow = await dialog.evaluate(el => ({width:el.clientWidth, scroll:el.scrollWidth, height:el.getBoundingClientRect().height, viewport:innerHeight}));
     assert.ok(narrow.width < 400 && narrow.scroll <= narrow.width && narrow.height <= narrow.viewport,JSON.stringify(narrow));
     await page.setViewportSize({width:1200,height:800});
-    await dialog.getByText('Release Notes',{exact:true}).click();
-    await dialog.getByRole('button',{name:'Learning extension notes'}).click();
-    await page.locator('.tab.active').filter({hasText:/changelog/i}).waitFor();
-    await rail.locator('button').last().click();
-    await dialog.getByRole('heading',{name:'Asha Kumar'}).waitFor();
     await dialog.getByRole('button',{name:'Close',exact:true}).click();
-    await page.locator('.tab.active').filter({hasText:/changelog/i}).waitFor();
+    assert.equal(await search.inputValue(),'Python');
     writeFileSync(process.env.DHIMANTAI_TEST_RESULTS!,JSON.stringify({profile:true,updates:true,retry:true,compatibility:true,
-      accessibilityThemes:3,releaseNotes:true,standalone:true}));
+      accessibilityThemes:3,sidebarOnly:true}));
   } finally {
     ExtensionUpdates.prototype.check = checkExtension; DesktopUpdates.prototype.check = checkDesktop;
     await browser.close();

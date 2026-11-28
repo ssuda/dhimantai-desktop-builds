@@ -1,7 +1,7 @@
 (() => {
   const host = acquireVsCodeApi();
   const form = document.getElementById('composer'), field = form.querySelector('textarea');
-  const dictation = window.installDictation(host, field);
+  const dictation = window.installLearningVoice?.(host) ?? window.installDictation(host, field, undefined, () => composer.sendDictation());
   let busy = false, visible = true, generation = 0;
   function controls() {
     composer.setAvailable(visible && !busy);

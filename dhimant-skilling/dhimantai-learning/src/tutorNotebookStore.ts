@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { emptyNotebook, NOTEBOOK_LIMIT, readNotebook, TutorNotebook } from './tutorNotebook';
+import { ChapterEdition, serializeNotebook, emptyNotebook, NOTEBOOK_LIMIT, readNotebook, TutorNotebook } from './tutorNotebook';
 
 /** Another window (or VS Code instance) saved this notebook after this window last read or wrote it. */
 export class NotebookConflictError extends Error {
@@ -37,6 +37,24 @@ export class TutorNotebookStore {
       throw error;
     }
   }
+  get archiveDirectory() { return this.file.replace(/\.json$/, '-previous'); }
+
+  /** Keep a recoverable Jupyter copy before replacing the active chapter notebook. */
+  async openEdition(book:TutorNotebook, edition:ChapterEdition) {
+    const previous = book.chapterEdition;
+    if (previous?.revision === edition.revision && previous.attempt === edition.attempt) return {book};
+    const changed = Boolean(previous || edition.attempt);
+    let archive:string | undefined;
+    if (changed && (book.cells.length || book.drafts.length || book.textDraft)) {
+      const timestamp = new Date().toISOString().replace(/:/g, '-');
+      archive = join(this.archiveDirectory, timestamp + '-' + randomUUID().slice(0,8) + '.ipynb');
+      await mkdir(this.archiveDirectory, {recursive:true, mode:0o700});
+      await writeFile(archive, serializeNotebook(book), {flag:'wx', mode:0o600});
+    }
+    const next = {...(changed ? emptyNotebook() : book), chapterEdition:edition};
+    await this.save(next);
+    return {book:next, archive};
+  }
   static async practiceHistory(directory: string, environment: string, account: string) {
     let files: string[];
     try { files = await readdir(directory); }
@@ -61,7 +79,14 @@ export class TutorNotebookStore {
     const content = JSON.stringify(readNotebook(value));
     const write = async () => {
       const current = await this.revision();
-      if (!force && current !== (this.known ?? null)) throw new NotebookConflictError();
+      if (current !== (this.known ?? null)) {
+        if (!force) throw new NotebookConflictError();
+        if (current) {
+          const saved = readNotebook(JSON.parse(await readFile(this.file, 'utf8')));
+          if (saved.chapterEdition?.attempt !== value.chapterEdition?.attempt
+              || saved.chapterEdition?.revision !== value.chapterEdition?.revision) throw new NotebookConflictError();
+        }
+      }
       await mkdir(this.directory, {recursive: true});
       await writeFile(this.file + '.tmp', content, {mode: 0o600});
       await rename(this.file + '.tmp', this.file);

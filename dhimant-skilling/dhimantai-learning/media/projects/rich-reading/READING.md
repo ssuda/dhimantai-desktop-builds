@@ -12,7 +12,7 @@ with **shelf**. Basic functions, imports, classes and lists are enough to begin.
 
 ## Start
 
-Open Project Coach in the right panel. All Python runs use the course container.
+Open Project Mentor in the right panel. All Python runs use the course container.
 Choose **Runtime → Set up course** if needed. The project must be inside that course
 folder. The container supplies Python and Git on Windows, macOS and Linux.
 
@@ -41,16 +41,16 @@ Start with a question, not the first line of the first file. Use Explorer to map
 **Go to Symbol in Editor** finds a method in a long file. **Go to Definition** and
 **Find All References** help follow calls when Python navigation is available;
 otherwise use workspace search for the exact method name. Quick Open, text search
-and Coach's links to relevant definitions work directly in VS Code.
+and the mentor's links to relevant definitions work directly in VS Code.
 
 Trace one path: caller → inputs → transformation → returned/yielded values → output.
 Before each run, write a prediction in READING_NOTES.md. Afterward, record what the
-output and test assertions actually support. Coach can explain a difficult part
+output and test assertions actually support. The mentor can explain a difficult part
 or suggest a smaller example; you remain free to change steps or explore files.
 
-Coach receives only the listed public excerpts when you send a message. For a long
+The mentor receives only the listed public excerpts when you send a message. For a long
 file, place the cursor near the function you want to discuss; shared context shows
-its starting line. The whole repository is available in VS Code, but Coach does
+its starting line. The whole repository is available in VS Code, but the mentor does
 not silently receive it all. If a required file is absent from shared context,
 use the authored route or explain the missing connection in your question.
 

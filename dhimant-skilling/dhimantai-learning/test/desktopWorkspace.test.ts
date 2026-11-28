@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 import {ApiError} from '../src/api';
 import {bindLearningWorkspace} from '../webview/learningWorkspace';
-import {courseSuggestions, lessonsCovered, resumeTopic} from '../src/catalogDiscovery';
+import {courseSuggestions, learnerCourses, lessonsCovered, resumeTopic} from '../src/catalogDiscovery';
 import {certificateStatus, loadCertificateCourses} from '../src/certificateDashboard';
 import {courseGradeHtml} from '../src/courseGradeHtml';
 import {catalogClient} from '../src/catalogClient';
@@ -29,19 +29,36 @@ test('suggestions and resume topics use observed progress and never invent compl
   assert.equal(nextChapter(active,()=>true)?.id,'1','resume the most recently active unfinished chapter');
 });
 
+test('My courses includes individual enrolments awaiting a syllabus and institute assignments', () => {
+  const publicCourse = course('Public course'), unpublished = course('New course'), unjoined = course('Other course',false);
+  const assigned = {name:'Institute seminar',chapters:[{id:'first',name:'First chapter'}]};
+  const subjects = [{name:publicCourse.title,chapters:[]},assigned];
+  const catalog = {individual:true,courses:[publicCourse,unpublished,unjoined]};
+  const mine = learnerCourses(subjects,catalog);
+  assert.deepEqual(mine.map(c => c.name),['Public course','Institute seminar','New course']);
+  assert.ok(mine[2].outlineUnavailable);
+  assert.deepEqual(learnerCourses([assigned],{...catalog,individual:false}).map(c => c.name),['Institute seminar']);
+});
+
 test('catalog combines filters and search, preserves state within its owner, and excludes unknown completion', () => {
   let state:any;
-  const markup=`<button id="open-guide"></button><dialog id="course-guide"></dialog><input id="search"><select id="filter-category"><option value="">All</option><option>Programming</option></select><select id="filter-level"><option value="">All</option><option>Beginner</option></select><select id="filter-status"><option value="">All</option><option value="enrolled">My courses</option><option value="covered">Covered</option></select><div id="results"><section><article class="course" data-course="python" data-category="Programming" data-level="Beginner" data-enrolled="true" data-covered="true"><h3>Python lists</h3></article><article class="course" data-course="java" data-category="Programming" data-level="Beginner" data-enrolled="true" data-covered="false"><h3>Java lists</h3></article><article class="course" data-project="demo"><h3>Demo lists</h3></article></section></div><p id="empty" hidden></p><p id="result-count"></p>`;
+  const markup=`<button id="open-guide"></button><dialog id="course-guide"></dialog><input id="search">
+    <fieldset class="filter-options"><input name="category" type="radio" value="Programming"><input name="level" type="checkbox" value="Beginner">
+    <input name="status" type="checkbox" value="covered"></fieldset>
+    <div id="results"><section data-group="Programming"><div class="category-grid"><article class="course" data-course="python" data-category="Programming" data-level="Beginner" data-status="covered"><h3>Python lists</h3></article><article class="course" data-course="java" data-category="Programming" data-level="Beginner" data-status="inProgress"><h3>Java lists</h3></article></div><button class="group-more"></button></section>
+    <section data-group="type:project"><div class="category-grid"><article class="course" data-project="demo"><h3>Demo lists</h3></article></div><button class="group-more"></button></section></div><p id="empty" hidden></p><p id="result-count"></p>`;
   const open=(scope:string)=>{const dom=new JSDOM(markup,{runScripts:'outside-only'});const w=dom.window;
     (w as any).acquireVsCodeApi=()=>({getState:()=>state,setState:(s:any)=>{state=s;},postMessage:()=>{}});
     w.eval(`(${catalogClient.toString()})(${JSON.stringify(scope)},'')`);return {dom,w,doc:w.document};};
-  let p=open('alice');const select=(id:string,value:string)=>{const el=p.doc.getElementById(id) as HTMLInputElement;el.value=value;el.dispatchEvent(new p.w.Event(id==='search'?'input':'change'));};
-  select('search','lists');select('filter-category','Programming');select('filter-level','Beginner');select('filter-status','covered');
+  let p=open('alice');
+  const search=(value:string)=>{const el=p.doc.getElementById('search') as HTMLInputElement;el.value=value;el.dispatchEvent(new p.w.Event('input'));};
+  search('lists');
+  for (const name of ['category','level','status']) p.doc.querySelector<HTMLInputElement>(`input[name="${name}"]`)!.click();
   assert.equal(p.doc.querySelectorAll('.course:not([hidden])').length,1);
   assert.equal(p.doc.querySelector('.course:not([hidden])')!.getAttribute('data-course'),'python');
-  select('search','missing');assert.equal(p.doc.getElementById('empty')!.hidden,false);
-  p.dom.window.close();p=open('alice');assert.equal((p.doc.getElementById('filter-status') as HTMLSelectElement).value,'covered');
-  p.dom.window.close();p=open('bob');assert.equal((p.doc.getElementById('filter-status') as HTMLSelectElement).value,'');
+  search('missing');assert.equal(p.doc.getElementById('empty')!.hidden,false);
+  p.dom.window.close();p=open('alice');assert.equal(p.doc.querySelector<HTMLInputElement>('input[name=status]')!.checked,true);
+  p.dom.window.close();p=open('bob');assert.equal(p.doc.querySelector<HTMLInputElement>('input[name=status]')!.checked,false);
   assert.equal(p.doc.querySelectorAll('.course:not([hidden])').length,3);p.dom.window.close();
 });
 
@@ -50,7 +67,7 @@ test('certificate dashboard distinguishes unknown, revoked, eligible and earned 
   assert.equal(certificateStatus({id:'python',title:'Python',grade:grade(true)},[]),'eligible');
   assert.equal(certificateStatus({id:'python',title:'Python'},[certificate]),'completed');
   assert.equal(certificateStatus({id:'python',title:'Python'},[{...certificate,revoked_at:'today'}]),'unavailable');
-  const html=courseGradeHtml('nonce',undefined,[certificate],'',0,false,true,undefined,'alice',[
+  const html=courseGradeHtml('nonce',undefined,[certificate],'',[],false,true,undefined,'alice',[
     {id:'pending',title:'<script>Pending',grade:grade()}, {id:'eligible',title:'Ready',grade:grade(true)}, {id:'unknown',title:'Unknown',error:'Offline'}]);
   let state:any;const dom=new JSDOM(html,{runScripts:'outside-only'}),w=dom.window,doc=w.document;
   (w as any).acquireVsCodeApi=()=>({getState:()=>state,setState:(s:any)=>{state=s;},postMessage:()=>{}});
@@ -72,7 +89,7 @@ test('certificate library explains grading once and filters actionable issues in
     {id:'build-ai-agents', title:'Agents', grade:practice},
     {id:'unavailable', title:'Offline', error:'Refresh to try again.'},
   ];
-  const html = courseGradeHtml('nonce', undefined, [], '', 0, false, true, undefined, 'alice', courses);
+  const html = courseGradeHtml('nonce', undefined, [], '', [], false, true, undefined, 'alice', courses);
   const dom = new JSDOM(html, {runScripts:'outside-only'});
   const w = dom.window, doc = w.document;
   const messages: {type:string; id:string}[] = [];
@@ -102,7 +119,7 @@ test('certificate library explains grading once and filters actionable issues in
   agents.querySelector<HTMLButtonElement>('[data-action="courseRequirements"]')!.click();
   assert.equal(messages.at(-1)?.type, 'courseRequirements');
   assert.equal(messages.at(-1)?.id, 'build-ai-agents');
-  assert.doesNotMatch(courseGradeHtml('nonce', missing, [], '', 0), /0\/0 required/);
+  assert.doesNotMatch(courseGradeHtml('nonce', missing, [], '', []), /0\/0 required/);
   dom.window.close();
 });
 

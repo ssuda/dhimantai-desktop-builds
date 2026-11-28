@@ -5,6 +5,7 @@ import {mkdtemp, mkdir, writeFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {desktopRoom} from '../src/desktopRoom';
+import {Api} from '../src/api';
 import {desktopExtensionPath} from '../src/desktopConfiguration';
 const token = (data: object) => 'header.' + Buffer.from(JSON.stringify(data)).toString('base64url') + '.test';
 const service = {apiUrl:'https://api-staging.dhimant.ai', supabaseUrl:'', supabaseAnonKey:''};
@@ -54,4 +55,22 @@ test('a public extension update keeps using the app-owned device configuration',
     await assert.rejects(desktopRoom(updated,'staging',service,'student',{url:'unused',token:token(profile)},request,appRoot),/missing/);
     assert.equal(requests,1);
   }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('notebook microphone grants respect current exercise and course access before joining', async () => {
+  const client = new Api({} as never, () => service, 'student');
+  let grants = 0;
+  const grant = {url:'wss://lk-staging.dhimant.ai', token:'fixture'};
+  client.learningRoom = async () => { grants++; return grant; };
+  client.practiceCatalog = async () => ({courses:[], languages:[], question_pools:['textbook']});
+  const join = (scope:string) => client.learningRoomGrant('tutor','staging',undefined,scope);
+  await assert.rejects(join('/notebook-coach/tutor'), /active access/);
+  client.writtenPractice = async () => { throw new Error('Written challenge unavailable'); };
+  await assert.rejects(join('/notebook-coach/written/challenge'), /Written challenge unavailable/);
+  (client as any).request = async () => ({project:{code_assistance_allowed:false}});
+  await assert.rejects(join('/practice-code/exercise/notebook-coach'), /assistance is off/);
+  assert.equal(grants, 0);
+  client.practiceCatalog = async () => ({courses:[],languages:[],question_pools:['textbook','institution']});
+  assert.deepEqual(await join('/notebook-coach/tutor'),grant);
+  assert.equal(grants,1);
 });

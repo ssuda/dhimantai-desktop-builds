@@ -15,7 +15,7 @@ export const courseAction = (course: string, chapter?: string) =>
 
 export function registerSkillingMenu(context: vscode.ExtensionContext, auth: Auth, environment: () => EnvironmentName,
     rooms: {menuTarget(): SkillingTarget | undefined; onMenuChange: vscode.Event<void>},
-    courses: CourseWorkspaces, projects: ProjectCoach, browser: BrowserCourses) {
+    courses: CourseWorkspaces, projects: Pick<ProjectCoach, 'menuTarget' | 'onMenuChange'>, browser: BrowserCourses) {
   const tab = () => vscode.window.tabGroups.activeTabGroup.activeTab;
   async function target(current: vscode.Tab | undefined): Promise<SkillingTarget> {
     const lab = browser.menuTarget();

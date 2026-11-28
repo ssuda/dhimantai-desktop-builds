@@ -7,6 +7,32 @@ const tasks=JSON.parse(readFileSync(join(__dirname,'../../media/browser/erpnext/
 const observation=(sequence=1):BrowserObservation=>({sequence,course:'erpnext-essentials',task:'company',step:0,training_tag:'0123456789',
   route:'Form/Company/Training 0123456789',doctype:'Company',record:'Training 0123456789',dirty:false,docstatus:0,
   fields:{default_currency:'INR'},errors:[],action:'view',result:null});
+test('hosted ERPNext demonstrates the current guided task and checks learner work through the same bridge',async()=>{
+  const learning=new BrowserLearning(),origin='https://erp-training.example',snapshot='a'.repeat(32);
+  const course=[{id:'receipt',doctype:'Purchase Receipt',instructorChapter:'receiving',steps:[{field:'custom_dock',value:'North'}]}];
+  try {
+    const params=new URLSearchParams(await learning.start({origin, hosted:true, account:'learner', environment:'staging',
+      learner:'0123456789abcdef0123',tasks:course,current:async()=>true,recordVerified:async(_,done)=>done.record==='receipt-accepted'}));
+    const url='http://127.0.0.1:'+params.get('bridge');
+    const headers={Origin:origin,Authorization:'Bearer '+params.get('token'),'Content-Type':'application/json'};
+    const post=(path:string,body:unknown)=>fetch(url+path,{method:'POST',headers,body:JSON.stringify(body)});
+    const view={...observation(), task:'receipt', fields:{}, demo_snapshot:snapshot};
+    assert.equal((await post('/observe',view)).status,200);
+    assert.equal((await post('/signin',{})).status,404);
+    learning.setConnection('learner','staging',true,'Connected');
+    const action={id:'b'.repeat(32),task:'receipt',snapshot,action:'show_task'};
+    assert.equal((await learning.demonstrate('learner','staging',{...action,snapshot:'c'.repeat(32)})).status,'rejected');
+    const result=learning.demonstrate('learner','staging',action);
+    const state=await (await fetch(url+'/state',{headers})).json() as {demonstration:{id:string}};
+    assert.equal(state.demonstration.id,action.id);
+    assert.equal((await post('/demonstration-result',{id:action.id,status:'completed',message:'The draft is open. Your turn.'})).status,200);
+    assert.equal((await result).status,'completed');
+    const attempt={task:'receipt',record:'receipt-accepted',checkedAt:new Date().toISOString(),assisted:true,explained:false};
+    assert.equal((await post('/progress',{...attempt,record:'wrong-receipt'})).status,409);
+    assert.equal((await post('/progress',attempt)).status,200);
+    assert.equal(browserObservation(view,[{...course[0],guidance:'none'}]),undefined);
+  } finally {await learning.stop();}
+});
 test('only bounded authored training fields pass through the browser transport',()=>{
   assert.ok(browserObservation(observation(),tasks));
   for(const changes of [{fields:{password:'secret'}},{fields:{default_currency:'x'.repeat(601)}},{errors:['x'.repeat(501)]},

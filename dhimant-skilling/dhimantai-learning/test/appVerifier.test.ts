@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import * as assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {FrappeServer} from '../src/apps/frappe';
+import {FrappeLoginError, FrappeServer} from '../src/apps/frappe';
 import {TaskVerifier} from '../src/apps/verifier';
 
 const media=join(__dirname,'../../media/browser/player');
@@ -51,5 +51,5 @@ test('the read-only company task inspects the prepared record, and an expired ad
   assert.equal(await verifier.verify(task('company'),'Training 0123456789',me,'0123456789',{}),true);
   assert.equal(fake.sessions(),2);
   const wrong=new TaskVerifier(new FrappeServer('http://127.0.0.1:1','Administrator','not-the-password',erpnext(records).request),media);
-  await assert.rejects(wrong.verify(task('company'),'Training 0123456789',me,'0123456789',{}),/did not accept the login/);
+  await assert.rejects(wrong.verify(task('company'),'Training 0123456789',me,'0123456789',{}),FrappeLoginError);
 });

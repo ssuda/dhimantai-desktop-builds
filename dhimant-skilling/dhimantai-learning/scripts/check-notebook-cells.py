@@ -61,6 +61,9 @@ try:
     run('python','import subprocess; subprocess.run(["echo","visible child output"],check=True)','visible child output')
     run('python','print(input("Name: "))','Asha',interactive=True)
     run('c','#include <stdio.h>\nint main(){int n;printf("Enter number: ");scanf("%d",&n);printf("value=%d\\n",n);}','value=42',interactive=True)
+    # Exercise stdin without a final newline must still reach a program that reads from a live terminal.
+    run('cpp','#include <iostream>\nint main(){long long q,p;std::cin>>q>>p;std::cout<<q*p<<"\\n";}','10000000000',stdin='100000 100000',interactive=True)
+    run('bash','read q p; echo $((q*p))','10000000000',stdin='100000 100000',interactive=True)
     run('bash','%%writefile helper.py\nanswer=42','Saved')
     run('python','from helper import answer;print(answer)','42')
     run('python','from IPython.display import display,HTML;display(HTML("<b>cell html</b>"))')

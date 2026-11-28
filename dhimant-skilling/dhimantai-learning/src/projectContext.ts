@@ -44,19 +44,19 @@ export function redactSecrets(text: string) {
 /** Explain, in plain words and naming the file where possible, why the project snapshot failed. */
 export async function projectContextProblem(error: unknown, root: string, paths: string[] | undefined, open = new Map<string, string>(), fileLimit = 64) {
   const message = error instanceof Error ? error.message : String(error);
-  const lead = 'The Instructor cannot read this project right now, so shared files and milestone evidence are paused. ';
+  const lead = 'The mentor cannot read this project right now, so shared files and milestone evidence are paused. ';
   const find = async (test: (path: string) => Promise<boolean>) => {
     for (const path of paths ?? []) if (await test(path).catch(() => false)) return path;
   };
   if (/too many public project/i.test(message))
-    return lead + `The project has more public source, test and data files than the Instructor can read (${fileLimit}). Move extra files out of the source, test and data folders.`;
+    return lead + `The project has more public source, test and data files than the mentor can read (${fileLimit}). Move extra files out of the source, test and data folders.`;
   if (/too deeply nested/i.test(message))
     return lead + 'A source folder is nested more than 8 levels deep. Move those files closer to the project folder.';
   if (/linked files/i.test(message)) {
     const canonical = await realpath(root).catch(() => root);
     const linked = await find(async path => await realpath(join(root, path)) !== resolve(canonical, path));
     return lead + (linked ? `${linked} is a link to another file. ` : 'A project file is a link to another file. ')
-      + 'The Instructor reads regular files. Replace the link with a copy of the file.';
+      + 'The mentor reads regular files. Replace the link with a copy of the file.';
   }
   if (/smaller than 512 KB|too large/i.test(message)) {
     const large = await find(async path => (open.get(path)?.length ?? 0) > 512000 || (await stat(join(root, path))).size > 512000);

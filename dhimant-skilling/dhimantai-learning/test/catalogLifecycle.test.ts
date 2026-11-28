@@ -14,7 +14,8 @@ function fixture() {
   let finish:undefined|(()=>void), delay=false, createFailure=false;
   let catalogFailure=false, studyReads=0, projects:any[]=[];
   const messages:any[]=[],urls:string[]=[],checks:boolean[]=[],resumed:string[]=[];
-  const panel={webview:{get html(){return html;},set html(value:string){html=value;writes++;},postMessage:async(m:any)=>{messages.push(m);},onDidReceiveMessage:()=>({dispose(){}})},
+  let practiceProgress: Record<string,string> = {};
+  const panel={visible:true,webview:{get html(){return html;},set html(value:string){html=value;writes++;},postMessage:async(m:any)=>{messages.push(m);},onDidReceiveMessage:()=>({dispose(){}})},
     reveal(){},onDidDispose:()=>({dispose(){}}),onDidChangeViewState:()=>({dispose(){}}),dispose(){}};
   const session=()=>owner?{user:{id:owner,email:owner+'@example.test'}}:undefined;
   const auth={session:async()=>session(),onDidChange:(cb:any)=>{authChanged=cb;return {dispose(){}};},
@@ -22,7 +23,7 @@ function fixture() {
   const rpc=async()=>{reads++;if(catalogFailure)throw new Error('Catalog unavailable');return {individual:true,courses:[{id:'python',title:'Python',summary:'Learn Python',level:'Beginner',
     enrolled:true,unlocked:paid,can_join:true,chapters:[{id:'first',name:'Basics',free:true},{id:'next',name:'Lists',free:false}]}],
     offers:[{id:'python-once',title:'Python',amount:10000,currency:'INR',course_ids:['python'],owned:paid}]};};
-  const api={learningPurchases:async(check=false)=>{checks.push(check);return {payments_ready:ready,purchases:orders?[{id:'purchase-1',title:'Python',amount:10000,currency:'INR',status:paid?'paid':'created',can_resume:!paid,course_ids:['python'],created_at:'2026-11-14T10:00:00Z'}]:[]};},
+  const api={projectPracticeProgress:async()=>practiceProgress,learningPurchases:async(check=false)=>{checks.push(check);return {payments_ready:ready,purchases:orders?[{id:'purchase-1',title:'Python',amount:10000,currency:'INR',status:paid?'paid':'created',can_resume:!paid,course_ids:['python'],created_at:'2026-11-14T10:00:00Z'}]:[]};},
     resumeLearningPurchase:async(id:string)=>{resumed.push(id);return {order_id:id, checkout_url:'https://api.example.test/learning-billing/checkout#ticket=resumed'};},
     studyCatalog:async()=>{studyReads++;return {courses:[]};},practiceCatalog:async()=>({courses:[]}),purchaseLearningOffer:async()=>{
       orders++;await auth.accessToken();if(delay)await new Promise<void>(done=>{finish=done;});
@@ -40,7 +41,8 @@ function fixture() {
   const catalog=new exports.CourseCatalog(auth,()=> 'staging',()=>({apiUrl:'https://api.example.test'}),()=>{joined++;},()=>false,[],{summaries:async()=>projects});
   return {catalog,panel,messages,urls,checks,resumed,focus:()=>focus({focused:true}),
     get counts(){return {writes,reads,orders,joined,studyReads};},
-    projectStatus:(status:string)=>{projects=[{projectId:'course-agent',status}];},failCatalog:()=>{catalogFailure=true;},
+    practiceStatus:(progress:Record<string,string>)=>{practiceProgress=progress;},
+    projectStatus:(status:string,projectId='course-agent')=>{projects=[{projectId,status}];},failCatalog:()=>{catalogFailure=true;},
     renew:()=>{renew=true;authChanged(session());},delay:()=>{delay=true;},finish:()=>finish?.(),
     switchAccount:(value?:string)=>{owner=value;authChanged(session());},
     failBrowser:()=>{opened=false;},failCreate:()=>{createFailure=true;},pay:()=>{paid=true;},disablePayments:()=>{ready=false;}};
@@ -53,11 +55,9 @@ test('opening roadmap lessons reveals the course outline on first open and from 
     const dom = new JSDOM(f.panel.webview.html, {runScripts:'outside-only'});
     const {window} = dom, doc = window.document;
     (window as any).acquireVsCodeApi = () => ({postMessage() {}});
-    window.eval(doc.querySelector('script')!.textContent!);
+    for (const script of doc.querySelectorAll('script')) window.eval(script.textContent!);
     if (alreadyOpen) {
-      const category = doc.querySelector<HTMLSelectElement>('#filter-category')!;
-      category.value = 'type:project';
-      category.dispatchEvent(new window.Event('change'));
+      doc.querySelector<HTMLInputElement>('input[name=category][value="type:project"]')!.click();
       await f.catalog.open('python');
       window.dispatchEvent(new window.MessageEvent('message', {data:f.messages.at(-1)}));
     }
@@ -161,7 +161,7 @@ test('catalog restores search and open outlines on refresh, resets them for anot
   const page=()=>{
     const dom=new JSDOM(f.panel.webview.html,{runScripts:'outside-only'}),win=dom.window,doc=win.document;
     (win as any).acquireVsCodeApi=()=>({postMessage:()=>{},getState:()=>state,setState:(value:any)=>{state=value;}});
-    win.eval(doc.querySelector('script')!.textContent!);return {dom,win,doc};
+    for (const script of doc.querySelectorAll('script')) win.eval(script.textContent!);return {dom,win,doc};
   };
   let p=page();const search=p.doc.querySelector<HTMLInputElement>('#search')!;
   // This small fixture has no search box; use enough course cards for the production search threshold.
@@ -177,4 +177,21 @@ test('catalog restores search and open outlines on refresh, resets them for anot
   p.dom.window.close();p=page();assert.equal(p.doc.querySelector<HTMLInputElement>('#search')!.value,'Python');
   assert.equal(p.doc.querySelector<HTMLDetailsElement>('[data-course="python"] details')!.open,true);p.dom.window.close();
   f.switchAccount('other');await flush();p=page();assert.equal(p.doc.querySelector<HTMLInputElement>('#search')?.value??'','');p.dom.window.close();
+});
+
+test('a returning catalog window reconciles Checkout Previews on this computer and in the learner account',async()=>{
+  const f=fixture();
+  const status=()=>{
+    const dom=new JSDOM(f.panel.webview.html);
+    try { return dom.window.document.querySelector('[data-project="market-checkout"] .project-status')!.textContent!; }
+    finally {dom.window.close();}
+  };
+  await f.catalog.open();
+  assert.equal(status(),'Not started');
+  f.practiceStatus({'market-checkout':'completed'}); f.focus(); await flush();
+  assert.equal(status(),'Practice completed on your account');
+  f.projectStatus('Completed locally · final checks passed','market-checkout'); f.focus(); await flush();
+  assert.match(status(),/Completed locally.*Practice completion recorded/);
+  f.projectStatus('Changed since submission · submit again','market-checkout'); f.focus(); await flush();
+  assert.match(status(),/Changed since submission.*Practice completion recorded/);
 });

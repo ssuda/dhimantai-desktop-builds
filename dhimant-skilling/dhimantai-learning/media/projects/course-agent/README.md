@@ -4,15 +4,15 @@ Build a Python agent that searches a small collection of fictional course docume
 reads relevant documents and answers using exact quotations with sources. These
 documents are learning fixtures, not dhimantAI policies.
 
-Open this folder in VS Code with dhimantAI Learning. Choose **Open Project Coach**
-to resume the milestones in the right-hand Coach panel. Start with the brief,
+Open this folder in VS Code with dhimantAI Learning. Choose **Open Project Mentor**
+to resume the milestones in the right-hand panel. Start with the brief,
 then implement search, document reading, dispatch, the loop and evidence checks.
-The editor stays available at every step. Coach help is optional.
+The editor stays available at every step. Mentor help is optional.
 
 Execution uses the managed course container, which supplies Python 3.10+.
 Start a Course Project sets up the course
 runtime and creates this repository inside its mounted course folder. The starter
-uses only the standard library. Open **Runtime → Open course terminal** in Coach and run
+uses only the standard library. Open **Runtime → Open course terminal** in Project Mentor and run
 all commands below there. The terminal opens in the project folder inside the
 container and supplies Python and Git. These commands are the same on Windows,
 macOS and Linux.
@@ -33,7 +33,7 @@ produce observations. `answers.supported_answer` checks the final quotations.
 Function docstrings specify exact contracts. Each milestone explains its check.
 
 Scripted scenarios simulate model replies to test your orchestration reproducibly.
-After the core works, choose **Milestone 9 → Run live model** in Project Coach.
+After the core works, choose **Milestone 9 → Run live model** in Project Mentor.
 Sign in to the platform and enter your question. Your Python agent runs in the course
 container; its model requests use managed server-side DeepSeek access. You do not
 need a personal API key. Model requests and replies stay temporary; usage metadata
@@ -51,7 +51,7 @@ python -m course_agent --live --question "How do I submit my project?" --trace
 
 This optional direct mode uses DeepSeek. Set
 `DEEPSEEK_API_KEY` in the selected runtime's environment; optionally set
-`DEEPSEEK_MODEL` (default `deepseek-flash`). Never paste a key into Coach or commit
+`DEEPSEEK_MODEL` (default `deepseek-flash`). Never paste a key into Project Mentor or commit
 it. The adapter does not load env files. A run can make up to six paid requests,
 each with a 20-second timeout and no automatic retries. See the
 [provider JSON output contract](https://api-docs.deepseek.com/guides/json_mode/).
@@ -74,4 +74,4 @@ The handoff includes public Python source and tests (including your custom tests
 the supplied JSON fixtures, README, EXPLANATION, and your assistance report. It
 excludes chat, environment files, private folders and Git history. Local checks
 are reported evidence; teacher review does not automatically award a course grade.
-Saving a Coach checkpoint remains a separate local action and never submits work.
+Saving a project checkpoint remains a separate local action and never submits work.

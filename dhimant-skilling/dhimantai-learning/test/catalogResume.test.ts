@@ -17,6 +17,10 @@ const coverage = (status: any) => ({status, covered:0, total:3, topics:[]});
 const course = (id: string, enrolled: boolean, statuses: string[], extra: object = {}) => ({id, title:'Course ' + id, summary:'About ' + id,
   level:'Beginner', prerequisites:'', can_join:true, enrolled, unlocked:true, category:'Software Engineering',
   chapters:statuses.map((status, i) => ({id:`${id}-${i}`, name:`${id} chapter ${i}`, free:i === 0, ...(status ? {progress:coverage(status)} : {})})), ...extra});
+function runScripts(win: {document: Document; eval(code: string): unknown}) {
+  for (const script of win.document.querySelectorAll('script')) win.eval(script.textContent!);
+}
+
 function render(account: string | undefined, courses: any[], offers: LearningOffer[] = []) {
   const catalog: any = Object.create(CourseCatalog.prototype);
   Object.assign(catalog, {panel:{webview:{html:''}}, sequence:0, awaitingPayment:false, projects:[], studyCourses:new Set(), companions:[],
@@ -30,7 +34,7 @@ test('Starting a chapter shows progress on the clicked card and ignores repeat c
   const win = document.defaultView!;
   const messages: any[] = [];
   (win as any).acquireVsCodeApi = () => ({postMessage:(message: any) => messages.push(message)});
-  win.eval(document.querySelector('script')!.textContent!);
+  runScripts(win);
   const start = document.querySelector<HTMLButtonElement>('[data-course="java"] [data-action="join"]')!;
   const other = document.querySelector<HTMLButtonElement>('[data-course="python"] [data-action="join"]')!;
   start.click();
@@ -55,7 +59,7 @@ test('interleaved Essentials share one section and path selector, preserving ord
   const {document} = render(undefined, courses);
   const win = document.defaultView!;
   (win as any).acquireVsCodeApi = () => ({postMessage() {}});
-  win.eval(document.querySelector('script')!.textContent!);
+  runScripts(win);
   const chip = (category: string) => document.querySelector<HTMLButtonElement>(`.type-chip[data-browse-category="${category}"]`)!;
   assert.equal(document.querySelector<HTMLElement>('#catalog-explore')!.hidden, true);
   chip('Engineering Essentials').click();
@@ -71,28 +75,95 @@ test('interleaved Essentials share one section and path selector, preserving ord
   win.close();
 });
 
-test('Explore pages all courses including resumed ones and restores filters and page size', () => {
+test('Explore expands six cards per category independently and restores groups, filters and single-category pages', () => {
   const courses = Array.from({length:31}, (_, i) => course(String(i), i < 3, ['in_progress'], {is_free:i < 26}));
+  courses.push(...Array.from({length:9}, (_, i) => course('ai-' + i, false, [''], {is_free:true,category:'AI & Machine Learning'})));
   let state: unknown;
   const open = () => {
     const {document} = render('learner', courses);
     const win = document.defaultView!;
     (win as any).acquireVsCodeApi = () => ({postMessage() {}, getState:() => state, setState:(s: unknown) => {state = s;}});
-    win.eval(document.querySelector('script')!.textContent!);
-    return {win, document, more:document.querySelector<HTMLButtonElement>('#more-results')!};
+    runScripts(win);
+    return document;
   };
-  const first = open();
-  first.document.querySelector<HTMLButtonElement>('[data-browse-price=free]')!.click();
-  assert.equal(first.document.querySelector('#result-count')!.textContent, 'Showing 24 of 26 results');
-  assert.equal(first.document.querySelector('#results [data-course="0"]')?.getAttribute('data-enrolled'), 'true');
-  first.more.click();
-  assert.equal(first.document.querySelectorAll('#results .course').length, 26);
-  first.win.close();
-  const restored = open();
-  assert.equal(restored.document.querySelector<HTMLElement>('#catalog-explore')!.hidden, false);
-  assert.equal(restored.document.querySelectorAll('#results .course').length, 26);
-  assert.equal(restored.more.hidden, true);
-  restored.win.close();
+  let doc = open();
+  const group = (name: string) => doc.querySelector<HTMLElement>(`#results [data-group="${name}"]`)!;
+  const count = (name: string) => group(name).querySelectorAll('.course').length;
+  const more = (name: string) => group(name).querySelector<HTMLButtonElement>('.group-more')!;
+  const ai = 'AI & Machine Learning', software = 'Software Engineering';
+  doc.querySelector<HTMLButtonElement>('[data-browse-price=free]')!.click();
+  assert.deepEqual([count(ai),count(software)], [6,6]);
+  assert.equal(doc.querySelector('#results .course')?.closest('section')?.dataset.group, ai);
+  assert.equal(doc.querySelector('#results [data-course="0"]')?.getAttribute('data-enrolled'), 'true');
+  more(software).click();
+  assert.deepEqual([count(ai),count(software)], [6,12]);
+  assert.equal(doc.activeElement?.textContent, 'Course 6');
+  more(ai).click(); assert.equal(more(ai).hidden, true);
+  doc.defaultView!.close(); doc = open();
+  assert.deepEqual([count(ai),count(software)], [9,12]);
+  assert.ok(doc.querySelector('input[name=price][value=free]:checked'));
+  doc.querySelector<HTMLInputElement>('input[name=category][value="Software Engineering"]')!.click();
+  assert.equal(doc.querySelector('#result-count')!.textContent, 'Showing 24 of 26 results');
+  doc.querySelector<HTMLButtonElement>('#more-results')!.click();
+  assert.equal(doc.querySelectorAll('#results .course').length,26);
+  doc.defaultView!.close(); doc = open();
+  assert.equal(doc.querySelector<HTMLElement>('#catalog-explore')!.hidden, false);
+  assert.equal(doc.querySelectorAll('#results .course').length,26);
+  doc.defaultView!.close();
+});
+
+test('level chips and status checkboxes combine across categories; a price choice replaces the previous price', () => {
+  const {document} = render('learner', [
+    course('basics', false, [''], {is_free:true}),
+    course('ml', true, ['in_progress'], {category:'AI & Machine Learning',level:'Advanced',is_free:true}),
+    course('deep', true, ['covered'], {category:'AI & Machine Learning',level:'Advanced'}),
+    course('offline', true, [''], {level:'Beginner',is_free:true}),
+  ]);
+  const win = document.defaultView!;
+  (win as any).acquireVsCodeApi = () => ({postMessage() {}});
+  runScripts(win);
+  const toggle = (name:string,value:string) => document.querySelector<HTMLInputElement>(`input[name="${name}"][value="${value}"]`)!.click();
+  const ids = () => [...document.querySelectorAll<HTMLElement>('#results [data-course]')].map(c => c.dataset.course);
+  toggle('level','Advanced'); toggle('level','Beginner');
+  toggle('status','inProgress'); toggle('status','notStarted');
+  toggle('price','free');
+  assert.deepEqual(ids(), ['ml','basics']);
+  toggle('status','covered'); toggle('price','preview');
+  assert.deepEqual(ids(), ['deep']);
+  assert.equal(document.querySelectorAll('input[name=price]:checked').length,1);
+  assert.equal(document.querySelector('#results [data-group="Software Engineering"]'),null);
+  win.close();
+});
+
+test('a locked course shows its standalone price and unlock action with the outline closed', () => {
+  const python = course('python', true, ['covered', ''], {unlocked:false});
+  const offer = {id:'python-once', title:'Python Programming', course_ids:['python'], currency:'INR', amount:299900, owned:false};
+  const {document} = render('learner', [python], [offer]);
+  const card = document.querySelector('[data-course="python"]')!;
+  const buy = card.querySelector<HTMLButtonElement>(':scope > .actions [data-action="buy"]')!;
+  assert.equal(card.querySelector('details')!.open, false);
+  assert.equal(buy.dataset.id, 'python-once');
+  assert.equal(buy.textContent, 'Unlock all · ₹2,999');
+  assert.equal(card.querySelectorAll('[data-action="buy"]').length, 1);
+  const win = document.defaultView!;
+  (win as any).acquireVsCodeApi = () => ({postMessage() {}});
+  runScripts(win);
+  win.dispatchEvent(new win.MessageEvent('message', {data:{type:'focusCourse', id:'python-1'}}));
+  assert.equal(document.querySelector<HTMLDetailsElement>('#results [data-course="python"] [data-course-outline]')!.open, true);
+  win.close();
+});
+
+test('a locked course with bundle pricing leads to the bundles containing that course', () => {
+  const courses = ['python','sql','java'].map(id => course(id, false, [''], {unlocked:false}));
+  const offer = (id:string, ids:string[]) => ({id, title:id, course_ids:ids, amount:50000, currency:'INR', owned:false});
+  const {document} = render('learner', courses, [offer('data-pack', ['sql','python']), offer('other-pack', ['sql','java'])]);
+  const win = document.defaultView!;
+  (win as any).acquireVsCodeApi = () => ({postMessage() {}});
+  runScripts(win);
+  const pricing = document.querySelector<HTMLButtonElement>('[data-course="python"] .actions [data-browse-category="type:bundle"]')!;
+  pricing.click();
+  assert.deepEqual([...document.querySelectorAll<HTMLElement>('#results [data-bundle]')].map(card => card.dataset.bundle), ['data-pack']);
+  win.close();
 });
 
 test('a bundle shows its full membership and savings only when standalone prices are comparable', () => {
@@ -215,7 +286,7 @@ test('a catalog sample requires an available public first chapter and keeps the 
   ] as const) {
     const {document} = render(account, [course(id, false, [''], extra)]);
     assert.equal(document.querySelector('dialog.course-preview footer button')?.getAttribute('data-action') ?? null, action);
-    assert.equal(!!document.querySelector('#filter-status option[value=preview]'), !!action);
+    assert.equal(!!document.querySelector('input[name=show][value=preview]'), !!action);
     document.defaultView!.close();
   }
 });
@@ -265,23 +336,20 @@ test('search ranks titles across categories, excludes incidental Python mentions
   const window = document.defaultView!;
   const messages: unknown[] = [];
   (window as any).acquireVsCodeApi = () => ({postMessage: (message: unknown) => messages.push(structuredClone(message))});
-  window.eval(document.querySelector('script')!.textContent!);
+  runScripts(window);
   const input = document.querySelector<HTMLInputElement>('#search')!;
   const visible = () => [...document.querySelectorAll<HTMLElement>('#results .course:not([hidden])')];
   const ids = () => visible().map(card => card.dataset.course ?? card.dataset.project ?? card.dataset.browserCourse);
   const search = (query: string) => { input.value = query; input.dispatchEvent(new window.Event('input')); };
   const original = ids();
   search('  pYThOn  ');
-  assert.deepEqual(ids(), ['python', 'science', 'algorithms']);
+  assert.deepEqual(ids(), ['python', 'algorithms', 'science']);
   assert.match(document.querySelector('#result-count')!.textContent!, /^3 matching/);
   visible()[0].querySelector<HTMLButtonElement>('[data-action="signUp"]')!.click();
   assert.deepEqual(messages.pop(), {type:'signUp', id:'python'});
-  const category = document.querySelector<HTMLSelectElement>('#filter-category')!;
-  category.value = 'AI';
-  category.dispatchEvent(new window.Event('change'));
+  document.querySelector<HTMLInputElement>('input[name=category][value=AI]')!.click();
   assert.deepEqual(ids(), ['science']);
-  category.value = '';
-  category.dispatchEvent(new window.Event('change'));
+  document.querySelector<HTMLInputElement>('input[name=category][value=""]')!.click();
   search('programming pyth');
   assert.deepEqual(ids(), ['python']);
   search('C++');
@@ -307,12 +375,14 @@ test('catalog types share one result count, query, difficulty and learning statu
   ], [offer('Python price', ['python']), offer('Data pack', ['python','sql'], true), offer('Other pack', ['sql','missing'])]);
   const win = document.defaultView!;
   (win as any).acquireVsCodeApi = () => ({postMessage() {}});
-  win.eval(document.querySelector('script')!.textContent!);
+  runScripts(win);
   const select = (id: string, value: string) => {
-    const control = document.querySelector<HTMLSelectElement>('#filter-' + id)!;
-    control.value = value;
-    assert.equal(control.value, value);
-    control.dispatchEvent(new win.Event('change'));
+    for (const input of document.querySelectorAll<HTMLInputElement>(`input[name="${id}"]:checked`))
+      if (input.type === 'checkbox' && input.value !== value) input.click();
+    if (value || id === 'category' || id === 'show') {
+      const option = document.querySelector<HTMLInputElement>(`input[name="${id}"][value="${value}"]`)!;
+      if (!option.checked) option.click();
+    }
   };
   const search = (value: string) => {
     const input = document.querySelector<HTMLInputElement>('#search')!;
@@ -323,32 +393,33 @@ test('catalog types share one result count, query, difficulty and learning statu
     const cards = [...document.querySelectorAll<HTMLElement>('#results .course:not([hidden])')];
     assert.deepEqual(cards.map(({dataset:d}) => d.course ?? d.project ?? d.browserCourse ?? d.bundle), ids);
     assert.ok(cards.every(card => !card.closest('[hidden]')));
-    assert.equal(document.querySelector('#result-count')!.textContent, ids.length + ' matching ' + noun);
+    assert.equal(document.querySelector('#result-count')!.textContent, noun === 'results' ? '18 matching results · grouped by category' : ids.length + ' matching ' + noun);
     assert.equal(document.querySelector<HTMLElement>('#empty')!.hidden, ids.length > 0);
   };
-  const all = ['python','sql','erpnext-essentials','course-agent','shelf','market-checkout','field-dispatch','parcel-pickup','museum-entry','workshop-enrolment','trail-log','print-batches','ferry-fares','meter-blocks','festival-desk','orchard-deliveries','Data pack','Other pack'];
+  const all = ['sql','erpnext-essentials','python','course-agent','shelf','market-checkout','field-dispatch','parcel-pickup','museum-entry','Data pack','Other pack'];
   document.querySelector<HTMLButtonElement>('[data-view=explore]')!.click();
   check(all, 'results');
   select('category', 'type:course');
-  check(['python','sql','erpnext-essentials'], 'courses');
+  check(['sql','erpnext-essentials','python'], 'courses');
   select('category', 'Programming');
   check(['python'], 'course');
   select('category', 'type:project');
   check(['course-agent','shelf','market-checkout','field-dispatch','parcel-pickup','museum-entry','workshop-enrolment','trail-log','print-batches','ferry-fares','meter-blocks','festival-desk','orchard-deliveries'], 'projects');
   select('level', 'Intermediate');
-  select('status', 'available');
+  select('show', 'available');
   check(['course-agent','field-dispatch','parcel-pickup','museum-entry','workshop-enrolment','trail-log','print-batches','ferry-fares','meter-blocks','festival-desk','orchard-deliveries'], 'projects');
   select('category', 'type:bundle');
   check([], 'bundles');
   select('level', 'Advanced');
   check(['Data pack','Other pack'], 'bundles');
-  select('status', 'enrolled');
+  select('show', 'enrolled');
   check(['Data pack'], 'bundle');
   search('Python');
   check(['Data pack'], 'bundle');
   select('status', 'covered');
   check([], 'bundles');
   search('');
+  select('show', '');
   select('status', '');
   select('level', '');
   select('category', '');
@@ -383,7 +454,7 @@ test('the course guide uses actual access periods and selects only accessible co
   const w = dom.window, doc = w.document;
   const sent: any[] = [];
   (w as any).acquireVsCodeApi = () => ({postMessage:(m: any) => sent.push(m)});
-  w.eval(doc.querySelector('script')!.textContent!);
+  runScripts(w);
   assert.deepEqual([...doc.querySelectorAll('#guide-course option')].map(x => x.textContent), ['Python']);
   const setup = doc.querySelector<HTMLButtonElement>('[data-action=setupCourse]')!;
   setup.click();
@@ -452,11 +523,11 @@ test('free shelves, price filters and direct chapter actions agree across Home a
   const win = document.defaultView!;
   const messages: any[] = [];
   (win as any).acquireVsCodeApi = () => ({postMessage:(m:any) => messages.push(m)});
-  win.eval(document.querySelector('script')!.textContent!);
+  runScripts(win);
   assert.deepEqual([...document.querySelectorAll<HTMLElement>('#free-shelf [data-home-course]')].map(c => c.dataset.homeCourse), ['free']);
   const click = (selector:string) => document.querySelector<HTMLButtonElement>(selector)!.click();
   click('[data-browse-price=free]');
-  assert.equal(document.querySelector('#results')!.children.length, 2, 'expired free courses are still classified by price in Explore');
+  assert.equal(document.querySelectorAll('#results .course').length, 2, 'expired free courses are still classified by price in Explore');
   assert.equal(document.querySelector<HTMLButtonElement>('#results [data-course=expired] .actions button')!.disabled, true);
   click('#active-filters button');
   const action = (id:string) => document.querySelector<HTMLButtonElement>(`#results [data-course="${id}"] .actions button`)!;
@@ -468,4 +539,38 @@ test('free shelves, price filters and direct chapter actions agree across Home a
   win.dispatchEvent(new win.MessageEvent('message',{data:{type:'focusCourse',id:'paid'}}));
   assert.equal(document.querySelector<HTMLDetailsElement>('#results [data-course=paid] [data-course-outline]')!.open,true);
   win.close();
+});
+
+test('Home asks what to work on: Continue learning and Continue project side by side', async () => {
+  const project = {root:'/work/parcel-pickup', projectId:'parcel-pickup', title:'Parcel pickup', updatedAt:'2026-11-24T10:00:00Z', submissions:[], status:'In progress'};
+  const {catalog, document} = render('learner', [course('python', true, ['in_progress', ''])]);
+  catalog.projects = [project];
+  catalog.render(catalog.selection.catalog, '');
+  const home = new JSDOM(catalog.panel.webview.html).window.document;
+  assert.equal(home.querySelector('#home-title')!.textContent, 'What do you want to work on today?');
+  const cards = [...home.querySelectorAll('.home-choices > article')];
+  assert.deepEqual(cards.map(c => c.querySelector('.dh-eyebrow')!.textContent), ['Continue learning', 'Continue project']);
+  assert.match(cards[0].querySelector('[data-action="practice"]')!.textContent!, /^Resume chapter 1$/);
+  const resume = cards[1].querySelector<HTMLButtonElement>('[data-action="resumeProject"]')!;
+  assert.equal(resume.textContent, 'Resume project');
+  assert.equal(resume.dataset.id, project.root);
+  assert.ok(document);
+
+  executed.length = 0;
+  await (catalog as any).handle({type:'resumeProject', id:project.root});
+  await (catalog as any).handle({type:'resumeProject', id:'/somewhere/else'});
+  assert.deepEqual(executed, [['dhimantai.openSavedProject', project.root]]);
+});
+
+test('Home without a saved project still offers projects next to the course', () => {
+  const {document} = render('learner', [course('python', true, ['in_progress'])]);
+  const cards = [...document.querySelectorAll('.home-choices > article')];
+  assert.deepEqual(cards.map(c => c.querySelector('.dh-eyebrow')!.textContent), ['Continue learning', 'Build a project']);
+  assert.ok(cards[1].querySelector('[data-browse-category="type:project"]'));
+});
+
+test('A first visit with nothing to resume keeps the first-lesson layout', () => {
+  const {document} = render(undefined, [course('python', false, [''], {is_free:true})]);
+  assert.equal(document.querySelector('#home-title')!.textContent, 'Choose your first lesson');
+  assert.equal(document.querySelector('.home-choices'), null);
 });

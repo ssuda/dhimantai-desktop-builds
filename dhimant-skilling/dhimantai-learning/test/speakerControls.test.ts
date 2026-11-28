@@ -172,3 +172,47 @@ test('learning room mutes locally, remembers each agent, and applies the chosen 
     assert.equal(btn('sound').getAttribute('aria-label'), 'Mute speaker', 'late playback errors cannot replace the current control');
   } finally { w.close(); }
 });
+
+test('a notebook mic can cancel a pending device, reopen and commit audio while keeping the written draft', async()=>{
+  const dom=new JSDOM('<textarea>My written answer</textarea><button id="audio-microphone"></button><small id="dictation-status"></small>',
+    {url:'https://webview.example',runScripts:'outside-only',pretendToBeVisual:true});
+  const w=dom.window, messages:any[]=[], calls:any[]=[];
+  let captures=0, releases=0, published=0, unblock!:()=>void;
+  const permission=new Promise<void>(resolve=>{unblock=resolve;});
+  const agent={identity:'worker',isAgent:true,attributes:{},trackPublications:new Map()};
+  class Room {
+    remoteParticipants=new Map([['worker',agent]]);
+    localParticipant={performRpc:async(request:any)=>{calls.push(request);return 'ok';},
+      publishTrack:async()=>{published++;},unpublishTrack:async()=>{}};
+    on(){} async connect(){} async disconnect(){} async startAudio(){}
+  }
+  w.LivekitClient={Room,RoomEvent:{},createLocalAudioTrack:async()=>{
+    if(++captures===1)await permission;
+    return {stop(){releases++;},mediaStreamTrack:{addEventListener(){}}};
+  }};
+  try {
+    w.eval(asset('learning-room/learningVoice.js'));
+    const mic=w.document.querySelector<HTMLButtonElement>('#audio-microphone')!;
+    const microphone=w.installLearningVoice({postMessage:(message:any)=>messages.push(message)});
+    microphone.setScope('written');
+    const grant=async()=>{
+      const request=messages.at(-1);assert.equal(request.type,'learningVoice');
+      w.dispatchEvent(new w.MessageEvent('message',{origin:w.location.origin,data:{type:'learningVoiceGrant',id:request.id,
+        url:'unused',token:'unused',mode:{mode:'pyq_practice',practice_kind:'regular'}}}));
+      await tick();
+    };
+    mic.click();await grant();
+    assert.equal(mic.getAttribute('aria-busy'),'true');
+    mic.click();unblock();await tick();
+    assert.equal(releases,1);assert.equal(published,0);
+    mic.click();await grant();
+    assert.equal(mic.getAttribute('aria-pressed'),'true');assert.equal(published,1);
+    mic.click();await tick();
+    assert.equal(mic.getAttribute('aria-pressed'),'false');assert.equal(releases,2);
+    assert.deepEqual(JSON.parse(calls.at(-1).payload),{input_enabled:false,commit_turn:true});
+    assert.deepEqual(messages.map(m=>m.type),['learningVoice','learningVoice']);
+    assert.equal(w.document.querySelector('textarea')!.value,'My written answer');
+    microphone.setScope('');
+    assert.equal(mic.disabled,true);
+  } finally { dom.window.close(); }
+});

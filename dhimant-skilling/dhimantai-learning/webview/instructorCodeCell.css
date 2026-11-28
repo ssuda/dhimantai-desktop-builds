@@ -1,7 +1,7 @@
 .practice-code-editor>small { display: block; color: var(--vscode-descriptionForeground); }
 .practice-code-editor { border: 1px solid var(--vscode-panel-border); border-radius: 5px; padding: 12px; margin: 12px 0; }
 .practice-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.practice-editor-heading select { font: inherit; max-width: 100%; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 3px 6px; }
+.practice-editor-heading select, .terminal-heading select { font: inherit; max-width: 100%; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 3px 6px; }
 .practice-buffer { margin: 10px 0; overflow: hidden; border: 1px solid var(--vscode-panel-border); }
 .practice-buffer.is-enlarged .cm-scroller { height: clamp(28em, 65vh, 48em); max-height: none; }
 .practice-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
@@ -28,3 +28,16 @@ body.vscode-light, body.vscode-high-contrast-light { --syntax-keyword: #7f238c; 
 .cm-content .syntax-operator { color: var(--syntax-operator); }
 .execution-result > strong, .execution-result > code:not([hidden]) { display: block; overflow-wrap: anywhere; }
 .execution-result > code { margin-block: 4px; }
+.command-buffer { display: grid; grid-template-columns: auto minmax(0, 1fr); background: var(--vscode-editor-background); }
+.command-prompt, .command-transcript { font-family: var(--vscode-editor-font-family, monospace); font-size: var(--vscode-editor-font-size, 14px); }
+.command-prompt { padding: 4px 0 4px 8px; line-height: 1.4; color: var(--vscode-terminal-ansiGreen, var(--vscode-editor-foreground)); }
+.command-buffer .cm-content { min-height: 1.5em; }
+.command-buffer .cm-gutters { display: none; }
+.command-transcript { grid-column: 1 / -1; margin: 0; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 16em; overflow-y: auto; }
+.command-buffer [hidden] { display: none; }
+/* Program fields use the theme's input colours so they read clearly in light and dark themes. */
+.program-field { box-sizing: border-box; width: 100%; min-width: 0; min-height: 2.2em; padding: 6px 8px; font: inherit; font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 4px; }
+.program-field::placeholder { color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground)); opacity: 1; }
+.program-field:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.program-field-label { display: grid; gap: 4px; margin: 4px 0 8px; }

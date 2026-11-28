@@ -18,12 +18,13 @@ export function runInputs(snapshot: CodeSnapshot) {
 function expectedException(block: Element, code: Element) {
   const tag = code.getAttribute('data-expected-error');
   if (tag) return tag;
-  const previous = block.previousElementSibling, next = block.nextElementSibling;
+  const host = block.closest('.code-block-card') ?? block;
+  const previous = host.previousElementSibling, next = host.nextElementSibling;
   const prose = (el: Element | null) => el?.matches('p,h3,h4') ? el.textContent?.trim() ?? '' : '';
   const before = prose(previous), after = prose(next);
   // A caption between two runnable cells introduces the next one if it ends in a colon.
-  const intro = previous?.previousElementSibling?.matches('pre') && !before.endsWith(':') ? '' : before;
-  const caption = next?.nextElementSibling?.matches('pre') && after.endsWith(':') ? '' : after;
+  const intro = (previous?.previousElementSibling?.matches('pre, .code-block-card')) && !before.endsWith(':') ? '' : before;
+  const caption = (next?.nextElementSibling?.matches('pre, .code-block-card')) && after.endsWith(':') ? '' : after;
   const predicts = /\b(?:[Ee]xpected (?:error|exception)(?: is)?\s*[:—-]?|(?:[Tt]his (?:code|example|cell|call|line|version)|[Ii]t) (?:intentionally |deliberately |will )?(?:raises?|throws?))\s+(?:an? )?([A-Z]\w*(?:Error|Exception))\b/;
   const expectedOutput = next?.querySelector('code.language-output') ??
     (/^(?:(?:predicted|expected|sample|example) )?(?:output|result)\b/i.test(after) ?
@@ -36,7 +37,8 @@ function expectedException(block: Element, code: Element) {
 export function labelLessonOutputs(body: HTMLElement) {
   const calls = new Map<Element, string>();
   for (const block of body.querySelectorAll('pre,p,h1,h2,h3,h4,h5,h6')) {
-    const parent = block.parentElement!;
+    const host = block.closest('.code-block-card') ?? block;
+    const parent = host.parentElement!;
     const code = block.matches('pre') ? block.querySelector('code') : null;
     const language = code?.className.match(/\blanguage-(\S+)/)?.[1] ?? '';
     if (code && cellLanguage(language)) {
@@ -47,12 +49,12 @@ export function labelLessonOutputs(body: HTMLElement) {
     }
     const wording = block.textContent?.trim() ?? '';
     const heading = !code && /^(?:(?:predicted|expected|sample|example) (?:output|result)|output)(?:\s*$|\s*[:(—-]|\s+for\b)/i.test(wording);
-    if (!heading && !(language === 'output' && !block.previousElementSibling?.classList.contains('lesson-output-heading'))) continue;
+    if (!heading && !(language === 'output' && !host.previousElementSibling?.classList.contains('lesson-output-heading'))) continue;
     const label = document.createElement('strong');
     label.className = 'lesson-output-label';
     const call = heading && /\bfor\b/i.test(wording) ? '' : calls.get(parent);
     label.textContent = 'Instructor example' + (call ? ' · ' + call.slice(0, 160) : '');
-    block.before(label);
+    host.before(label);
     block.classList.add('lesson-output-heading');
   }
 }

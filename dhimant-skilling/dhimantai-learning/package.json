@@ -2,7 +2,7 @@
   "name": "dhimantai-learning",
   "displayName": "dhimantAI Learning",
   "description": "Learn in VS Code with Course Catalog, Instructor, Doubt Solver, and coding practice. Write, debug, and test here; run projects and tests in the course container.",
-  "version": "0.39.71",
+  "version": "0.39.107",
   "publisher": "optficial",
   "enabledApiProposals": [
     "browser"
@@ -18,6 +18,9 @@
   "main": "./out/src/extension.js",
   "activationEvents": [
     "onStartupFinished",
+    "onCommand:dhimantai.openBuildStudio",
+    "onCommand:dhimantai.openProjectCoach",
+    "onCommand:dhimantai.equipmentDesk",
     "onUri",
     "workspaceContains:.dhimantai.json",
     "workspaceContains:.dhimantai-project.json",
@@ -25,6 +28,19 @@
     "onTerminalProfile:dhimantai.courseShell"
   ],
   "contributes": {
+    "debuggers": [
+      {
+        "type": "dhimantai-project",
+        "label": "dhimantAI Project · Python",
+        "when": "dhimantai.projectOpen && !dhimantai.learningNotebookActive"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "python",
+        "when": "dhimantai.projectOpen && !dhimantai.learningNotebookActive"
+      }
+    ],
     "terminal": {
       "profiles": [
         {
@@ -130,15 +146,15 @@
         "category": "dhimantAI"
       },
       {
-        "command": "dhimantai.openProjectCoach",
-        "title": "Open Project Instructor",
+        "command": "dhimantai.openProjectMentor",
+        "title": "Open Project Mentor",
         "category": "dhimantAI"
       },
       {
         "command": "dhimantai.discussProjectSelection",
-        "title": "Discuss Selected Lines with Instructor",
+        "title": "Discuss Selected Lines with Project Mentor",
         "category": "dhimantAI",
-        "enablement": "dhimantai.projectOpen && dhimantai.legacyCoachOpen && editorHasSelection && resourceScheme == file"
+        "enablement": "dhimantai.projectOpen && dhimantai.buildStudioOpen && editorHasSelection && resourceScheme == file"
       },
       {
         "command": "dhimantai.pricing",
@@ -160,7 +176,8 @@
       {
         "command": "dhimantai.courseTerminal",
         "title": "Open Course Terminal",
-        "category": "dhimantAI"
+        "category": "dhimantAI",
+        "enablement": "dhimantai.projectOpen && dhimantai.buildStudioOpen && !dhimantai.learningNotebookActive"
       },
       {
         "command": "dhimantai.openCopyInCourse",
@@ -384,7 +401,7 @@
       {
         "command": "dhimantai.skilling.project",
         "category": "dhimantAI",
-        "title": "Open Project Instructor"
+        "title": "Open Project Mentor"
       },
       {
         "command": "dhimantai.skilling.discuss",
@@ -450,13 +467,13 @@
       "editor/title": [],
       "editor/context": [
         {
-          "command": "dhimantai.openProjectCoach",
-          "when": "!dhimantai.projectOpen && resourceScheme == file && isWorkspaceTrusted",
+          "command": "dhimantai.openProjectMentor",
+          "when": "resourceScheme == file && isWorkspaceTrusted",
           "group": "dhimantai@1"
         },
         {
           "command": "dhimantai.discussProjectSelection",
-          "when": "dhimantai.projectOpen && dhimantai.legacyCoachOpen && editorHasSelection && resourceScheme == file",
+          "when": "dhimantai.projectOpen && dhimantai.buildStudioOpen && editorHasSelection && resourceScheme == file",
           "group": "dhimantai@1"
         },
         {
@@ -466,6 +483,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "dhimantai.courseTerminal",
+          "when": "dhimantai.projectOpen && dhimantai.buildStudioOpen && !dhimantai.learningNotebookActive"
+        },
         {
           "command": "dhimantai.desktopWelcome",
           "when": "false"
@@ -979,6 +1000,12 @@
           "default": "",
           "markdownDescription": "Parent folder for local course files and exercises. Defaults to `~/dhimantAI`."
         },
+        "dhimantai.erpnext.trainingSite": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "HTTPS origin of an ERPNext training site for practical course authoring and learning. Leave blank to use the local training container."
+        },
         "dhimantai.practiceEditor": {
           "type": "string",
           "enum": [
@@ -1025,19 +1052,19 @@
       ],
       "secondarySidebar": [
         {
-          "id": "dhimantai-coach",
-          "title": "Instructor",
+          "id": "dhimantai-build-studio",
+          "title": "Project Mentor",
           "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "dhimantai-coach": [
+      "dhimantai-build-studio": [
         {
-          "id": "dhimantai.coachView",
-          "name": "Project Instructor",
+          "id": "dhimantai.buildStudioView",
+          "name": "Project Mentor",
           "type": "webview",
-          "when": "dhimantai.nativeCoach && dhimantai.legacyCoachOpen && dhimantai.projectOpen"
+          "when": "dhimantai.nativeBuildStudio && dhimantai.buildStudioOpen"
         }
       ],
       "dhimantai-learning": [
@@ -1080,7 +1107,7 @@
     ]
   },
   "scripts": {
-    "compile": "tsc -p . && tsc -p tsconfig.webview.json && node scripts/bundle-audio.mjs && node scripts/bundle-authoring.mjs",
+    "compile": "tsc -p . && tsc -p tsconfig.webview.json && node scripts/bundle-audio.mjs && node scripts/bundle-authoring.mjs && esbuild test/fixtures/board.mjs test/fixtures/attachments.mjs --bundle --outdir=out/test/fixtures",
     "watch": "node scripts/bundle-audio.mjs && node scripts/bundle-authoring.mjs && tsc -w -p .",
     "test": "npm run compile && node scripts/test.mjs",
     "test:diagrams": "npm run compile && node --test out/test/diagramBlocks.test.js && node test/diagramBrowser.cjs",
@@ -1120,6 +1147,9 @@
     "@viz-js/viz": "3.31.0",
     "@vscode/markdown-it-katex": "1.1.2",
     "@vscode/test-electron": "^2.4.1",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/headless": "6.0.0",
+    "@xterm/xterm": "6.0.0",
     "axe-core": "4.10.3",
     "codemirror": "^6.0.2",
     "esbuild": "0.28.2",

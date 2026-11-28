@@ -6,11 +6,12 @@ import { progressBar, UI_TOKENS } from './uiTheme';
 
 export const destinations = [
   {group:'Learn', key:'courses', label:'Courses', glyph:'book', command:'dhimantai.courseCatalog'},
-  {group:'Learn', key:'mine', label:'My courses', glyph:'layers', command:'dhimantai.practice.focus'},
+  {group:'Learn', key:'mine', label:'My courses', glyph:'layers', command:'dhimantai.myCourses'},
   {group:'Learn', key:'certificates', label:'My certificates', glyph:'medal', command:'dhimantai.courseGrade'},
-  {group:'Get help', key:'instructor', label:'Instructor', glyph:'book', command:'dhimantai.openLearningRoom'},
-  {group:'Get help', key:'doubt', label:'Doubt Solver', glyph:'help', command:'dhimantai.openDoubtSolver'},
-  {group:'Learn', key:'practice', label:'Practice', glyph:'target', command:'dhimantai.browsePractice'},
+  {group:'Learn', key:'practice', label:'Practice', glyph:'target', command:'dhimantai.practicePage'},
+  {group:'Learn', key:'instructor', label:'Instructor', glyph:'book', command:'dhimantai.openLearningRoom'},
+  {group:'Learn', key:'studio', label:'Project Mentor', glyph:'layers', command:'dhimantai.openProjectMentor'},
+  {group:'Learn', key:'doubt', label:'Doubt Solver', glyph:'help', command:'dhimantai.openDoubtSolver'},
   {group:'Tools', key:'git', label:'Git & GitHub', glyph:'branch', command:'dhimantai.gitHub'},
 ] as const;
 
@@ -58,7 +59,7 @@ export function sidebarHtml(nonce: string) {
   .nav-row[aria-current=page]{background:color-mix(in srgb,var(--nav-accent) 12%,var(--surface));box-shadow:inset 3px 0 var(--nav-accent);font-weight:600}
   .nav-icon{--color:oklch(var(--lit) .13 var(--hue));color:var(--color);background:color-mix(in srgb,var(--color) 12%,var(--surface));width:26px;height:26px;display:grid;place-items:center;border-radius:7px;flex:none}
   .certificate-icon{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
-  [data-key=courses]{--hue:285}[data-key=mine]{--hue:150}[data-key=certificates]{--hue:68}[data-key=instructor]{--hue:255}[data-key=doubt]{--hue:345}[data-key=practice]{--hue:195}[data-key=git]{--hue:240}
+  [data-key=courses]{--hue:285}[data-key=mine]{--hue:150}[data-key=certificates]{--hue:68}[data-key=instructor]{--hue:255}[data-key=doubt]{--hue:345}[data-key=practice]{--hue:195}[data-key=studio]{--hue:34}[data-key=git]{--hue:240}
   #workspace{margin-top:auto}.project{border-top:1px solid var(--line);padding:9px 0}.project>summary{cursor:pointer;padding:4px}
   .project-box{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:9px}.project-box h3{font-size:1em;margin:0 0 4px}
   .files{max-height:24vh;min-height:28px;overflow:auto}.file-row{font-size:.94em}.file-row svg{color:var(--dh-muted)}[hidden]{display:none!important}
@@ -74,7 +75,7 @@ export function sidebarHtml(nonce: string) {
   nav section {margin-bottom:12px}
   nav h2 {letter-spacing:.1em}
   </style></head><body>
-  <main><div id="continue"></div><nav aria-label="Learning destinations">${['Learn','Get help','Tools'].map(group=>`<section${group==='Tools' ? ' id="project-tools" hidden' : ''}><h2>${group}</h2>
+  <main><div id="continue"></div><nav aria-label="Learning destinations">${['Learn','Tools'].map(group=>`<section><h2>${group}</h2>
   ${destinations.filter(item=>item.group===group).map(item=>`<button class="nav-row" data-key="${item.key}"${item.key==='mine' || item.key==='certificates' ? ' data-account-only hidden' : ''}><span class="nav-icon">${icon(item.glyph)}</span>${item.label}${item.key==='mine' ? '<span class="count" hidden></span>' : ''}</button>`).join('')}</section>`).join('')}</nav>
   <div id="workspace"></div></main><footer><div id="account"></div><small id="environment" hidden></small></footer>
   <script nonce="${nonce}">const vscode=acquireVsCodeApi();let state=vscode.getState()||{};
@@ -88,7 +89,6 @@ export function sidebarHtml(nonce: string) {
         const badge=document.querySelector('.count');badge.hidden=data.count===undefined;badge.textContent=data.count??'';
       } else if(data.type==='workspace'){
         const el=document.getElementById('workspace');el.innerHTML=data.html;
-        document.getElementById('project-tools').hidden=!data.html;
         const project=el.querySelector('details');if(project){project.open=state.projectOpen!==false;project.addEventListener('toggle',()=>{state.projectOpen=project.open;vscode.setState(state);});}
       } else if(data.type==='selected')selected(data.key);
     });

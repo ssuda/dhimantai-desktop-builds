@@ -134,8 +134,8 @@ export const projectFolderMissing = (error: unknown) => (error as {code?: string
 export async function loadProjectCurriculum(media: string, id: string, root?:string): Promise<ProjectCurriculum> {
   if (id === 'personal-project') {
     return {id, version:1, title:'Your project', files:[], steps:[{id:'review', title:'Project review',
-      goal:'Review the engineering decisions in your current source.', opening:'', files:[], check:'', expected:'',
-      task:'Open or save a source file. The Instructor will review the work as you go.', hint:'', reflection:''}]};
+      goal:'Support the learner’s goal in this repository.', opening:'', files:[], check:'', expected:'',
+      task:'Open a file and tell the mentor what you want to build, understand or fix.', hint:'', reflection:''}]};
   }
   if (!projectIds.includes(id)) throw new Error('Unknown course project.');
   const curriculum = JSON.parse(await readFile(join(media, 'projects', id + '.json'), 'utf8'));
@@ -257,7 +257,7 @@ export async function publicProjectFile(root: string, path: string) {
   const actual = await realpath(file);
   // Reject symlinks even inside the project: a public filename must never alias an env file.
   if (actual !== resolve(canonicalRoot, path) || relative(canonicalRoot, actual).startsWith('..'))
-    throw new Error('Linked files cannot be shared with the Instructor.');
+    throw new Error('Linked files cannot be shared with the mentor.');
   if (!(await stat(file)).isFile() || (await stat(file)).size > 512000)
     throw new Error('Project source files must be smaller than 512 KB.');
   return actual;
@@ -441,6 +441,19 @@ export function checkArguments(step: Pick<ProjectStep, 'check'>, files?: string[
   if (step.check === 'all') return ['-m', 'unittest', 'discover', '-s', '.', '-p', 'test_*.py', '-v'];
   if (!/^(checks|tests)\.test_[a-z_]+$/.test(step.check)) throw new Error('Unknown project check.');
   return ['-m', 'unittest', step.check, '-v'];
+}
+
+export function projectDebugTarget(step: Pick<ProjectStep, 'check'>, files: string[] = []) {
+  // Only the public reproduction or the learner's tests belong in a debugger.
+  if (step.check.startsWith('debug:') || step.check.startsWith('architecture:')) {
+    if (files.some(file => /^test[\w-]*\.py$/.test(file)))
+      return ['-m','unittest','discover','-p','test*.py','-v'];
+    const id = step.check.slice('debug:'.length);
+    if (step.check.startsWith('debug:') && isDebugProject(id)) return ['-c',debugProjects[id].reproduction];
+    return;
+  }
+  if (!/^(all|shelf:(help|list|search|report)|rich:(text|markup|table|protocol|test-console|test-markup|test-table)|(checks|tests)\.test_[a-z_]+)$/.test(step.check)) return;
+  return checkArguments(step);
 }
 
 /** What the learner and Coach see; the final checker's inline script is an implementation detail (and too long). */

@@ -23,7 +23,7 @@
   let latestObservation;
   const renderShared = s => {
     const count = s.sharedFiles.length;
-    $('sharedSummary').textContent = s.contextProblem ? 'The Instructor cannot read your project files right now.'
+    $('sharedSummary').textContent = s.contextProblem ? 'The mentor cannot read your project files right now.'
       : count ? `${count} project ${count === 1 ? 'file' : 'files'} in this context` : 'No project files will be shared.';
     $('shared').textContent = (s.contextProblem ? s.contextProblem + '\n\n' : '') + 'Shared excerpts:\n' + s.sharedFiles.join('\n')
       + (s.omitted.length ? '\n\nContent not included (' + (s.omittedCount ?? s.omitted.length) + ' files):\n' + s.omitted.join('\n')
@@ -57,6 +57,10 @@
   $('previous').onclick = () => navigate(currentStep - 1);
   $('next').onclick = () => navigate(currentStep + 1);
   $('runtime').onchange = () => send('runtime', {value: $('runtime').value});
+  $('voiceLanguage').onchange = () => {
+    dictation?.cancel(); playback?.reply(null);
+    send('voiceLanguage', {value:$('voiceLanguage').value});
+  };
   $('externalHelp').onchange = () => {
     if (gitExercise && $('externalHelp').value === 'reported') send('reportGitHelp');
   };
@@ -75,6 +79,7 @@
   $('refreshHandoff').onclick = () => act('refreshHandoff');
   $('runLive').onclick = () => act('runLive');
   $('submitProject').onclick = () => {
+    if (sharedState?.checkout) { act('syncPractice', {id:sharedState.submissionId}); return; }
     if (sharedState?.sync) {
       act(sharedState.sync === 'recorded' ? 'openProjectGrade' : 'syncProject', {id:sharedState.submissionId});
       return;
@@ -127,7 +132,7 @@
     try {
       const files = await attachments.encoded(false, message.attachments);
       if (!current()) return;
-      clearTimeout(previewTimer); act('ask', {text, attachments:files});
+      clearTimeout(previewTimer); act('ask', {text, attachments:files, spokenLanguage:dictation?.languageFor?.(text)});
     } catch (error) {
       if (!current()) return;
       $('attachment-status').textContent = error.message;
@@ -190,7 +195,7 @@
       $('checkpointDetails').open = !!savedDraft?.note || status === 'review';
       $('milestoneReflection').open = false;
     }
-    const options = s.steps.map((title, index) => [title, milestones[index].verified ? 'Verified locally' : labels[milestones[index].status]].filter(Boolean).join(' · '));
+    const options = s.steps.map((title, index) => [title, s.checkout ? undefined : milestones[index].verified ? 'Verified locally' : labels[milestones[index].status]].filter(Boolean).join(' · '));
     if (stepOptions !== JSON.stringify(options)) {
       stepOptions = JSON.stringify(options);
       $('step').replaceChildren(...options.map((title, index) => { const option = document.createElement('option'); option.value = String(index); option.textContent = title; return option; }));
@@ -201,6 +206,7 @@
     const completed = milestones.filter(m => m.status === 'complete').length + review.length;
     $('progressText').textContent = `${completed}/${s.steps.length} marked complete`;
     if (s.verifiedWorkflow) $('progressText').textContent = milestones.filter(m => m.verified).length + '/' + s.steps.length + ' milestones verified';
+    if (s.checkout) $('progressText').textContent = s.checkout.status;
     $('progress').max = s.steps.length; $('progress').value = s.verifiedWorkflow ? milestones.filter(m => m.verified).length : completed;
     $('reviewList').hidden = !review.length;
     const reviewKey = JSON.stringify(review.map(i => [i, s.steps[i]]));
@@ -230,22 +236,36 @@
     document.querySelector('.milestone-picker').hidden = !!s.personal;
     document.querySelector('.milestone-progress').hidden = !!s.personal;
     $('check').hidden = !!s.personal;
+    $('taskTitle').hidden = !!s.personal;
     $('projectTools').hidden = !!s.personal;
     $('fullTask').hidden = !!s.personal;
     gitExercise = !!s.architecture?.git;
     $('architecturePractice').hidden = !s.architecture;
-    $('checkpointDetails').hidden = !!s.architecture || !!s.personal;
+    $('checkpointDetails').hidden = !!s.architecture && !s.checkout || !!s.personal;
+    $('checkpointTitle').textContent = s.checkout ? 'Checkpoint · optional reflection' : 'Checkpoint';
+    $('milestoneReflection').hidden = !!s.checkout;
+    $('checkpoint').hidden = !!s.checkout;
+    if (s.checkout) {
+      if (stepChanged || (s.checkout.complete && !sharedState?.checkout?.complete)) $('checkpointDetails').open = true;
+      $('evidencePrompt').textContent = s.current.evidencePrompt;
+      $('note').placeholder = 'Describe what changed in the receipts ledger.';
+      $('saveDraft').textContent = 'Save reflection';
+    }
+    $('architectureNext').hidden = !s.checkout?.complete;
     if (s.architecture) {
       $('check').textContent = s.architecture.git ? 'Check Git history' : s.architecture.debug ? 'Verify repair and test' : 'Verify repair';
       $('architectureQuestion').textContent = s.architecture.prediction;
       $('architectureMemory').textContent = s.architecture.summary;
       $('architectureIdentify').hidden = s.architecture.identified;
-      $('architectureNext').hidden = !s.architecture.next;
       $('architecturePredict').disabled = s.busy || !s.signedIn;
       if (scopeChanged) { $('architectureLocation').value = ''; $('architectureCount').value = ''; }
     }
     $('step').value = String(s.step); $('runtime').value = s.runtime;
     $('stepTitle').textContent = s.steps[s.step];
+    const debug = $('runtime').querySelector('[value="debug"]');
+    if (debug) { debug.hidden = !s.debugAvailable; debug.disabled = s.busy; }
+    const run = $('runtime').querySelector('[value="run"]');
+    if (run) { run.hidden = !s.debugAvailable || s.reading; run.disabled = s.busy; }
     $('runtime').querySelector('[value="setup"]').hidden = !!s.architecture?.git;
     $('runtimeTip').hidden = !!s.architecture?.git;
     if (s.runtimeLabel) $('runtime').options[0].textContent = s.runtimeLabel;
@@ -337,6 +357,7 @@
     $('checkSummary').textContent = 'Command output' + (s.check.truncated ? ' (excerpt)' : '');
     $('checkRecovery').textContent = s.check.state === 'changed' ? 'Save your files and run this step again before relying on the earlier output.'
       : s.check.status === 'runtime_error' ? 'Open Project tools → Runtime → Set up and verify environment, then retry. Open the project terminal to investigate the error.'
+      : s.check.status === 'failed' && s.debugAvailable ? 'Set a breakpoint where you expect the value to change, then choose Project tools → Runtime → Debug this step.'
       : s.check.status === 'timed_out' ? 'Look for a loop that does not stop. Use “I’m stuck” to narrow the next investigation, then retry.'
       : s.check.status === 'passed' && !s.guide && !s.architecture ? (s.current.deliverable ? s.current.expected : 'Open Checkpoint to record what you observed.')
       : '';
@@ -348,8 +369,11 @@
     $('submission').hidden = !s.submissionStep;
     readingSubmission = s.reading && s.submissionStep;
     $('completion').textContent = s.completion || 'In progress';
+    $('submitProject').hidden = false;
     $('submitProject').disabled = s.busy;
     $('projectActions').disabled = s.busy;
+    $('voiceLanguage').value = s.selectedVoiceLanguage || 'auto';
+    $('voiceLanguage').disabled = s.busy || !s.voiceAvailable;
     if (s.guided) $('check').textContent = 'Inspect project files';
     const recorded = s.sync === 'recorded';
     $('submitProject').textContent = s.guided ? 'Open readiness assessment' : recorded ? 'View course grade' : s.sync ? 'Sync result' : 'Submit project';
@@ -357,12 +381,21 @@
       : s.sync === 'pending' ? 'Course grade sync pending. Retry this saved result when connected.'
       : s.sync ? 'The final checks passed locally. Sync this saved result to confirm its course grade.'
       : 'Runs the final checks in your project container. Eligible results count toward coursework for signed-in learners.';
+    if (s.checkout) {
+      $('submission').hidden = !s.checkout.complete;
+      $('submitProject').hidden = !s.signedIn || s.checkout.accountRecorded;
+      $('submitProject').textContent = 'Sync practice';
+      $('completion').textContent = s.checkout.sync;
+      $('submissionHelp').textContent = 'Checkout Previews is a practice project. Certificate eligibility uses the required assessments in your course roadmap.';
+      $('taskTitle').textContent = s.checkout.complete ? 'Project complete' : 'Next step';
+    }
     $('finish').textContent = s.handoffMode === 'teacher' ? 'Submit project for teacher review' : 'Prepare final handoff';
     $('liveOutput').textContent = s.liveOutput || '';
     for (const id of ['finish', 'refreshHandoff', 'runLive']) $(id).disabled = s.busy;
     $('runLive').disabled ||= !s.ai;
     $('check').disabled = s.busy; $('hint').disabled = s.busy;
-    $('hint').textContent = s.hintLevel >= 2 ? (s.ai && s.signedIn ? 'Ask the Instructor' : 'Review next step') : s.hintLevel === 1 ? 'Try a smaller step' : 'I’m stuck';
+    $('hint').hidden = !!s.personal && (!s.signedIn || !s.ai);
+    $('hint').textContent = s.hintLevel >= 2 ? (s.ai && s.signedIn ? 'Ask the mentor' : 'Review next step') : s.hintLevel === 1 ? 'Try a smaller step' : 'I’m stuck';
     $('checkpoint').disabled = s.busy; $('saveDraft').disabled = s.busy;
     const chatChanged = stepChanged || conversationChanged;
     const continuingGuide = stepChanged && !scopeChanged && s.guide && nextGuideStep === s.step;
@@ -385,7 +418,7 @@
       const row = document.createElement('article'); row.className = 'msg ' + (message.role === 'tutor' ? 'coach' : 'learner');
       const label = document.createElement('strong');
       const occasion = {opened:'Project review', saved:'On save', check:'Check result', git:'Source control'}[message.observation];
-      label.textContent = occasion ? 'Instructor · ' + occasion : message.role === 'tutor' ? 'Instructor' : 'You';
+      label.textContent = occasion ? 'Project Mentor · ' + occasion : message.role === 'tutor' ? 'Project Mentor' : 'You';
       const body = document.createElement('div'); body.className = 'bubble markdown';
       if (message.role === 'tutor') body.innerHTML = window.CoachMarkdown.render(message.text);
       else body.textContent = message.text;
@@ -440,8 +473,8 @@
       restoreDraft(s.checkpoint);
       drafts.delete(s.step);
     }
-    const savedText = s.checkpoint?.verified ? 'Verified locally · ' + s.checkpoint.verified.summary : s.checkpoint ? (markedComplete ? 'Milestone marked complete' : 'Checkpoint saved') + ' on this computer · '
-      + new Date(s.checkpoint.at).toLocaleString() + ' · ' + s.checkpoint.assistance + ' Instructor help turns recorded.' : '';
+    const savedText = s.checkpoint?.verified ? 'Verified locally · ' + s.checkpoint.verified.summary : s.checkpoint ? (s.checkout ? 'Reflection saved' : markedComplete ? 'Milestone marked complete' : 'Checkpoint saved') + ' on this computer · '
+      + new Date(s.checkpoint.at).toLocaleString() + ' · ' + s.checkpoint.assistance + ' mentor help turns recorded.' : '';
     if ($('saved').textContent !== savedText) $('saved').textContent = savedText;
   });
   send('ready');

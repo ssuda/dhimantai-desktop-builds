@@ -1,0 +1,16 @@
+The macOS FreeCAD lesson uses the Qt Cocoa platform plugin under LGPL-3.0-only.
+Original copyrights and third-party notices are preserved in cocoa-source.tar.gz.
+The archive includes the complete modified plugin source, licenses and build script.
+Qt 6.11.2 source https://github.com/qt/qtbase/tree/v6.11.2/src/plugins/platforms/cocoa
+Applied the two Cocoa source hunks from Qt's QTBUG-149612 fix
+https://github.com/qt/qtbase/commit/8148c48deb8e4345bacb797cb75c011df6f797fa
+
+To rebuild, extract the source archive. Run python3 build-cocoa.py --help.
+Use native moc and rcc from FreeCAD_26.3rc2/Contents/Resources/lib/qt6 or matching Qt tools.
+Extract these conda-forge packages for headers and libraries, one per architecture.
+https://conda.anaconda.org/conda-forge/osx-arm64/qt6-main-6.11.2-pl5321hf0f7225_0.conda
+https://conda.anaconda.org/conda-forge/osx-64/qt6-main-6.11.2-pl5321h7191676_0.conda
+Use include/vulkan from KhronosGroup/Vulkan-Headers v1.4.321 and the API headers
+from KhronosGroup/MoltenVK v1.3.0 under include/MoltenVK.
+Build both slices, join with lipo -create, strip -x and codesign --force --sign -.
+FreeCAD dynamically loads the replaceable library from the adjacent platforms folder.

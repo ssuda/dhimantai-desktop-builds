@@ -25,11 +25,13 @@ const composer=bindInstructorComposer(host,byId<HTMLFormElement>('composer'),asy
   try {
     const files=await composer.attachments.encoded(false,attachments);
     if(draft!==version||busy)return;
-    send(isPrediction?'predict':'ask',isPrediction?{prediction:text,draft:version}:{message:text.trim()||'Explain my attachment.',attachments:files,draft:version});
+    const spokenLanguage = composer.dictation?.languageFor?.(text);
+    send(isPrediction?'predict':'ask',{draft:version, spokenLanguage,
+      ...(isPrediction ? {prediction:text} : {message:text.trim()||'Explain my attachment.',attachments:files})});
   } catch(error){byId('status').textContent=String(error);}
 });
 function composerMode(){
-  field.placeholder=predict&&byId<HTMLSelectElement>('replyType').value==='predict'?'What do you predict?':'Ask Instructor or reply…';
+  field.placeholder=predict&&byId<HTMLSelectElement>('replyType').value==='predict'?'What do you predict?':'Ask Project Mentor or reply…';
 }
 type ProjectLanguage = 'php' | 'sql' | 'jsx';
 const languages = {php:'PHP', sql:'MySQL', jsx:'React JSX'};
@@ -66,7 +68,7 @@ function mountCell() {
     id:'equipment-desk', key:'equipment-desk', languages, language,
     source:authored ? exampleDraft : ownDrafts.get(language) ?? '',
     note:language === 'jsx' ? 'Run App opens the saved React project.' :
-      (authored ? 'Instructor example' : 'My snippet')+' · Equipment Desk '+attemptLabel,
+      (authored ? 'Mentor example' : 'My snippet')+' · Equipment Desk '+attemptLabel,
     changed:() => {
       if (!cell) return;
       if (authored) exampleDraft = cell.code.value;
@@ -94,7 +96,14 @@ function mountCell() {
 origin.addEventListener('change', mountCell);
 byId('consoleBox').addEventListener('toggle', updateRun);
 byId('replyType').addEventListener('change',()=>{composer.dictation?.cancel();composerMode();});
+const voiceLanguage = byId<HTMLSelectElement>('voiceLanguage');
+voiceLanguage.onchange = () => {
+  composer.dictation?.setScope('');
+  composer.playback?.reply(null);
+  send('voiceLanguage', {scope:voiceScope, value:voiceLanguage.value});
+};
 function busyState(value:boolean) {
+  voiceLanguage.disabled = value;
   busy=value;composer.setAvailable(!value);
   composer.dictation?.setScope(value ? '' : voiceScope);
   for(const button of document.querySelectorAll<HTMLButtonElement>('button[data-action]')) button.disabled=value;
@@ -121,19 +130,48 @@ window.addEventListener('message',event=>{
     return;
   }
   if(m.type!=='state') return;
+  voiceLanguage.value = m.selectedVoiceLanguage;
   voiceScope=m.voiceScope;
   composer.dictation?.setScope(busy ? '' : voiceScope);
   composer.playback?.reply(m.audioId);
   byId('title').textContent=m.title;byId('concept').textContent=m.concept;
   byId('task').textContent=m.task;byId('question').textContent=m.question;
   byId('practice').hidden=!m.offerPractice;byId('retry').hidden=!m.retry;
-  predict=!!m.predict && !m.prediction;
+  const asking=!!m.predict && !m.prediction;
+  // An optional prediction starts as a question, so an assignment learner never saves one by accident.
+  if(asking && !predict && m.predictionOptional) byId<HTMLSelectElement>('replyType').value='ask';
+  predict=asking;
+  if(m.predictionOptional && asking) byId('question').textContent='Optional prediction: '+m.question;
   byId('replyKind').hidden=!predict;composerMode();composer.setAvailable(!busy);
-  byId('run').hidden=predict || m.offerPractice;
+  byId('run').hidden=!m.predictionOptional && (predict || m.offerPractice);
   byId('run').textContent=m.practice?'Run App · Practice inventory':'Run App';
   byId('demo').hidden=!m.demo;byId('next').hidden=!m.next;
-  byId('check').hidden=m.next;byId('assignment').hidden=!m.guided;
-  byId('history').replaceChildren(...m.history.map((s:string)=>{const p=document.createElement('p');p.textContent=s;return p;}));
+  byId('next').textContent=m.guided?'Continue':m.next==='Model stock in PHP'?'Open stock task':'Next chapter';
+  byId('next').title=m.next || '';
+  const criteria=byId('criteria');
+  criteria.replaceChildren(...(m.criteria??[]).map((text:string)=>{const li=document.createElement('li');li.textContent=text;return li;}));
+  criteria.hidden=!criteria.childElementCount;
+  byId('check').hidden=!m.stockCheck;byId('assignment').hidden=!m.guided;
+  byId('history').replaceChildren(...m.history.map((line:string) => {
+    if (line.startsWith('Project check · Checked revision ') && line.includes('\n')) {
+      const [heading, ...cases] = line.split('\n');
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = heading;
+      const list = document.createElement('ul');
+      for (const observation of cases) {
+        const item = document.createElement('li');
+        item.textContent = observation;
+        list.append(item);
+      }
+      details.append(summary, list);
+      return details;
+    }
+    const paragraph = document.createElement('p');
+    // Older attempts store the speaker label in the history entry itself.
+    paragraph.textContent = line.replace(/^Instructor · /, 'Project Mentor · ');
+    return paragraph;
+  }));
   attemptLabel=m.attemptLabel;
   if(!ownId){ownId=m.draft;runRevision=m.draftRevision??0;}
   canRunApp=!byId('run').hidden;

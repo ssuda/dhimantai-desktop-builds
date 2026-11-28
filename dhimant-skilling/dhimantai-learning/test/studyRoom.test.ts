@@ -51,9 +51,12 @@ test('Study isolates drafts, clears accepted messages, retains failures and canc
     button('close-study').click();button('open-study').click();assert.equal(field.value,'unfinished question');assert.equal(el('response').textContent,'');
     button('clear-question').click();assert.equal(field.value,'');assert.equal(button('send').disabled,true);
     s.input('What is an operator?');const sent=s.sent.length;
-    for(const extra of [{}, {shiftKey:true}, {ctrlKey:true}, {metaKey:true}, {isComposing:true}]) field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',...extra}));
+    const enter=(extra={})=>field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true,...extra}));
+    for(const extra of [{shiftKey:true}, {ctrlKey:true}, {metaKey:true}, {altKey:true}, {isComposing:true}]) assert.equal(enter(extra),true);
     assert.equal(s.sent.length,sent);
-    button('send').click();await s.grant();
+    assert.equal(enter(),false);await s.grant();
+    enter();
+    assert.equal(s.rooms.at(-1)!.closed,false,'Enter cannot activate Stop during a response');
     assert.equal(field.value,'What is an operator?');assert.equal(field.disabled,true);assert.equal(el('response').querySelector('.study-question')!.textContent,'What is an operator?');
     publish({method:'display_on_screen',content:'',study_request_id:request()});assert.equal(field.value,'What is an operator?');
     publish({method:'display_on_screen',content:'An operator works on values.',study_request_id:request()});assert.equal(field.value,'');assert.equal(field.disabled,false);assert.equal(button('send').disabled,true);
@@ -222,7 +225,7 @@ test('crop follow-ups retain complete exchanges and show authored Your turn befo
   } finally {s.dom.window.close();}
 });
 
-test('Study sends a staged photo with its chapter question only after Send', async () => {
+test('Study sends a photo-only question with Enter', async () => {
   const s = surface(), {w, button, el} = s;
   try {
     button('open-study').click();
@@ -235,7 +238,8 @@ test('Study sends a staged photo with its chapter question only after Send', asy
     el('question').dispatchEvent(paste);
     assert.ok(el('attachments').querySelector('img'));
     assert.equal(s.uploads.length, 0);
-    button('send').click(); await s.grant();
+    el('question').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+    await s.grant();
     assert.equal(s.uploads.length, 1);
     const rpc = s.rpcs.find(r => r.method === 'study_question');
     const request = JSON.parse(rpc.payload);

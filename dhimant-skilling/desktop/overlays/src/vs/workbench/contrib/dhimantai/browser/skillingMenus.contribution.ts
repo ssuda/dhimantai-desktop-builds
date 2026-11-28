@@ -2,7 +2,10 @@
 
 import { localize, localize2 } from '../../../../nls.js';
 import { MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
-import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+import { ContextKeyExpr, setConstant } from '../../../../platform/contextkey/common/contextkey.js';
+
+// The Learning sidebar is Home. Show it at launch, before the learning extension activates.
+setConstant('dhimantai.customDesktop', true);
 
 const file = MenuId.for('dhimantai.learningFile');
 const edit = MenuId.for('dhimantai.learningEdit');

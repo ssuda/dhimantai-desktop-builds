@@ -18,6 +18,9 @@ export class LessonRuntimeJournal {
     if (this.runs.some(run => run.interactive))
       return 'This history includes interactive input and cannot be restored. Choose Start fresh to run your saved cells.';
   }
+  get nonInteractiveRuns(): LessonRun[] {
+    return this.runs.filter(run => !run.interactive);
+  }
   async load() {
     await LessonRuntimeJournal.writes.get(this.file);
     try {

@@ -2,6 +2,9 @@ name: Windows desktop installer acceptance
 on:
   workflow_call:
     inputs:
+      environment:
+        type: string
+        default: staging
       arch:
         type: string
         required: true
@@ -13,6 +16,7 @@ jobs:
     runs-on: ${{ inputs.arch == 'x64' && 'windows-2022' || 'windows-11-arm' }}
     timeout-minutes: 20
     env:
+      CLIENT_ENVIRONMENT: ${{ inputs.environment }}
       PYTHONUTF8: '1'
     steps:
       - name: Require desktop build repository
@@ -33,7 +37,7 @@ jobs:
         run: |
           $receipts = @(Get-ChildItem artifacts/dhimantAI-*.json)
           if ($receipts.Count -ne 1) { throw 'Expected one build receipt' }
-          python dhimant-skilling/desktop/verify_windows_install.py $receipts[0].FullName
+          python dhimant-skilling/desktop/verify_windows_install.py $receipts[0].FullName $env:CLIENT_ENVIRONMENT
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:

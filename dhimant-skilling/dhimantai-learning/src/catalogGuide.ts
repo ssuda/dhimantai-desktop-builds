@@ -43,16 +43,16 @@ export function catalogGuide({button, courses, lessons, signedIn, desktop, short
     {id:'learning', title:'Learning', icon:'campus', content:`
       <p>Open a chapter with <strong>Instructor</strong> for a guided lesson. Bring a specific question or code snippet to <strong>Doubt Solver</strong>.</p>
       <p>Lesson coverage records what Instructor has taught. Your grade and certificate depend on the course assessments.</p>
-      <h4>Find a desktop action</h4><p>Open the Command Palette, type part of an action name such as “course terminal”, then press Enter. The button searches dhimantAI commands.</p>
+      <h4>Find a desktop action</h4><p>Open the Command Palette, type part of an action name such as “course catalog”, then press Enter. The button searches dhimantAI commands.</p>
       ${button('Find a Command (' + shortcut + ')', 'commands', '', false, true)}`},
     {id:'code', title:'Run Your Code', icon:'engineering', content:`
-      <p>Run code and tests in your course container. In a notebook, choose <strong>Runtime → Open course terminal</strong> to run commands in the course folder.</p>
+      <p>Run code and tests in your course container. In a notebook, add a Bash cell to run shell commands or a SQL cell to query PostgreSQL.</p>
       <h4>Prepare your course container</h4><p>Allow about 5–10 minutes for the first setup. Download speed and course size can extend this. Keep an internet connection and follow any Podman installation prompts. Later runs reuse the container.</p>
       ${names.length ? `<label for="guide-course">Course</label><select id="guide-course"${setup?.busy ? ' disabled' : ''}>${names.map(name => `<option>${escape(name)}</option>`).join('')}</select><p id="guide-ready" class="small" role="status"></p>` : ''}
       <p class="small muted">${!signedIn ? 'Sign in, then choose a course to set up.' : loading ? 'Loading your courses…' : !lessons ? 'Refresh purchases to reload your course list.' : !names.length ? 'Join a course with an accessible coding chapter to use setup. ERPNext sets up its own sandbox when you open the guided tour.' : 'Setup checks the course packages and runs a sample program.'}</p>
       ${button('Set Up Course Container', signedIn ? 'setupCourse' : 'signInForSetup', '', signedIn && (!names.length || !!setup?.busy))}
       <p id="guide-setup-status" role="status">${escape(setup?.message ?? '')}</p>
-      <p class="small muted">Project Instructor is included with active chapter access. Project time estimates exclude setup.</p>`},
+      <p class="small muted">Active chapter access includes Project Mentor. Project time estimates exclude setup.</p>`},
     {id:'access', title:'Access & Payments', icon:'bundles', content:`
       ${accessFacts(courses)}
       <p>For individual learners, free courses include every chapter. Join a paid course to open its free first chapter. A one-time purchase unlocks the rest through Razorpay checkout in your browser.</p>

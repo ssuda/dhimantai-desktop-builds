@@ -17,10 +17,10 @@ export class CoachSurface implements vscode.WebviewViewProvider, vscode.Disposab
     // VS Code 1.106 introduced secondarySidebar. Keep the adjacent editor on older hosts.
     const [major, minor] = vscode.version.split('.').map(Number);
     this.native = major > 1 || (major === 1 && minor >= 106);
-    this.ready = vscode.commands.executeCommand('setContext', 'dhimantai.nativeCoach', this.native);
-    void vscode.commands.executeCommand('setContext', 'dhimantai.legacyCoachOpen', false);
+    this.ready = vscode.commands.executeCommand('setContext', 'dhimantai.nativeBuildStudio', this.native);
+    void vscode.commands.executeCommand('setContext', 'dhimantai.buildStudioOpen', false);
     if (this.native) {
-      this.registration = vscode.window.registerWebviewViewProvider('dhimantai.coachView', this,
+      this.registration = vscode.window.registerWebviewViewProvider('dhimantai.buildStudioView', this,
         { webviewOptions: { retainContextWhenHidden: true } });
     }
   }
@@ -33,6 +33,8 @@ export class CoachSurface implements vscode.WebviewViewProvider, vscode.Disposab
     return this.renderer === renderer ? (this.view ?? this.tab)?.webview : undefined;
   }
 
+  selected(renderer: CoachRenderer) { return this.renderer === renderer; }
+
   select(renderer: CoachRenderer) {
     if (this.renderer === renderer) return;
     this.renderer = renderer;
@@ -43,6 +45,7 @@ export class CoachSurface implements vscode.WebviewViewProvider, vscode.Disposab
     this.listener?.dispose();
     const host = this.view ?? this.tab;
     this.listener = host && this.renderer ? this.renderer(host.webview) : undefined;
+    if (host && !this.renderer) host.webview.html = '';
   }
 
   resolveWebviewView(view: vscode.WebviewView) {
@@ -54,22 +57,22 @@ export class CoachSurface implements vscode.WebviewViewProvider, vscode.Disposab
     this.render();
   }
 
-  async show(preserveFocus: boolean) {
+  async show(preserveFocus: boolean, explicit = false) {
     const change = ++this.visibilityChange;
     await this.ready;
     if (change !== this.visibilityChange) return;
     const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    if (active instanceof vscode.TabInputWebview && !active.viewType.endsWith('dhimantai.coach')) return;
-    await vscode.commands.executeCommand('setContext', 'dhimantai.legacyCoachOpen', true);
+    if (!explicit && active instanceof vscode.TabInputWebview && !active.viewType.endsWith('dhimantai.buildStudio')) return;
+    await vscode.commands.executeCommand('setContext', 'dhimantai.buildStudioOpen', true);
     if (change !== this.visibilityChange) return;
     if (preserveFocus && this.visible) return;
     if (this.view) return this.view.show(preserveFocus);
     if (this.native) {
-      await vscode.commands.executeCommand('dhimantai.coachView.focus', { preserveFocus });
+      await vscode.commands.executeCommand('dhimantai.buildStudioView.focus', { preserveFocus });
       return;
     }
     if (this.tab) return this.tab.reveal(this.tab.viewColumn, preserveFocus);
-    this.tab = vscode.window.createWebviewPanel('dhimantai.coach', 'Project Instructor',
+    this.tab = vscode.window.createWebviewPanel('dhimantai.buildStudio', 'Project Mentor',
       { viewColumn: vscode.ViewColumn.Two, preserveFocus },
       { enableScripts: true, localResourceRoots: [this.media], retainContextWhenHidden: true });
     this.tab.onDidChangeViewState(({webviewPanel}) => {
@@ -80,10 +83,18 @@ export class CoachSurface implements vscode.WebviewViewProvider, vscode.Disposab
     this.render();
   }
 
-  async hide() {
+  async hide(renderer?: CoachRenderer) {
+    if (renderer && !this.selected(renderer)) return;
     ++this.visibilityChange;
     this.tab?.dispose();
-    await vscode.commands.executeCommand('setContext', 'dhimantai.legacyCoachOpen', false);
+    await vscode.commands.executeCommand('setContext', 'dhimantai.buildStudioOpen', false);
+  }
+
+  release(renderer: CoachRenderer) {
+    if (!this.selected(renderer)) return;
+    this.renderer = undefined;
+    this.render();
+    void this.hide();
   }
 
   dispose() {

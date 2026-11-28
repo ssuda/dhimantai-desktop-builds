@@ -26,6 +26,7 @@ test('start command validates new and reopened projects and reports setup failur
           opened.push(JSON.parse(await readFile(uri!.fsPath, 'utf8')).folders[0].path);
         },
       },
+      workspace: {workspaceFolders: [{}]},
       window: {showInformationMessage: async () => 'Open in New Window', showErrorMessage: async (message: string) => { errors.push(message); }},
     };
     // Exercise the shipped command with real repositories and a recording VS Code API boundary.

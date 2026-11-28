@@ -55,7 +55,7 @@ def notarize(path, env, reports):
 
 def verify_app(app, env, run, cwd):
     # Require Apple's Developer ID certificate OID and the configured team.
-    requirement = ('anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists '
+    requirement = ('=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists '
                    f'and certificate leaf[subject.OU] = "{env["APPLE_TEAM_ID"]}"')
     run(['codesign', '--verify', '--deep', '--strict', '-R', requirement, app], cwd)
     run(['xcrun', 'stapler', 'validate', app], cwd)

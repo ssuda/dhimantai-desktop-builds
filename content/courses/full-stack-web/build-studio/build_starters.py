@@ -19,7 +19,7 @@ FILES = (
 
 def build(output):
     output.mkdir(parents=True, exist_ok=True)
-    definition = json.loads((HERE / 'entries.json').read_text())
+    definition = json.loads((HERE.parents[3] / 'agent/course_projects/data/equipment_desk.json').read_text())
     release = json.loads((HERE.parent / 'runtime.json').read_text())['courses'][definition['course']]
     definition['editor_extensions'] = release['configuration']['editor_extensions']
     env = dict(os.environ, GIT_AUTHOR_DATE='2026-11-21T00:00:00Z',
@@ -45,16 +45,25 @@ def build(output):
         with (tree / '.gitignore').open('a') as f:
             f.write('\nresources/js/dhimantai-cell-*.jsx\n')
         git('init', '-q', '-b', 'main')
+        commits = {}
         for entry in definition['entries']:
+            tag = entry['checkpoint']
+            if tag in commits:
+                entry['commit'] = commits[tag]
+                continue
+            if tag == 'application-v1':
+                shutil.copyfile(APP / 'app/Http/Controllers/LoanController.php', tree / 'app/Http/Controllers/LoanController.php')
+                (tree / 'tests').mkdir()
+                shutil.copyfile(HERE / 'check_checkout.py', tree / 'tests/check_checkout.py')
             if entry['id'] == 'php':
                 with (tree / 'routes/web.php').open('a') as f:
                     f.write("\nRoute::get('/items/{item}', fn (Item $item) => $item->only(['id', 'name', 'available']));\n")
             git('add', '.')
             git('commit', '-qm', entry['title'])
-            tag = entry['checkpoint']
             git('tag', tag)
-            entry['commit'] = git('rev-parse', 'HEAD')
+            entry['commit'] = commits[tag] = git('rev-parse', 'HEAD')
             git('bundle', 'create', str(output.resolve() / (tag + '.bundle')), 'refs/heads/main', 'refs/tags/' + tag)
+    shutil.copyfile(HERE / 'check_checkout.py', output / 'check_checkout.py')
     (output / 'entries.json').write_text(json.dumps(definition, indent=2) + '\n')
 
 

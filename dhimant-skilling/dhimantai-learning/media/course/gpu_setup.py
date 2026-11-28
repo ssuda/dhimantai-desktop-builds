@@ -145,7 +145,7 @@ def prepare(config):
             run([str(python), '-c', script], 1200, env=env, stdout=sys.stderr)
             (root / 'model').symlink_to(model, target_is_directory=True)
         for name, content in config['files'].items():
-            if name not in ('cells.py', 'sql_runtime.py', 'lab_scenarios.py', 'gpu_setup.py', 'cluster.py'):
+            if name not in ('cells.py', 'cell_shell.py', 'lesson_trace.py', 'sql_runtime.py', 'lab_scenarios.py', 'gpu_setup.py', 'cluster.py'):
                 raise ValueError('Unknown runtime asset')
             (root / name).write_bytes(base64.b64decode(content))
         freeze = output([str(uv), 'pip', 'freeze', '--python', str(python)], env=env)

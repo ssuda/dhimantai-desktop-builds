@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import * as vscode from 'vscode';
@@ -17,7 +18,8 @@ export async function run() {
   const root = vscode.workspace.workspaceFolders![0].uri.fsPath, parent = dirname(root);
   const engine = new CourseEngine(process.env.DHIMANTAI_PROJECT_PODMAN!, process.env.DHIMANTAI_PROJECT_CONTAINER!, parent);
   const savedEngine = CourseWorkspaces.prototype.forProject, savedRecord = CourseWorkspaces.prototype.recordFor;
-  const chat = Api.prototype.notebookCoach;
+  const chat = Api.prototype.notebookCoach, memory = Api.prototype.architectureMemory;
+  let failPracticeSync = true;
   let automatic = 0;
   const cdp = await connect();
   const ui = (expression:string) => cdp.webview(`d => {if (!d.getElementById('architecturePractice') || d.defaultView.frameElement?.id !== 'active-frame') return null; return (${expression})(d);}`);
@@ -45,17 +47,50 @@ export async function run() {
     CourseWorkspaces.prototype.forProject = async () => engine;
     CourseWorkspaces.prototype.recordFor = () => ({root,course:'Python',key:'architecture-test',account:session.user.id,
       environment:vscode.workspace.getConfiguration('dhimantai').get('environment','production')});
+    Api.prototype.architectureMemory = async function (project, event, course) {
+      if (project === 'market-checkout' && event.event === 'passed' && failPracticeSync) {
+        failPracticeSync = false;
+        throw new Error('Practice service offline');
+      }
+      return memory.call(this, project, event, course);
+    };
     Api.prototype.notebookCoach = async (_path, body:any) => {
       if (body.project_context.project_id==='field-dispatch') automatic++;
       return {guidance:'',prompt:'',line:null};
     };
     await vscode.commands.executeCommand('dhimantai.openProjectCoach', root);
     await wait('title','Checkout previews');
+    await wait('guide','Record your prediction');
+    assert.equal(await ui("d=>d.getElementById('architectureNext').hidden"),true);
     await click('hint'); await wait('architectureMemory','a tracing hint');
     await predict('pricing.py:6',2); await wait('architectureMemory','on your first prediction, with a tracing hint');
     await click('check'); await wait('checkState','failed');
     await saveSource(join(root,'pricing.py'), 'def price(cents, member):\n    return cents - cents // 10 if member else cents\n\ndef preview(cents, member, receipts):\n    return price(cents, member)\n\ndef checkout(cents, member, receipts):\n    total = price(cents, member)\n    receipts.append(total)\n    return total\n');
-    await click('check'); await wait('architectureMemory','repair passed with a tracing hint');
+    await click('check'); await wait('progressText','Completed locally');
+    await wait('completion','awaiting account sync');
+    await click('submitProject');
+    await wait('architectureMemory','repair passed with a tracing hint');
+    await wait('completion','Practice completion recorded');
+    assert.equal(await ui("d=>d.getElementById('checkpointDetails').open"),true);
+    await ui("d=>{d.getElementById('note').value='A preview leaves the ledger untouched. A purchase adds one receipt.';d.getElementById('saveDraft').click();return true;}");
+    await wait('saved','Reflection saved');
+    execFileSync('git',['-c','user.name=QA','-c','user.email=qa@example.test','commit','-am','Fix preview ledger side effect'],{cwd:root});
+    await vscode.commands.executeCommand('dhimantai.courseCatalog');
+    let catalogStatus = '';
+    for (let i=0; i<100 && !catalogStatus.includes('Completed locally'); i++) {
+      catalogStatus = await cdp.webview(`d => d.querySelector('[data-project="market-checkout"] .project-status')?.textContent`) ?? '';
+      if (!catalogStatus.includes('Completed locally')) await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.match(catalogStatus, /Completed locally · final checks passed/);
+    await vscode.commands.executeCommand('dhimantai.openProjectCoach', root);
+    await wait('checkState','Current files · passed');
+    await wait('saved','Reflection saved');
+    const repaired = readFileSync(join(root,'pricing.py'),'utf8');
+    await saveSource(join(root,'pricing.py'),repaired + '\n# Revisit this repair.\n');
+    await wait('checkState','Earlier files');
+    assert.equal(await ui("d=>d.getElementById('architectureNext').hidden"),true);
+    await saveSource(join(root,'pricing.py'),repaired);
+    await wait('progressText','Completed locally');
     const second = join(parent,'field-dispatch');
     // Exercise the normal companion-project command. Keep Electron in the test window when it opens the workspace.
     const execute = vscode.commands.executeCommand, info = vscode.window.showInformationMessage;
@@ -101,6 +136,6 @@ export async function run() {
     writeFileSync(process.env.DHIMANTAI_TEST_RESULTS!, JSON.stringify({results:[{step:'guided practice and independent transfer',pass:true}],record},null,2));
   } finally {
     CourseWorkspaces.prototype.forProject=savedEngine; CourseWorkspaces.prototype.recordFor=savedRecord;
-    Api.prototype.notebookCoach=chat; cdp.close();
+    Api.prototype.notebookCoach=chat; Api.prototype.architectureMemory=memory; cdp.close();
   }
 }

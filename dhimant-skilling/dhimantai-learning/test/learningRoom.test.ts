@@ -13,12 +13,19 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     {runScripts:'outside-only', url:'https://webview.example', pretendToBeVisual: true});
   const w = dom.window, sent: any[] = [], chats: any[] = [], rpcs: any[] = [], rooms: Room[] = [];
   w.document.body.insertAdjacentHTML('afterbegin', lessonPicker);
-  let failSend = false;
+  let failSend = false, failRuntimeDelivery = true;
   const agent = {identity:'worker', isAgent:true, trackPublications:new Map()};
   class Room {
     listeners = new Map<string, Function>();
     remoteParticipants = new Map([['worker',agent]]);
-    localParticipant = {sendText: async (text: string, to: object) => { if (failSend) throw new Error('offline'); chats.push({text, to}); }, registerRpcMethod() {}, performRpc: async (rpc: any) => { rpcs.push(rpc); return 'ok'; }};
+    localParticipant = {sendText: async (text: string, to: object) => { if (failSend) throw new Error('offline'); chats.push({text, to}); }, registerRpcMethod() {}, performRpc: async (rpc: any) => {
+      rpcs.push(rpc);
+      if (rpc.method === 'on_postgresql_runtime' && failRuntimeDelivery) {
+        failRuntimeDelivery = false;
+        throw new Error('connection interrupted');
+      }
+      return 'ok';
+    }};
     constructor() { rooms.push(this); }
     on(name: string, fn: Function) { this.listeners.set(name,fn); }
     async connect() {} async disconnect() {} registerTextStreamHandler() {}
@@ -51,7 +58,8 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     selectLesson(w, sent.at(-1).attempt);
     assert.equal(sent.at(-1).mode,'tutor');
     assert.equal(sent.at(-1).chapterId,chapterId);
-    assert.equal(w.document.querySelector<HTMLButtonElement>('#lesson-list .lesson-outline:last-of-type > button')!.disabled,true);
+    const lockedLesson = w.document.querySelector<HTMLButtonElement>('#lesson-list .lesson-outline:last-of-type > button')!;
+    assert.match(lockedLesson.textContent!, /Functions · Locked · View pricing/);
     assert.equal(w.document.getElementById('tutor')!.hidden,true);
     assert.equal(w.document.getElementById('end')!.hidden,true);
     const grant = {type:'grant',attempt:sent.at(-1).attempt,url:'unused',token:'unused',chapterId};
@@ -90,7 +98,7 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     }
     assert.equal(rooms.length, 1, 'follow-ups use the same Instructor session');
 
-    const code = 'if 0 <= i < len(fruits):\n    print(fruits[i])';
+    const code = 'fruits = ["apple", "banana", "cherry"]\ni = 2\nif 0 <= i < len(fruits):\n    print(fruits[i])';
     publish([
       'Why the index fails', '', '<details open><summary><b>Step 1: Valid indexes</b></summary>',
       '', 'A three-item list ends at index 2.', '', '```python', code, '```', '</details>',
@@ -117,7 +125,8 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     assert.equal(requested.action, 'run'); assert.equal(requested.source, source.state.doc.toString());
     const result = {type: 'codeResult', attempt: requested.attempt, snippet: requested.snippet,
       revision: requested.revision, request: requested.request};
-    const execution = {status: 'exited', exit_code: 0, stdout: 'edited\n', stderr: '', truncated: false};
+    const postgres_environment = {ps_available:false, pager_disabled:true, os_root:false};
+    const execution = {status: 'exited', exit_code: 0, stdout: 'edited\n', stderr: '', truncated: false, postgres_environment};
     post({...result, execution}, 'https://untrusted.example'); assert.equal(output.hidden, true);
     post({...result, execution}); assert.match(output.textContent!, /edited/);
     const prediction = editor.querySelector<HTMLTextAreaElement>('.practice-prediction')!;
@@ -155,7 +164,11 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     assert.equal(check.disabled, true, 'Check waits for its review after displaying execution');
     await new Promise(r => setTimeout(r, 0));
     assert.equal(check.disabled, false);
-    assert.equal(chats.at(-1).to.attributes.tutor_action_id, 'hint');
+    assert.equal(chats.at(-1).to.attributes.tutor_action_id, 'reviewNotebookRun');
+    const runtimeMessages = rpcs.filter(rpc => rpc.method === 'on_postgresql_runtime').map(rpc => JSON.parse(rpc.payload));
+    assert.equal(runtimeMessages.length, 2, 'the next run resends runtime facts after an interrupted delivery');
+    assert.ok(runtimeMessages[1].sequence > runtimeMessages[0].sequence);
+    assert.deepEqual(runtimeMessages[1].environment, postgres_environment);
     const help = JSON.parse(chats.at(-1).text.split('\n').slice(1).join('\n'));
     assert.equal(help.source, 'print(\"next\")');
     assert.equal(help.prediction, 'next'); assert.equal(help.run.output, 'next\n');
@@ -259,6 +272,55 @@ test('learning room accepts only host grants, renders agent Markdown and drops l
     field.value = 'What is an index?'; field.dispatchEvent(new w.Event('input')); send.click();
     await new Promise(r => setTimeout(r, 0));
     assert.equal(chats.at(-1).text, 'What is an index?', 'Ask instead sends a plain question');
+
+    // A message typed while an exercise editor holds unsent code goes to Instructor with that code.
+    const fifth = {is_question_prompt: true, tutor_checkpoint_id: 'checkpoint-5', tutor_answer_kind: 'code', tutor_practice_editor: {
+      question_id: 'checkpoint-5', checkpoint_id: 'checkpoint-5', language: 'cpp', starter: '',
+      question: 'Read a price and a count, print the total.', source: 'Your turn'}};
+    publish('## Your turn\nRead a price and a count, print the total.', fifth);
+    const fifthCode = EditorView.findFromDOM(html().lastElementChild!.querySelector<HTMLElement>('.cm-content')!)!;
+    field.value = 'What does cin do?'; field.dispatchEvent(new w.Event('input'));
+    assert.match(send.title, /^Ask Instructor/, 'an empty solution editor leaves the message bar as a question');
+    fifthCode.dispatch({changes: {from: 0, insert: 'int main() { return 0; }'}});
+    field.dispatchEvent(new w.Event('input'));
+    assert.match(send.title, /^Answer Instructor/);
+    assert.match(w.document.getElementById('composer-context')?.textContent ?? '', /code in “Your solution”/);
+    field.value = 'I wrote my code in the cell, check it once.'; send.click();
+    await new Promise(r => setTimeout(r, 0));
+    assert.match(chats.at(-1).text, /^TUTOR_TEXTBOOK_SUBMISSION\n/);
+    const viaChat = JSON.parse(chats.at(-1).text.split('\n').slice(1).join('\n'));
+    assert.equal(viaChat.checkpoint_id, 'checkpoint-5'); assert.equal(viaChat.source, 'int main() { return 0; }');
+    assert.equal(viaChat.explanation, 'I wrote my code in the cell, check it once.');
+    assert.equal(field.value, '');
+    assert.match(send.title, /^Ask Instructor/, 'once sent, the message bar asks again');
+
+    // Typing skip to an open check leaves it unassessed: its reveal is a status card with Continue and Retry.
+    publish('## Your turn\nWhich FROM does the gcc line sit under? Explain why.', {is_question_prompt: true, tutor_checkpoint_id: 'checkpoint-6', tutor_answer_kind: 'written'});
+    field.value = 'Skip'; field.dispatchEvent(new w.Event('input')); send.click();
+    await new Promise(r => setTimeout(r, 0));
+    assert.match(chats.at(-1).text, /^TUTOR_NOTEBOOK_ANSWER\n/, 'Instructor still receives the learner\'s own skip');
+    assert.equal(JSON.parse(chats.at(-1).text.split('\n').slice(1).join('\n')).answer, 'Skip');
+    publish('Skipped. **The line:** `RUN apt-get install -y gcc` belongs in the builder stage.', {tutor_feedback: true, tutor_checkpoint_id: 'checkpoint-6', tutor_verdict: 'incorrect', xp: 5});
+    const skipCard = html().lastElementChild as HTMLElement;
+    assert.equal(skipCard.dataset.entryKind, 'skipped');
+    assert.equal(skipCard.querySelector('.assessment-badge')!.textContent, 'Skipped · Unassessed');
+    assert.match(skipCard.querySelector('.skip-question')!.textContent!, /Which FROM/, 'the skipped check stays visible');
+    assert.match(skipCard.querySelector('.skip-solution')!.textContent!, /builder stage/);
+    assert.ok(skipCard.querySelector('.skip-solution code'), 'code in the solution keeps its formatting');
+    const skipContinue = skipCard.querySelector<HTMLButtonElement>('[data-skip-action="continue"]')!;
+    const skipRetry = skipCard.querySelector<HTMLButtonElement>('[data-skip-action="retry"]')!;
+    assert.equal(skipContinue.hidden, false); assert.equal(skipRetry.textContent, 'Retry with a fresh question');
+    assert.equal(w.document.querySelector('[data-skipped-checks]')?.textContent, 'Skipped checks (1)', 'skipped checks can be revisited later');
+    skipRetry.click(); await new Promise(r => setTimeout(r, 0));
+    assert.match(chats.at(-1).text, /fresh question that checks the same idea[\s\S]*Which FROM/, 'a retry asks a new question, not the revealed one');
+    assert.equal(skipContinue.isConnected ? skipContinue.hidden || skipContinue.disabled : true, true, 'an older card no longer continues the lesson');
+    publish('## Your turn\nWhich stage should install compilers?', {is_question_prompt: true, tutor_checkpoint_id: 'checkpoint-7', tutor_answer_kind: 'written'});
+    field.value = 'The builder stage, so the shipped image stays small.'; field.dispatchEvent(new w.Event('input')); send.click();
+    await new Promise(r => setTimeout(r, 0));
+    publish('Correct.', {tutor_feedback: true, tutor_checkpoint_id: 'checkpoint-7', tutor_verdict: 'correct'});
+    const retried = [...html().querySelectorAll<HTMLElement>('[data-entry-kind="skipped"]')].at(-1)!;
+    assert.equal(retried.querySelector('.assessment-badge')!.textContent, 'Retried · Assessed');
+    assert.equal(w.document.querySelector('[data-skipped-checks]'), null, 'an assessed retry clears the revisit list');
 
     const svg = '<svg viewBox="0 0 100 50" onload="bad()"><script>bad()</script>' +
       '<rect width="90" height="40" fill="url(https://untrusted.example)"/>' +

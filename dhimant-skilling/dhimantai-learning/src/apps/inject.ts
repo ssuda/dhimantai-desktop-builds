@@ -52,6 +52,7 @@ export interface Injection {
   cookie?: {name: string; value: string};
   /** Where to send the browser once everything is in place. */
   home: string;
+  prepare?: (sessionId: string) => Promise<string>;
 }
 
 /** The page script: runs on every document of the origin, before the application's own scripts. */
@@ -68,7 +69,7 @@ ${guarded}\n})();`;
 export async function injectPlayer(client: CdpClient, injection: Injection): Promise<string> {
   const {targetInfos} = await client.call('Target.getTargets') as {targetInfos: {targetId: string; type: string; url: string}[]};
   const pages = targetInfos.filter(t => t.type === 'page');
-  const target = pages.find(t => t.url.startsWith(injection.origin)) ?? (pages.length === 1 ? pages[0] : undefined);
+  const target = pages.find(t => t.url === injection.origin || t.url.startsWith(injection.origin + '/')) ?? (pages.length === 1 ? pages[0] : undefined);
   if (!target) throw new Error('The application tab is not open.');
   const {sessionId} = await client.call('Target.attachToTarget', {targetId: target.targetId, flatten: true}) as {sessionId: string};
   await client.call('Page.enable', {}, sessionId);
@@ -76,10 +77,12 @@ export async function injectPlayer(client: CdpClient, injection: Injection): Pro
     await client.call('Network.enable', {}, sessionId);
     const url = new URL(injection.origin);
     const {success} = await client.call('Network.setCookie', {name: injection.cookie.name, value: injection.cookie.value,
-      domain: url.hostname, path: '/', httpOnly: true, secure: url.protocol === 'https:', sameSite: 'Lax'}, sessionId) as {success?: boolean};
+      ...(url.protocol === 'https:' ? {url: injection.origin + '/'} : {domain: url.hostname}),
+      path: '/', httpOnly: true, secure: url.protocol === 'https:', sameSite: 'Lax'}, sessionId) as {success?: boolean};
     if (success === false) throw new Error('The browser did not accept the application session.');
   }
-  await client.call('Page.addScriptToEvaluateOnNewDocument', {source: pageScript(injection)}, sessionId);
+  const transport = await injection.prepare?.(sessionId);
+  await client.call('Page.addScriptToEvaluateOnNewDocument', {source: pageScript(transport ? {...injection, scripts: [transport, ...injection.scripts]} : injection)}, sessionId);
   await client.call('Page.navigate', {url: injection.origin + injection.home}, sessionId, 30000);
   return sessionId;
 }

@@ -70,12 +70,11 @@ def checkout(path, repository, commit):
 
 
 def icons(source):
-    from PIL import Image, ImageOps
-    with Image.open(REPO / 'website/upskill/assets/dhimantai-logo.png') as image:
-        image = ImageOps.pad(image.convert('RGBA'), (1024, 1024), color=(255, 255, 255, 0))
+    from PIL import Image
+    with Image.open(HERE / 'app-icon.png') as image:
         image.save(source / 'resources/darwin/code.icns')
         image.save(source / 'resources/win32/code.ico', sizes=[(n, n) for n in [16, 24, 32, 48, 64, 128, 256]])
-        image.resize((512, 512)).save(source / 'resources/linux/code.png')
+        image.resize((512, 512), Image.Resampling.LANCZOS).save(source / 'resources/linux/code.png')
 
 
 def bundle_extension(app_resources, vsix, configs):

@@ -6,7 +6,7 @@ import { Api } from './api';
 import { Auth } from './auth';
 import { Environment, EnvironmentName } from './environments';
 import { contextFor, jupyterMetadata, learnerCell } from './notebookCommands';
-import { bindDictation } from './dictation';
+import {bindNotebookMicrophone, cellVoiceMode, notebookMicrophoneScript} from './learningVoice';
 import { attachmentNote, practiceAttachments } from './practiceAttachments';
 import { CoachAudio, instructorComposer, audioPolicy } from './coachAudio';
 import { CoachSurface, CoachRenderer } from './coachSurface';
@@ -185,12 +185,14 @@ export class NotebookCoach implements vscode.Disposable {
 <p id="empty-chat" class="empty">Ask about your code, an error, or an idea. Instructor uses the selected cell and its latest run when you ask.</p>
 <div id="conversation" class="log" role="log" aria-label="Conversation with Instructor" aria-live="polite" aria-relevant="additions"></div>
 <p id="turn-status" role="status"></p>
-${instructorComposer(webview, this.media, nonce, {maxlength:600, sendId:'ask'})}</main><script nonce="${nonce}" src="${asset('coachMarkdown.js')}"></script><script nonce="${nonce}" src="${asset('learning-room/composer.js')}"></script><script nonce="${nonce}" src="${asset('notebookCoach.js')}"></script></body></html>`;
-    const dictation = bindDictation(webview, () => {
+${instructorComposer(webview, this.media, nonce, {maxlength:600, sendId:'ask'},notebookMicrophoneScript(vscode.env.appName))}</main><script nonce="${nonce}" src="${asset('coachMarkdown.js')}"></script><script nonce="${nonce}" src="${asset('learning-room/composer.js')}"></script><script nonce="${nonce}" src="${asset('notebookCoach.js')}"></script></body></html>`;
+    const dictation = bindNotebookMicrophone(webview, vscode.env, () => {
       const target = this.selection(), account = this.account;
       if (!target || !account || !this.surface.visible || !enabled()) return;
       const name = target.link.environment, service = () => this.service(name);
-      return {key:this.conversation.id, api:new Api(new Auth(this.secrets, () => name, service), service, account)};
+      return {key:this.conversation.id, environment:name, path:target.link.path,
+        mode:cellVoiceMode(target.link.question,target.link.language,target.cell.document.getText(),target.link.path,this.conversation.id,practiceLink(jupyterMetadata(target.cell.notebook),Object.keys(ENVIRONMENTS))),
+        api:new Api(new Auth(this.secrets, () => name, service), service, account)};
     });
     return vscode.Disposable.from(dictation, this.surface.bindRuntime(webview), this.audio.bind(webview, () => this.spokenReply()), webview.onDidReceiveMessage(m => {
       if (m?.type === 'ready') this.refresh();

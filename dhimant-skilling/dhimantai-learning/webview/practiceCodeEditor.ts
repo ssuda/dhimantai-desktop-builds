@@ -1,12 +1,17 @@
+import {deliveryBillFeedback, type BillSample} from '../src/deliveryBillPractice';
+import type { TestRow } from '../src/practiceConversation';
 import {pythonCompleteness} from '../src/pythonCompleteness';
 import { cellLanguage as codeLanguage, cellLanguages as codeLanguages, cellLanguageMismatch, observedRun, predictionPrompt, validCellInputs } from '../src/roomCode';
 import type { CodeAction, CodeResult, CodeSnapshot, Execution } from '../src/roomCode';
 import { splitArgs } from '../src/practiceIpynb';
+import { insertNewlineAndIndent } from '@codemirror/commands';
+import { CellTerminal } from './cellTerminal';
 import { InstructorCodeCell } from './instructorCodeCell';
 import type { NotebookDraft } from '../src/tutorNotebook';
 import { judgeVariation, predictionFeedback } from '../src/learningLoop';
 import type { Variation } from '../src/learningLoop';
 import type { LearnerTestCase, SkillStage } from '../src/skillPractice';
+import { lessonPrediction } from './lessonPrediction';
 import { SkillPractice } from './skillPractice';
 import { NativeDebugControls } from './nativeDebugControls';
 import type { DebugEvidence, NativeDebugAction, NativeDebugReply, NativeDebugState } from '../src/debugEvidence';
@@ -17,20 +22,22 @@ import { matchesExpectedError } from '../src/lessonExecution';
 export const STUCK_PAUSE_MS = 90000, FAILED_RUN_PAUSE_MS = 30000, HINT_GAP_MS = 120000;
 
 type Hooks = {
+  lessonSkills?: () => SkillStage[] | undefined;
   /** The assistant answering in this room right now (Instructor or Doubt Solver). */
   assistant?: () => string;
   post: (message: unknown) => void;
   observe: (snapshot: CodeSnapshot, run?: ReturnType<typeof observedRun>, guidance?: string) => void;
   submit: (text: string, display: string) => Promise<boolean>;
-  tutor?: (snapshot: CodeSnapshot, run: ReturnType<typeof observedRun> | undefined, message: string, prediction: string, stage?: SkillStage, debuggerState?: DebugEvidence) => Promise<boolean>;
+  tutor?: (snapshot: CodeSnapshot, run: ReturnType<typeof observedRun> | undefined, message: string, prediction: string, stage?: SkillStage, debuggerState?: DebugEvidence, review?: boolean) => Promise<boolean>;
   changed?: () => void;
+  /** A cell started or finished running code; read PracticeCodeEditors.running. */
+  runChanged?: () => void;
   executionFinished?: (key: string, snapshot: CodeSnapshot, run?: Execution, error?: string, expectedError?: string) => void;
   debug?: (snapshot:CodeSnapshot, action:NativeDebugAction) => Promise<NativeDebugReply>;
   /** Practice tools that only run code: sample tests, a Python step-through and a new input. */
   tool?: (snapshot: CodeSnapshot, tool: PracticeTool, cases?: LearnerTestCase[]) => Promise<ToolReply>;
 };
 export type PracticeTool = 'grade' | 'tests' | 'trace' | 'variation' | 'my_tests' | 'test_code';
-type TestRow = {id: string; verdict: string; stdin: string; expected: string; actual: string; stderr: string};
 type TraceStepView = {line: number; event: string; function: string; output: number | null; locals: Record<string, string>; exception?: string};
 export type ToolReply = {error?: string; tests?: TestRow[]; variation?: Variation; execution?:Execution;
   trace?: {steps: TraceStepView[]; stdout: string; stopped: string | null; error: string | null}};
@@ -67,6 +74,8 @@ export class PracticeCodeEditors {
     if (editor) void editor.runTool(tool);
   }
   solution() { return this.editors.find(editor => editor.task?.source === 'Practice exercise')?.context(); }
+  /** The open Instructor exercise whose solution editor holds code the learner has not sent yet. */
+  unsentExercise() { return this.editors.find(editor => editor.hasUnsentSolution()); }
   context(id: string) { return this.editors.find(editor => editor.id === id)?.context(); }
   elementForKey(key: string) { return this.editors.find(editor => editor.key === key)?.element; }
   selection() { return (this.focused ?? this.editors.find(editor => !!editor.task) ?? this.editors[0])?.context(); }
@@ -106,6 +115,7 @@ export class PracticeCodeEditors {
       if (this.focused === editor) this.focused = undefined;
     }
     this.editors = this.editors.filter(editor => !removed.includes(editor));
+    if (removed.length) this.hooks.runChanged?.();
   }
   restore(drafts: NotebookDraft[]) {
     this.clear();
@@ -120,6 +130,11 @@ export class PracticeCodeEditors {
       saved?.language ?? language, saved?.source ?? source, 'My notebook experiment', undefined, key, saved);
     this.editors.push(editor); body.append(editor.element);
   }
+  dedicatedSqlTerminal = false;
+  commandPrompt(language: string) {
+    if (language === 'sql') return this.dedicatedSqlTerminal ? '' : 'sql>';
+    return ['bash', 'zsh', 'pglab'].includes(language) ? '$' : '';
+  }
   connected = false;
   tutorBusy = false;
   aiEnabled = true;
@@ -131,7 +146,7 @@ export class PracticeCodeEditors {
   attempt = 0;
   activeCheckpoint = '';
   /** What the open Practice exercise offers; set when Practice is ready. */
-  practiceTools = {tests: 0, trace: false};
+  practiceTools: {tests:number; trace:boolean; boundaryPractice:boolean; billSamples?:BillSample[]} = {tests:0, trace:false, boundaryPractice:false};
   constructor(readonly hooks: Hooks) {}
   focus(editor: PracticeCodeEditor) { this.focused = editor; }
   markHelped(id: string) { this.editors.find(editor => editor.id === id)?.markHelped(); }
@@ -140,7 +155,7 @@ export class PracticeCodeEditors {
     this.activeCheckpoint = id;
     for (const editor of this.editors) editor.update();
   }
-  mount(body: HTMLElement, question: string, task?: unknown, cellId = 'cell-' + this.counter) {
+  mount(body: HTMLElement, question: string, task?: unknown, cellId = 'cell-' + this.counter, options?: { teachingExample?: boolean; instructorCommands?: boolean; db2Lab?: boolean; postgresCell?: {mount(parent:HTMLElement,key:string,source:string):void} }) {
     if (textbookTask(task)) {
       // Replaying a question moves its existing editor, preserving the learner's draft.
       const saved = this.editors.find(editor => editor.task?.checkpoint_id === task.checkpoint_id && editor.born === this.attempt);
@@ -162,18 +177,58 @@ export class PracticeCodeEditors {
       return; // Public examples stay read-only; exactly one solution editor, even without a fence.
     }
     let index = 0;
+    const cardHasOutput = !!body.querySelector('.lesson-output-heading, code.language-output');
     for (const code of body.querySelectorAll<HTMLElement>('pre > code')) {
       const label = Array.from(code.classList).find(c => c.startsWith('language-'))?.slice(9) ?? '';
       const language = codeLanguage(label);
       if (code.closest('.code-reading-only'))continue;
       if (!language || !code.textContent?.trim() || code.textContent.length > 12000) continue;
       const key = cellId + ':' + index++, draft = this.restored.get(key);
-      const editor = new PracticeCodeEditor(this, draft?.snippet ?? 'code-' + ++this.counter, draft?.language ?? language, draft?.source ?? code.textContent, question.slice(0, 6000), undefined, key, draft);
+      // Keep edited legacy work accessible when the same source is now shown as a reference.
+      if (options?.instructorCommands && (language === 'bash' || language === 'zsh'
+          || language === 'sql' && (options.db2Lab || this.dedicatedSqlTerminal))
+          && (!draft || draft.source === code.textContent && !draft.prediction && !draft.explanation && !draft.stdin
+            && !draft.files?.length && !draft.argv?.length && !draft.commandHistory?.length && !draft.promptSubmitted)) {
+        if (draft) this.writtenDrafts.set(key,draft);
+        continue;
+      }
+      // Db2 examples target the learner’s external instance, including its OS utilities.
+      if (options?.db2Lab && !draft && ['sql','bash','zsh'].includes(language)) continue;
+      if (options?.postgresCell && options.teachingExample && language === 'sql' && (!draft || draft.language === 'sql')) {
+        const card = code.closest<HTMLElement>('.code-block-card') ?? code.parentElement!;
+        const container = document.createElement('div'); card.replaceWith(container);
+        if (draft) this.writtenDrafts.set(key,draft);
+        options.postgresCell.mount(container,key,draft?.source ?? code.textContent); continue;
+      }
       const expected = code.parentElement!.dataset.demoError;
-      if (expected) editor.demonstration = {source:code.textContent, language, error:expected};
-      this.editors.push(editor);
-      code.parentElement!.replaceWith(editor.element);
+      const source = code.textContent;
+      const mountEditor = (target: Element) => {
+        const hidePrediction = !!options?.teachingExample && (!!expected || cardHasOutput || this.commandPrompt(language) === '$');
+        const editor = new PracticeCodeEditor(this, draft?.snippet ?? 'code-' + ++this.counter, draft?.language ?? language, draft?.source ?? source, question.slice(0, 6000), undefined, key, draft, !hidePrediction);
+        if (expected) editor.demonstration = {source, language, error:expected};
+        this.editors.push(editor);
+        target.replaceWith(editor.element);
+        return editor;
+      };
+      const card = code.closest('.code-block-card') ?? code.parentElement!;
+      // An excerpt of a larger program (it reads names that neither it nor an earlier cell defines) fails with
+      // NameError, so show it as reading code. Saved drafts and intended-error demonstrations stay runnable.
+      // Doubt Solver keeps such code editable and blocks Run until the missing setup is added.
+      const gap = !draft && !expected && !code.dataset.expectedError && language === 'python'
+        && this.hooks.assistant?.() !== 'Doubt Solver' ? this.excerptGap(source) : '';
+      if (gap) excerptCard(card, gap, () => mountEditor(card).code.view.focus());
+      else mountEditor(card);
     }
+  }
+  /** Why a Python block cannot run in the shared kernel by itself, or '' when it can. */
+  private excerptGap(source: string) {
+    // Jupyter kernels also provide display() and get_ipython().
+    const available = ['display', 'get_ipython', ...this.editors.flatMap(editor => editor.pythonDefinitions())];
+    const result = pythonCompleteness(source, available);
+    if (!result.syntax) return 'This is part of a larger program and is not complete Python on its own.';
+    if (!result.missing.length) return '';
+    const names = result.missing.slice(0, 4).join(', ') + (result.missing.length > 4 ? ', …' : '');
+    return `This is part of a larger program: it uses ${names}, which ${result.missing.length > 1 ? 'are' : 'is'} defined elsewhere, so running it alone would raise NameError.`;
   }
   update(connected: boolean, attempt: number, aiEnabled = this.aiEnabled) {
     if (this.aiEnabled !== aiEnabled) this.editors.forEach(editor => editor.cancelPending());
@@ -188,10 +243,12 @@ export class PracticeCodeEditors {
     this.stuckHints = value;
     for (const editor of this.editors) editor.update();
   }
-  clear() { this.writtenDrafts.clear(); this.editors.forEach(e => e.destroy()); this.editors = []; this.focused = undefined; this.activeCheckpoint = ''; }
+  clear() { this.writtenDrafts.clear(); this.editors.forEach(e => e.destroy()); this.editors = []; this.focused = undefined; this.activeCheckpoint = ''; this.hooks.runChanged?.(); }
   receiveDebug(message: {snippet:string;revision:number;state:NativeDebugState}) {
     this.editors.find(e => e.id === message.snippet)?.receiveDebug(message.revision,message.state);
   }
+  /** Whether any cell is running or checking code right now. */
+  get running() { return this.editors.some(e => e.running); }
   receive(message: CodeResult) {
     if (message.attempt === this.attempt) this.editors.find(e => e.id === message.snippet)?.receive(message);
   }
@@ -202,16 +259,53 @@ export class PracticeCodeEditors {
   }
 }
 
+/** Turn a rendered code card into a read-only excerpt with a way to open it as an editable cell anyway. */
+function excerptCard(card: Element, reason: string, open: () => void) {
+  card.classList.add('code-reading-only', 'code-excerpt');
+  const header = card.querySelector('.code-block-header');
+  const badge = document.createElement('small');
+  badge.className = 'code-block-badge';
+  badge.textContent = 'Excerpt · not runnable on its own';
+  header?.querySelector('.code-block-lang')?.after(badge);
+  const note = document.createElement('p');
+  note.className = 'code-excerpt-note';
+  note.textContent = reason + ' Run the complete lab cell for this step, or open this as a code cell and add what it needs.';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'quiet';
+  button.textContent = 'Open as code cell';
+  button.onclick = open;
+  note.append(' ', button);
+  card.append(note);
+}
+
 class PracticeCodeEditor extends InstructorCodeCell {
+  private readonly prompt = document.createElement('span');
+  private readonly transcript = document.createElement('pre');
+  private commands: string[] = [];
+  private historyPosition = 0;
+  private pendingInput = '';
+  private submittedSource?: string;
+  private clearingPrompt = false;
+  private promptRequest?: number;
+  private get source() { return this.submittedSource ?? this.code.value; }
   private input = document.createElement('textarea');
   private args = document.createElement('input');
   private interactive = document.createElement('input');
   private files:{name:string;content:string}[]=[];
-  private liveInput = document.createElement('input');
-  private inputControls = document.createElement('div');
+  private terminal?: CellTerminal;
+  private programInputs = document.createElement('details');
   private prediction = document.createElement('textarea');
   private runPrediction = '';
-  private get predictionLabel() { return predictionPrompt(this.language, this.code?.value ?? ''); }
+  private get predictionLabel() {
+    const label = predictionPrompt(this.language, this.code?.value ?? '');
+    return this.predictFirst && label === 'I expect the result to be' ? 'I expect this cell to display' : label;
+  }
+  private readonly lessonSkills?: SkillStage[];
+  private get predictFirst() { return this.language === 'python' && !!this.lessonSkills; }
+  private get showPredictionRow() { return this.predictFirst || this.allowPrediction; }
+  private get missingPrediction() { return this.predictFirst && !this.prediction.value.trim(); }
+  private readonly comparison = document.createElement('div');
   private skipPrediction = -1;
   private runCount = 0;
   private feedback = document.createElement('div');
@@ -238,6 +332,7 @@ class PracticeCodeEditor extends InstructorCodeCell {
   private tools = document.createElement('div');
   private toolButtons: Record<Exclude<PracticeTool, 'grade' | 'my_tests' | 'test_code'>, HTMLButtonElement> | undefined;
   private toolOutput = document.createElement('div');
+  private manualChecks = document.createElement('p');
   private toolBusy = false;
   private testsPassed = -1;
   private cleanRun = -1;
@@ -247,9 +342,12 @@ class PracticeCodeEditor extends InstructorCodeCell {
   private attemptVariation?: {variation: Variation; previousStdin: string; assisted: boolean};
   private debugging = false;
   private assistant() { return this.owner.hooks.assistant?.() ?? 'Instructor'; }
+  /** Names this cell can leave in the shared Python kernel, for judging whether a later block is an excerpt. */
+  pythonDefinitions() { return this.language === 'python' ? pythonCompleteness(this.code.value).definitions : []; }
   constructor(private owner: PracticeCodeEditors, readonly id: string, private language: string,
-      source: string, private question: string, readonly task?: TextbookTask, readonly key = id, draft?: NotebookDraft) {
-    super({id, key, language, languages: codeLanguages, source,
+      source: string, private question: string, readonly task?: TextbookTask, readonly key = id, draft?: NotebookDraft, private readonly allowPrediction = true) {
+    const submitted = !!owner.commandPrompt(language) && draft?.promptSubmitted;
+    super({id, key, language, languages: codeLanguages, source:submitted ? '' : source,
       title: task ? 'Your solution' : undefined,
       note: owner.runtime + (language === 'python' ? '. Python cells share variables until the runtime restarts.' : '. Cells share files. Use shell cells for project builds and package setup.'),
       changed: () => this.changed(), focused: () => owner.focus(this),
@@ -261,13 +359,26 @@ class PracticeCodeEditor extends InstructorCodeCell {
       },
     });
     const {heading, note, buffer, bar} = this;
+    this.prompt.className = 'command-prompt';
+    this.prompt.setAttribute('aria-hidden', 'true');
+    this.transcript.className = 'command-transcript';
+    this.transcript.setAttribute('aria-label', 'Previous commands and output');
+    this.commands = [...(draft?.commandHistory ?? [])];
+    if (submitted) this.submittedSource = source;
+    if (this.commands.length) this.transcript.textContent = this.commands.map(cmd => owner.commandPrompt(language) + ' ' + cmd).join('\n') + '\n';
+    this.historyPosition = this.commands.length;
+    buffer.prepend(this.transcript, this.prompt);
+    this.code.view.dom.addEventListener('keydown', event => this.consoleKey(event), true);
     this.born = owner.attempt;
+    this.lessonSkills = owner.hooks.lessonSkills?.();
+    this.resultBlock.append(this.comparison);
     this.actions.push(this.runButton);
     this.input.onfocus = () => this.owner.focus(this);
     this.input.rows = 2; this.input.maxLength = 4000; this.input.oninput = () => this.changed();
     const inputLabel = document.createElement('label'); inputLabel.textContent = 'Standard input (stdin)'; inputLabel.append(this.input);
-    const inputs = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = 'Program input';
-    this.args.maxLength=4000;this.args.placeholder = 'Arguments, for example --count "two words"'; this.args.oninput=()=>this.changed();
+    const inputs = this.programInputs; inputs.className = 'program-inputs'; const summary = document.createElement('summary'); summary.textContent = 'Program input';
+    this.args.maxLength=4000;this.args.className='program-field';this.args.placeholder = 'Arguments, for example --count "two words"'; this.args.oninput=()=>this.changed();
+    const argsLabel=document.createElement('label');argsLabel.className='program-field-label';argsLabel.append('Command-line arguments',this.args);
     this.interactive.type='checkbox'; this.interactive.checked=draft?.interactive??true; this.interactive.onchange=()=>this.changed();
     const interactiveLabel=document.createElement('label');interactiveLabel.append(this.interactive,'Accept input while running');
     const upload=document.createElement('input');upload.type='file';upload.multiple=true;upload.setAttribute('aria-label','Program files');
@@ -276,15 +387,9 @@ class PracticeCodeEditor extends InstructorCodeCell {
     upload.onchange=async()=>{const files=Array.from(upload.files??[]);if(files.length>20 || files.some(f=>f.size>128000) || files.reduce((n,f)=>n+f.size,0)>1000000){this.status.textContent='Choose up to 20 text/code files, each up to 128 KB and 1 MB total.';return;}
       this.files=await Promise.all(files.map(async f=>({name:f.name,content:await f.text()})));fileNames.textContent=this.files.map(f=>f.name).join(', ');this.changed();};
     const help=document.createElement('small');help.textContent='Cells share a notebook folder. Use %%writefile path/to/file to save a project file, then a Bash or Zsh cell to build, install packages, or run project tests.';
-    this.liveInput.placeholder='Input for the running program';this.liveInput.setAttribute('aria-label','Live program input');
-    const send=document.createElement('button');send.type='button';send.textContent='Send input';
-    send.onclick=()=>{this.owner.hooks.post({type:'cellControl',attempt:this.born,action:'input',value:this.liveInput.value});this.liveInput.value='';};
-    this.liveInput.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();send.click();}};
-    const eof=document.createElement('button');eof.type='button';eof.textContent='End input';eof.onclick=()=>this.owner.hooks.post({type:'cellControl',attempt:this.born,action:'input',value:null});
-    this.inputControls.append(this.liveInput,send,eof);this.inputControls.hidden=true;
     this.args.value=(draft?.argv??[]).map(a=>JSON.stringify(a)).join(' ');
     const browse=document.createElement('button');browse.type='button';browse.textContent='Notebook files…';browse.onclick=()=>this.owner.hooks.post({type:'cellFiles',attempt:this.born});
-    inputs.append(summary,browse,inputLabel,this.args,interactiveLabel,upload,fileNames,help,this.inputControls);
+    inputs.append(summary,browse,inputLabel,argsLabel,interactiveLabel,upload,fileNames,help);
     const practiceTask = task?.source === 'Practice exercise';
     const extraActions = document.createElement('div'); extraActions.className = 'practice-actions';
     for (const [action, label] of [['check', 'Review with ' + this.assistant()], ['coach', 'Explain code']] as const) {
@@ -299,6 +404,7 @@ class PracticeCodeEditor extends InstructorCodeCell {
     this.prediction.onfocus = () => this.owner.focus(this);
     // Predicting before running is the habit that turns runs into learning, so it stays in view above Run.
     const predictionLabel = document.createElement('label'); predictionLabel.className = 'predict-row';
+    predictionLabel.hidden = !this.showPredictionRow;
     predictionLabel.textContent = this.predictionLabel;
     this.prediction.placeholder = 'Your prediction, before you run';
     predictionLabel.append(this.prediction);
@@ -343,9 +449,11 @@ class PracticeCodeEditor extends InstructorCodeCell {
       const availability = document.createElement('small'); availability.className = 'sample-availability';
       bar.after(availability);
       this.toolOutput.className = 'practice-tool-output'; this.toolOutput.hidden = true;
-      this.element.insertBefore(this.toolOutput, this.status.nextSibling);
+      this.manualChecks.hidden = true; this.manualChecks.setAttribute('role', 'status');
+      this.status.after(this.manualChecks, this.toolOutput);
     }
     this.skills = new SkillPractice({
+      canExecute: () => !this.missingPrediction,
       changed: () => this.owner.hooks.changed?.(),
       useInput: stdin => {
         if (!this.current() || this.busy || this.toolBusy) return;
@@ -364,9 +472,9 @@ class PracticeCodeEditor extends InstructorCodeCell {
         finally { this.toolBusy = false; this.update(); }
       },
       runCode: () => { void this.runTestCode(); },
-    }, true, draft?.skills);
+    }, true, draft?.skills, this.lessonSkills);
     this.nativeDebug = new NativeDebugControls(action => { void this.debug(action); });
-    this.skills.tools.append(this.nativeDebug.element);
+    if (!this.lessonSkills || this.lessonSkills.includes('debug')) this.skills.tools.append(this.nativeDebug.element);
     this.reflection.append(this.skills.element);
     this.historical.hidden = true;
     const historyLabel = document.createElement('summary'); historyLabel.textContent = 'Earlier run and feedback';
@@ -375,9 +483,57 @@ class PracticeCodeEditor extends InstructorCodeCell {
       this.input.value = draft.stdin; this.prediction.value = draft.prediction;
       this.explanation.value = draft.explanation; this.helped = draft.helped;
     }
-    this.prediction.oninput = this.explanation.oninput = () => this.owner.hooks.changed?.();
+    this.explanation.oninput = () => this.owner.hooks.changed?.();
+    this.prediction.oninput = () => { this.update(); this.owner.hooks.changed?.(); };
     this.update();
   }
+  private consoleKey(event: KeyboardEvent) {
+    if (!this.owner.commandPrompt(this.language) || event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.shiftKey) {
+      if (event.key === 'Enter' && !this.busy && this.current()) {
+        event.preventDefault(); event.stopPropagation(); insertNewlineAndIndent(this.code.view);
+      }
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault(); event.stopPropagation();
+      if (event.repeat || this.busy || this.runButton.disabled || !this.code.value.trim()) return;
+      this.act('run');
+      if (this.busy === 'run') this.promptRequest = this.request;
+      return;
+    }
+    if (this.busy || !this.current() || !this.commands.length || !['ArrowUp','ArrowDown'].includes(event.key)) return;
+    const state = this.code.view.state;
+    const line = state.doc.lineAt(state.selection.main.head).number;
+    const up = event.key === 'ArrowUp';
+    if (up ? line !== 1 || this.historyPosition === 0 : line !== state.doc.lines || this.historyPosition >= this.commands.length) return;
+    event.preventDefault(); event.stopPropagation();
+    if (this.historyPosition === this.commands.length) this.pendingInput = this.code.value;
+    const next = this.historyPosition + (up ? -1 : 1);
+    const value = this.commands[next] ?? this.pendingInput;
+    this.code.view.dispatch({changes:{from:0,to:state.doc.length,insert:value},selection:{anchor:value.length}});
+    this.historyPosition = next;
+  }
+
+  private finishPrompt(source: string, run: Execution) {
+    const prefix = this.owner.commandPrompt(this.language);
+    const output = [run.stdout.trimEnd(), run.stderr.trimEnd(), run.exit_code ? 'Exit ' + run.exit_code : '',
+      run.truncated ? 'Output truncated.' : ''].filter(Boolean).join('\n');
+    this.transcript.textContent = ((this.transcript.textContent || '') + prefix + ' ' + source + '\n' + (output ? output + '\n' : '')).slice(-32000);
+    this.commands = [...this.commands, source].slice(-30);
+    while (this.commands.join('\n').length > 24000) this.commands.shift();
+    this.historyPosition = this.commands.length;
+    this.pendingInput = '';
+    this.submittedSource = source;
+    this.resultBlock.hidden = true;
+    this.transcript.hidden = false;
+    this.transcript.scrollTop = this.transcript.scrollHeight;
+    this.clearingPrompt = true;
+    try { this.code.view.dispatch({changes:{from:0,to:this.code.value.length,insert:''}}); }
+    finally { this.clearingPrompt = false; }
+    this.owner.hooks.changed?.();
+  }
+
   context() { return {snapshot:this.snapshot(), run:this.execution && observedRun(this.execution), prediction:this.execution ? this.runPrediction : this.prediction.value,
     focusLine:this.code.view.state.doc.lineAt(this.code.view.state.selection.main.head).number}; }
   focusLine(line: number) {
@@ -387,10 +543,11 @@ class PracticeCodeEditor extends InstructorCodeCell {
     this.element.scrollIntoView({block:'center'}); this.code.view.focus();
   }
   draft(): NotebookDraft {
-    return {key:this.key, snippet:this.id, language:this.language, source:this.code.value, stdin:this.input.value,argv:splitArgs(this.args.value),files:this.files,interactive:this.interactive.checked,
+    return {key:this.key, snippet:this.id, language:this.language, source:this.source, ...(this.submittedSource !== undefined ? {promptSubmitted:true as const} : {}), ...(this.commands.length ? {commandHistory:this.commands} : {}), stdin:this.input.value,argv:splitArgs(this.args.value),files:this.files,interactive:this.interactive.checked,
       prediction:this.prediction.value, explanation:this.explanation.value, helped:this.helped, skills:this.skills.snapshot()};
   }
   invalidateRun() {
+    this.manualChecks.hidden = true;
     this.skills.invalidate();
     this.execution = undefined;
     if (!this.resultBlock.hidden) {
@@ -403,7 +560,7 @@ class PracticeCodeEditor extends InstructorCodeCell {
     if (this.attemptVariation) this.attemptVariation.assisted = true;
     this.owner.hooks.changed?.();
   }
-  private async askTutor(stage?: SkillStage, skillMessage?: string, debuggerState?: DebugEvidence) {
+  private async askTutor(stage?: SkillStage, skillMessage?: string, debuggerState?: DebugEvidence, review = false) {
     if (!this.owner.hooks.tutor) return;
     const request = this.request;
     this.helped = true; this.owner.hooks.changed?.();
@@ -411,7 +568,7 @@ class PracticeCodeEditor extends InstructorCodeCell {
     try {
       const {snapshot, run, prediction} = this.context();
       const ok = await this.owner.hooks.tutor(snapshot, run,
-        skillMessage || 'Explain what this code does, starting with the selected line.', prediction, stage, debuggerState);
+        skillMessage || 'Explain what this code does, starting with the selected line.', prediction, stage, debuggerState, review);
       if (this.request === request) this.status.textContent = ok ? `Request sent to ${this.assistant()}.` : `Your request was not sent. Ask ${this.assistant()} again.`;
     } finally { if (this.request === request) { this.busy = undefined; this.update(); } }
   }
@@ -419,7 +576,7 @@ class PracticeCodeEditor extends InstructorCodeCell {
     this.busy = 'coach';
     this.status.textContent = `Asking ${this.assistant()} about this run…`;
     this.update();
-    void this.askTutor(undefined, 'Review the result shown for this run and suggest one new case to test or one next debugging step.');
+    void this.askTutor(undefined, 'Review the result shown for this run and suggest one new case to test or one next debugging step.', undefined, true);
   }
   receiveDebug(revision:number,state:NativeDebugState) {
     this.nativeDebug.receive(revision,state);
@@ -429,7 +586,7 @@ class PracticeCodeEditor extends InstructorCodeCell {
     this.update();
   }
   private async runTestCode() {
-    if (!this.owner.hooks.tool || !this.current() || this.busy || this.toolBusy || this.debugBusy) return;
+    if (this.missingPrediction || !this.owner.hooks.tool || !this.current() || this.busy || this.toolBusy || this.debugBusy) return;
     if (!this.languageMatches()) return;
     const revision = this.revision, request = ++this.request;
     this.owner.focus(this); this.toolBusy = true; this.beginRun(); this.update();
@@ -449,6 +606,7 @@ class PracticeCodeEditor extends InstructorCodeCell {
   }
   private async debug(action:NativeDebugAction) {
     if (!this.owner.hooks.debug || !this.current() || this.debugBusy || this.busy || this.toolBusy || (action === 'inspect' && !this.owner.aiEnabled)) return;
+    if (action === 'start' && this.missingPrediction) return;
     if ((action === 'start' || action === 'open') && !this.languageMatches()) return;
     const revision = this.revision;
     this.debugBusy = true; this.owner.focus(this); this.update();
@@ -466,10 +624,21 @@ class PracticeCodeEditor extends InstructorCodeCell {
       }
     } finally { this.debugBusy = false; this.update(); }
   }
-  private async submit() {
+  /** A lesson exercise (not Practice) whose current code differs from its starter and could be submitted now. */
+  hasUnsentSolution() {
+    return !!this.task && this.task.source !== 'Practice exercise' && this.born === this.owner.attempt
+      && !!this.submitButton && !this.submitButton.disabled && this.source.trim() !== this.task.starter.trim();
+  }
+  /** The message bar sends this editor's code with the learner's message, as one submission. */
+  async submitWithMessage(message: string) {
+    if (!this.hasUnsentSolution()) return false;
+    await this.submit(message);
+    return this.submitted;
+  }
+  private async submit(message = '') {
     if (!this.task || this.submitButton?.disabled) return;
     this.submitting = true; this.update();
-    const source = this.code.value, explanation = this.explanation.value;
+    const source = this.source, explanation = [this.explanation.value.trim(), message.trim()].filter(Boolean).join('\n\n').slice(0, 600);
     try {
       this.submitted = await this.owner.hooks.submit((this.task.source === 'Practice exercise' ? 'PRACTICE_NOTEBOOK_SUBMISSION\n' : 'TUTOR_TEXTBOOK_SUBMISSION\n') + JSON.stringify({
         checkpoint_id: this.task.checkpoint_id, question_id: this.task.question_id,
@@ -487,12 +656,13 @@ class PracticeCodeEditor extends InstructorCodeCell {
   private current() { return this.owner.connected && this.owner.attempt === this.born; }
   private snapshot(): CodeSnapshot {
     return {snippet: this.id, revision: this.revision, language: this.language,
-      source: this.code.value, stdin: this.input.value, question: this.question,argv:splitArgs(this.args.value),files:this.files,interactive:this.interactive.checked};
+      source: this.source, stdin: this.input.value, question: this.question,argv:splitArgs(this.args.value),files:this.files,interactive:this.interactive.checked};
   }
   private setLanguage(language: string) {
     if (this.languagePicker.disabled || !codeLanguage(language) || language === this.language) {
       this.languagePicker.value = this.language; return;
     }
+    this.commands = []; this.historyPosition = 0; this.submittedSource = undefined; this.transcript.textContent = '';
     this.language = language; this.languagePicker.value = language;
     this.code.setLanguage(language);
     this.element.setAttribute('aria-label', codeLanguages[language] + ' practice editor');
@@ -517,35 +687,53 @@ class PracticeCodeEditor extends InstructorCodeCell {
       this.runTitle.textContent = this.runTitle.textContent.replace('Live run', 'Earlier run');
   }
   private archiveResult() {
+    this.closeTerminal();
     if (!this.resultBlock.hidden || !this.feedback.hidden) {
       const earlier = document.createElement('div');
       this.markEarlierRun();
-      if (!this.resultBlock.hidden) earlier.append(this.resultBlock.cloneNode(true));
+      if (!this.resultBlock.hidden) {
+        const result = this.resultBlock.cloneNode(true) as HTMLElement;
+        result.querySelectorAll('.lesson-trace, .lesson-prediction button').forEach(node => node.remove());
+        earlier.append(result);
+      }
       if (!this.feedback.hidden) earlier.append(this.feedback.cloneNode(true));
       this.historical.append(earlier); this.historical.hidden = false;
       while (this.historical.children.length > 6) this.historical.children[1].remove();
     }
     this.resultBlock.hidden = this.output.hidden = this.feedback.hidden = true;
+    this.comparison.replaceChildren();
     this.output.textContent = ''; this.rich.replaceChildren(); this.feedback.replaceChildren();
+  }
+  private closeTerminal() {
+    if (!this.terminal) return;
+    this.terminal.dispose();
+    this.terminal = undefined;
   }
   private beginRun() {
     this.archiveResult();
+    this.manualChecks.hidden = true;
     this.cleanRun = -1; this.execution = undefined;
-    this.runPrediction = this.prediction.value.trim();
+    this.runPrediction = this.predictFirst ? this.prediction.value : this.prediction.value.trim();
     this.runTitle.textContent = `Live run · ${this.id} #${++this.runCount}`;
     this.runInput.textContent = runInputs(this.snapshot());
     this.runInput.hidden = !this.runInput.textContent;
   }
   private changed() {
+    if (this.clearingPrompt) return;
+    this.submittedSource = undefined;
+    this.promptRequest = undefined;
+    this.historyPosition = this.commands.length;
     this.owner.focus(this);
+    if (this.predictFirst) this.prediction.value = '';
     if (this.task?.source === 'Practice exercise') this.submitted = false;
+    this.toolOutput.hidden = true;
     ++this.revision; ++this.request; this.busy = undefined; this.execution = undefined;
     this.archiveResult();
     this.owner.invalidateRuns();
     this.owner.hooks.changed?.();
     const row = this.element.querySelector('.predict-row');
     if (row?.firstChild) row.firstChild.textContent = this.predictionLabel; // Follows the code: print vs result.
-    this.status.textContent = `Edited. Enter your prediction in “${this.predictionLabel}”, then Run.`;
+    this.status.textContent = this.owner.commandPrompt(this.language) ? 'Enter to run. Shift+Enter adds a line.' : `Edited. Enter your prediction in “${this.predictionLabel}”, then Run.`;
     this.update();
     if (!this.current()) return;
     this.owner.hooks.post({type: 'codeChanged', attempt: this.born, ...this.snapshot()});
@@ -581,8 +769,13 @@ class PracticeCodeEditor extends InstructorCodeCell {
       this.reviewRun();
       return;
     }
+    if (this.missingPrediction && (action === 'run' || action === 'check')) {
+      this.status.textContent = 'Enter your prediction before running this cell.';
+      this.prediction.focus();
+      return;
+    }
     // Predict before Check, as in Practice. A second press skips, so it never blocks.
-    if (action === 'check' && !this.prediction.value.trim() && this.skipPrediction !== this.revision) {
+    if (this.showPredictionRow && action === 'check' && !this.prediction.value.trim() && this.skipPrediction !== this.revision) {
       this.skipPrediction = this.revision;
       this.status.textContent = `Enter your prediction in “${this.predictionLabel}” before running, or press Review with ${this.assistant()} again to skip.`;
       this.prediction.focus();
@@ -601,7 +794,7 @@ class PracticeCodeEditor extends InstructorCodeCell {
     this.observe(undefined, action === 'coach' || action === 'check');
     if (this.owner.hooks.tutor && (action === 'coach' || action === 'observe')) { void this.askTutor(); return; }
     this.owner.hooks.post({type: 'codeAction', attempt: this.born, request: this.request,
-      action: this.owner.hooks.tutor ? 'run' : action, message: '', prediction: action === 'run' ? '' : this.prediction.value.trim(),
+      action: this.owner.hooks.tutor ? 'run' : action, message: '', prediction: action === 'run' && !this.predictFirst ? '' : this.prediction.value.trim(),
       ...this.snapshot()} satisfies CodeAction);
     this.update();
   }
@@ -613,8 +806,32 @@ class PracticeCodeEditor extends InstructorCodeCell {
     }
     if (result.event) {
       const event=result.event;
-      if(event.kind==='stream'){this.resultBlock.hidden=this.output.hidden=false;this.output.textContent=(this.output.textContent+event.text).slice(-200000);}
-      if(event.kind==='input'){this.inputControls.hidden=false;this.inputControls.closest('details')!.open=true;this.liveInput.focus();}
+      if (event.kind === 'terminal') {
+        if (!this.terminal) {
+          const focus = document.activeElement;
+          const focusTerminal = focus === this.code.view.contentDOM || focus === this.runButton
+            || focus === document.body;
+          this.output.hidden = true;
+          this.resultBlock.hidden = !this.rich.childElementCount;
+          const initialText = event.mode === 'stdin' ? this.output.textContent ?? ''
+            : (this.transcript.textContent ?? '') + '$ ' + this.code.value + '\n';
+          this.terminal = new CellTerminal(this.buffer, initialText, control => {
+            this.owner.hooks.post({type:'cellControl', attempt:this.born, action:'terminal', id:event.id, control});
+          });
+          this.note.textContent = this.owner.runtime;
+          if (this.busy === 'run' && this.owner.commandPrompt(this.language)) this.promptRequest = this.request;
+          if (focusTerminal) this.terminal.focus();
+        }
+        if (event.data) this.terminal.write(event.data);
+        return;
+      }
+      if (event.kind === 'stream') {
+        if (this.terminal) this.terminal.write(event.text.replace(/\r?\n/g, '\r\n'));
+        else {
+          this.resultBlock.hidden = this.output.hidden = false;
+          this.output.textContent = (this.output.textContent + event.text).slice(-200000);
+        }
+      }
       if(event.kind==='display'){
         this.resultBlock.hidden=false;
         const data=event.data;
@@ -624,6 +841,10 @@ class PracticeCodeEditor extends InstructorCodeCell {
       }
       return;
     }
+    const returnToCommand = this.terminal?.element.contains(document.activeElement);
+    this.closeTerminal();
+    const entered = this.promptRequest === result.request;
+    this.promptRequest = undefined;
     const demo = this.demonstration;
     const expected = demo && this.code.value.trimEnd() === demo.source.trimEnd() && this.language === demo.language
       ? demo.error : undefined;
@@ -633,6 +854,7 @@ class PracticeCodeEditor extends InstructorCodeCell {
     if (result.execution) {
       this.execution = result.execution;
       const run = result.execution;
+      this.showManualChecks();
       const failed = run.status !== 'exited' || run.exit_code !== 0;
       if (run.runtime_target) this.runTitle.append(' · ' + run.runtime_target + ' · ' + this.language);
       const label = run.status === 'compile_error' ? `Compilation failed (exit code ${run.exit_code}).`
@@ -641,6 +863,10 @@ class PracticeCodeEditor extends InstructorCodeCell {
       this.output.textContent = outputHeading + label + '\n' + (run.stdout || (this.language === 'sql' ? '(No query results)' : '(No standard output)'))
         + (run.stderr ? '\n' + run.stderr : '') + (run.truncated ? '\nOutput was truncated.' : '');
       this.resultBlock.hidden = this.output.hidden = false;
+      if (this.predictFirst && this.runPrediction.trim()) {
+        this.comparison.replaceChildren(lessonPrediction(this.code.value, this.runPrediction, run));
+        this.output.hidden = !failed && !run.truncated && !run.stderr;
+      }
       this.observe();
       if (this.busy === 'check' && this.owner.hooks.tutor) { this.reviewRun(); return; }
       if (this.busy === 'run') {
@@ -682,13 +908,26 @@ class PracticeCodeEditor extends InstructorCodeCell {
           + (this.prediction.value.trim() ? ' Your prediction has not been verified.' : '') : result.error;
       }
     }
+    if (entered && result.execution && result.execution.status === 'exited') {
+      this.finishPrompt(this.code.value, result.execution);
+      this.status.textContent = (result.execution.exit_code ? 'Command exited with code ' + result.execution.exit_code + '. ' : '')
+        + 'Enter the next command. ↑ recalls a previous command.';
+    }
     this.update();
+    if (returnToCommand && !this.busy) this.code.view.focus();
   }
+  get running() { return this.busy === 'run' || this.busy === 'check'; }
   update() {
+    this.owner.hooks.runChanged?.();
     const active = this.current();
-    const note = this.element.querySelector(':scope > small');
-    if (note) note.textContent = codeLanguages[this.language] + ' · ' + this.owner.runtime
-      + (this.language === 'python' ? '. Python cells share variables until the runtime restarts.' : '. Cells share files; SQL and DBA cells keep database state until Restart runtime.');
+    const prompt = this.owner.commandPrompt(this.language);
+    this.buffer.classList.toggle('command-buffer', !!prompt);
+    this.prompt.textContent = prompt;
+    this.prompt.hidden = !prompt;
+    this.transcript.hidden = !prompt || !this.transcript.textContent;
+    this.note.textContent = this.terminal ? this.owner.runtime : codeLanguages[this.language] + ' · ' + this.owner.runtime
+      + (prompt ? '. Enter runs the command. Shift+Enter adds a line.' : this.language === 'python' ? '. Python cells share variables until the runtime restarts.' : '. Cells share files; SQL and DBA cells keep database state until Restart runtime.');
+    if (!this.terminal && this.predictFirst) this.note.append(' Enter a prediction and run the cell to step through its lines.');
     const writable = this.owner.attempt === this.born;
     this.languagePicker.disabled = !writable || !!this.task || !!this.busy || this.toolBusy || this.debugBusy || this.debugging;
     this.switchLanguage.disabled = this.languagePicker.disabled;
@@ -704,13 +943,19 @@ class PracticeCodeEditor extends InstructorCodeCell {
     }
     if (!this.owner.following && this.busy === 'observe') { ++this.request; this.busy = undefined; this.status.textContent = 'Automatic guidance is paused.'; }
     // A document-change callback runs inside CodeMirror's update; reconfigure only on a state change.
-    this.code.disabled = !writable; this.input.disabled = this.prediction.disabled = !writable;
-    this.inputControls.hidden=!(this.busy==='run'||this.busy==='check') || !this.interactive.checked;
+    this.code.disabled = !writable || !!prompt && (this.busy === 'run' || this.busy === 'check'); this.input.disabled = !writable;
+    this.prediction.disabled = !writable || this.predictFirst && (this.busy === 'run' || this.busy === 'check');
+    this.prediction.placeholder = this.predictFirst ? 'Predict the output, or enter “no output”' : 'Your prediction, before you run';
+    const predictRow = this.element.querySelector<HTMLElement>('.predict-row');
+    if (predictRow) predictRow.hidden = !this.showPredictionRow;
+    if (!active) this.closeTerminal();
     for (const button of this.actions) {
       const running=button.dataset.action==='run' && (this.busy==='run'||this.busy==='check');
       if(button.dataset.action==='run')button.textContent=running?'Stop':'Run';
-      button.disabled = (button.dataset.action==='run' && !running && !!incomplete) || !active || (!running && (!!this.busy || this.toolBusy))
-        || (button.dataset.action !== 'run' && (!this.owner.aiEnabled || this.owner.tutorBusy)) || (button.dataset.action !== 'coach' && !this.code.value.trim());
+      const needsPrediction = this.missingPrediction && !running
+        && (button.dataset.action === 'run' || button.dataset.action === 'check' && !this.execution && !incomplete);
+      button.disabled = needsPrediction || (button.dataset.action==='run' && !running && !!incomplete) || !active || (!running && (!!this.busy || this.toolBusy))
+        || (button.dataset.action !== 'run' && (!this.owner.aiEnabled || this.owner.tutorBusy)) || (button.dataset.action !== 'coach' && !(button.dataset.action === 'check' ? this.source : this.code.value).trim());
     }
     this.explanation.disabled = !writable || this.submitting;
     if (this.toolButtons) {
@@ -724,18 +969,18 @@ class PracticeCodeEditor extends InstructorCodeCell {
       this.toolButtons.trace.hidden = !tools.trace;
       this.toolButtons.tests.disabled = !idle || !tools.tests; this.toolButtons.trace.disabled = !idle;
       // A new input comes after the sample tests pass (or a clean run when there are none).
-      const ready = tools.tests ? this.testsPassed === this.revision : this.cleanRun === this.revision;
+      const ready = !tools.boundaryPractice && (tools.tests ? this.testsPassed === this.revision : this.cleanRun === this.revision);
       this.toolButtons.variation.disabled = !idle || !ready || !!this.attemptVariation;
       this.toolButtons.variation.hidden = !ready && !this.attemptVariation;
       this.toolButtons.variation.title = ready ? 'Predict what your program prints for new input, with no help'
         : tools.tests ? 'Pass the sample tests on this version first' : 'Run this version cleanly first';
     }
-    this.nativeDebug.update(this.revision,active,this.owner.aiEnabled && !this.owner.tutorBusy,this.debugBusy || !!this.busy || this.toolBusy,!!this.code.value.trim());
+    this.nativeDebug.update(this.revision,active,this.owner.aiEnabled && !this.owner.tutorBusy,this.debugBusy || !!this.busy || this.toolBusy,!!this.code.value.trim() && !this.missingPrediction);
     this.skills.update(active && !this.busy && !this.toolBusy && !!this.code.value.trim(), this.owner.aiEnabled && !this.owner.tutorBusy && !!this.owner.hooks.tutor, writable,
       active && !this.busy && !this.toolBusy && !this.debugBusy);
     if (this.submitButton) this.submitButton.disabled = !active || !this.owner.aiEnabled || !!this.busy || this.toolBusy
       || this.owner.tutorBusy || this.submitting || (this.submitted && this.task?.source !== 'Practice exercise') || this.task?.checkpoint_id !== this.owner.activeCheckpoint
-      || !this.code.value.trim() || this.code.value.length > 12000;
+      || !this.source.trim() || this.source.length > 12000;
     if (!active) { this.skills.invalidate(); this.dispose(); this.busy = undefined; this.status.textContent = 'This session is inactive.'; }
     else if (this.status.textContent === 'This session is inactive.') this.status.textContent = `Ready. Enter your prediction in “${this.predictionLabel}”, then Run.`;
     if (!this.owner.aiEnabled || !this.owner.following) this.dispose();
@@ -746,6 +991,10 @@ class PracticeCodeEditor extends InstructorCodeCell {
     if (!this.languageMatches()) return;
     if (!this.code.value.trim()) { this.status.textContent = 'Write your solution first.'; return; }
     const revision = this.revision;
+    if (tool === 'tests') {
+      this.testsPassed = -1;
+      this.toolOutput.hidden = true;
+    }
     this.toolBusy = true; this.update();
     this.status.textContent = tool === 'grade' ? 'Submitting for grading…' : tool === 'tests' ? 'Running the sample tests…' : tool === 'trace' ? 'Recording each step…' : 'Making a new input…';
     try {
@@ -758,24 +1007,48 @@ class PracticeCodeEditor extends InstructorCodeCell {
       if (reply.variation) this.startVariation(reply.variation);
     } finally { this.toolBusy = false; this.update(); }
   }
+  private showManualChecks() {
+    const samples = this.owner.practiceTools.billSamples;
+    if (this.task?.source !== 'Practice exercise' || !samples?.length) return;
+    this.manualChecks.textContent = deliveryBillFeedback(samples, this.execution);
+    this.manualChecks.hidden = false;
+  }
   private showTests(rows: TestRow[]) {
+    this.showManualChecks();
     const passed = rows.filter(r => r.verdict === 'passed').length;
-    if (rows.length && passed === rows.length) this.testsPassed = this.revision;
+    const allPassed = rows.length > 0 && passed === rows.length;
+    this.testsPassed = allPassed ? this.revision : -1;
     const list = document.createElement('ul'); list.className = 'test-results';
     rows.forEach((row, i) => {
       const item = document.createElement('li'), ok = row.verdict === 'passed';
       item.textContent = `${ok ? '✓' : '✗'} Sample ${i + 1}: ${ok ? 'passed' : row.verdict.replace(/_/g, ' ')}`;
+      if (ok && row.call) item.append(' · ' + row.call + ' → ' + row.actual.trim());
       if (!ok) {
         const detail = document.createElement('pre');
-        detail.textContent = (row.stdin ? 'Input:\n' + row.stdin + '\n' : '') + 'Expected:\n' + row.expected + '\nYour program printed:\n' + (row.actual || '(nothing)')
+        detail.textContent = (row.stdin ? 'Input:\n' + row.stdin + '\n' : '') + 'Expected:\n' + row.expected + (row.call ? '\nYour function returned:\n' : '\nYour program printed:\n') + (row.actual || '(nothing)')
           + (row.stderr ? '\n' + row.stderr : '');
         item.append(detail);
       }
       list.append(item);
     });
     const title = document.createElement('strong'); title.textContent = `Sample tests: ${passed} of ${rows.length} passed`;
-    this.toolOutput.replaceChildren(title, list); this.toolOutput.hidden = false;
-    this.status.textContent = passed === rows.length ? 'All sample tests pass. Try a new input, with no help, to check your understanding.' : 'Compare what you expected with what your program printed.';
+    const scope = document.createElement('p');
+    scope.textContent = 'Sample tests are a quick check. They do not prove the whole solution is correct. Submit for grading to run hidden tests.';
+    this.toolOutput.replaceChildren(title, scope, list); this.toolOutput.hidden = false;
+    if (allPassed && this.owner.practiceTools.boundaryPractice) {
+      this.status.textContent = 'Your function returned the expected values when the sample runner called it.';
+      if (!this.owner.practiceTools.billSamples) {
+        const next = document.createElement('p');
+        next.textContent = 'Check the public calls and a boundary call of your own below the function. Print each result, choose Run, and compare it with your prediction.';
+        this.toolOutput.append(next);
+      }
+      const grade = document.createElement('button');
+      grade.type = 'button'; grade.className = 'quiet'; grade.textContent = 'Submit for grading';
+      grade.onclick = () => { void this.runTool('grade'); };
+      this.toolOutput.append(grade);
+      return;
+    }
+    this.status.textContent = allPassed ? 'All sample tests pass. Try a new input, with no help, to check your understanding.' : 'Compare what you expected with what your program printed.';
   }
   private showTrace(trace: NonNullable<ToolReply['trace']>) {
     const lines = this.code.value.split('\n');
@@ -827,7 +1100,9 @@ class PracticeCodeEditor extends InstructorCodeCell {
     this.toolOutput.replaceChildren(title, detail, restore); this.toolOutput.hidden = false;
   }
   cancelPending(message = 'Assistance settings changed. Run again for a current result.') {
+    this.closeTerminal();
     this.skills.invalidate();
+    this.testsPassed = -1; this.toolOutput.hidden = this.manualChecks.hidden = true;
     ++this.request; this.busy = undefined; this.execution = undefined;
     this.resultBlock.hidden = this.output.hidden = this.feedback.hidden = true;
     this.status.textContent = message;
@@ -835,6 +1110,7 @@ class PracticeCodeEditor extends InstructorCodeCell {
   }
   dispose() { clearTimeout(this.observationTimer); clearTimeout(this.guidanceTimer); }
   destroy() {
+    this.closeTerminal();
     this.skills.invalidate(); this.skills.update(false, false, false);
     this.nativeDebug.update(this.revision,false,false,false,false);
     this.dispose();

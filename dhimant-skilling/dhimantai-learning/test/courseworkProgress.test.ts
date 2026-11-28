@@ -43,7 +43,7 @@ test('later independent attempts are possible without erasing prior help records
   let rows = record([],{type:'open',id:'q',title:'Q',language:'python'});
   rows = record(rows,{type:'help',id:'q',level:2});
   assert.equal(helpSinceAssessment(rows[0]),true);
-  rows = record(rows,{type:'graded',id:'q',passed:2,total:5});
+  rows = record(rows,{type:'graded',declaration:'reported',id:'q',passed:2,total:5});
   assert.equal(helpSinceAssessment(rows[0]),false);
   assert.equal(rows[0].ladder[1],1);
   rows = record(rows,{type:'ask',id:'q'});
@@ -65,16 +65,16 @@ test('course screen gates claiming, preserves historical grades, escapes text an
   const grade: CourseGrade = {course_id:'python',course_title:'<script>Python',score:84,grade:'B',eligible:false,passed_count:1,required_count:2,
     exercise_score:90,project_score:80,policy:{description:'No final exam.',scope:'Unproctored.'},blockers:[],
     topics:[{topic:'Loops',score:50,independent:1,required_independent:2,ready:false}],requirements:[]};
-  let html=courseGradeHtml('nonce',grade,[],'Offline',1);
+  let html=courseGradeHtml('nonce',grade,[],'Offline',[{kind:'project',id:'shelf'}]);
   assert.match(html,/data-action="claim"[^>]*disabled/); assert.ok(!html.includes('<script>Python'));
-  assert.match(html,/Sync pending results/); assert.match(html,/Keep practising/); assert.ok(!html.includes('Start final exam'));
+  assert.match(html,/Project · shelf/); assert.match(html,/Sync pending results/); assert.match(html,/Keep practising/); assert.ok(!html.includes('Start final exam'));
   const paused = {kind:'project' as const, id:'shelf-reading', title:'Shelf reading', score:null, passed:false, gradable:false};
-  const requirements = courseGradeHtml('nonce', {...grade, requirements:[paused, {...paused, id:'shelf', title:'Shelf capstone'}]}, [], '', 0);
+  const requirements = courseGradeHtml('nonce', {...grade, requirements:[paused, {...paused, id:'shelf', title:'Shelf capstone'}]}, [], '', []);
   assert.match(requirements, /Paused on desktop/);
   assert.doesNotMatch(requirements, /data-action="project" data-id="shelf-reading"/);
   assert.match(requirements, /data-action="project" data-id="shelf"/);
   html=courseGradeHtml('nonce',{...grade,eligible:true,certificate_id:'c'},[{id:'c',course_id:'python',course_title:'Python',recipient_name:'Learner',
-    grade:'C',score:75,issued_at:'2026-11-10',revoked_at:null,policy_version:'coursework-v1'}],'',0);
+    grade:'C',score:75,issued_at:'2026-11-10',revoked_at:null,policy_version:'coursework-v1'}],'',[]);
   assert.match(html,/Grade C · 75\/100/); assert.ok(!html.includes('data-action="claim"'));
 });
 

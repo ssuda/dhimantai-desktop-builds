@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, mkdtemp, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { readFile, rename, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { withVerifiedDownload } from './resumableDownload';
 
 export const DESKTOP_RELEASES = 'https://dhimant.ai/upskill/releases.json';
 const MAX_INSTALLER = 1024 * 1024 * 1024;
@@ -107,7 +108,10 @@ export class DesktopUpdates {
       this.release = undefined;
       this.set({ status: 'checking', installed: this.target.version, message: 'Checking desktop updates…' });
       try {
-        const response = await this.fetcher(DESKTOP_RELEASES, { credentials: 'omit', redirect: 'error', cache: 'no-store',
+        const manifestUrl = this.target.environment === 'production'
+          ? 'https://dhimant.ai/upskill/releases-production.json'
+          : DESKTOP_RELEASES;
+        const response = await this.fetcher(manifestUrl, { credentials: 'omit', redirect: 'error', cache: 'no-store',
           signal: AbortSignal.any([this.abort.signal, AbortSignal.timeout(8000)]) });
         if (!response.ok || !response.body) throw new Error('Could not check desktop updates. Try again later.');
         const reader = response.body.getReader();
@@ -139,56 +143,36 @@ export class DesktopUpdates {
       const release = this.release, destination = this.path;
       if (this.state.status !== 'available' || !release || !destination) return;
       this.set({ ...this.state, status: 'downloading', retry: false, progress: 0, message: 'Downloading desktop update…' });
-      let temporary: string | undefined;
       try {
-        await mkdir(this.directory, { recursive: true });
-        temporary = await mkdtemp(join(this.directory, '.download-'));
-        let url = release.githubUrl;
         const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(15 * 60 * 1000)]);
-        let response: Response | undefined;
-        for (let redirects = 0; redirects <= 5; redirects++) {
-          response = await this.fetcher(url, { credentials: 'omit', redirect: 'manual', signal });
-          if (![301, 302, 303, 307, 308].includes(response.status)) break;
-          const location = response.headers.get('location'); await response.body?.cancel();
-          if (!location) throw new Error('The installer download has an invalid redirect.');
-          const next = new URL(location, url);
-          if (next.protocol !== 'https:' || next.username || next.password
-              || !['github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(next.hostname)) {
-            throw new Error('The installer download left the official release hosts.');
-          }
-          url = next.href;
-        }
-        if (!response?.ok || !response.body) throw new Error('Could not download the desktop installer. Try again.');
-        const partial = join(temporary, 'installer.part');
-        const file = await open(partial, 'wx');
-        const reader = response.body.getReader();
-        const hash = createHash('sha256'); let size = 0, lastProgress = -1;
-        try {
-          while (true) {
-            const { done, value } = await reader.read(); if (done) break;
-            size += value.length;
-            if (size > release.bytes) throw new Error('The installer size did not match the release. Nothing was installed.');
-            hash.update(value); await file.writeFile(value);
-            const progress = Math.floor(size / release.bytes * 100);
-            if (progress !== lastProgress) {
-              lastProgress = progress;
-              this.set({ ...this.state, progress, message: `Downloading desktop update… ${progress}%` });
-            }
-          }
-        } finally { await file.close(); await reader.cancel(); reader.releaseLock(); }
-        if (size !== release.bytes || hash.digest('hex') !== release.sha256) {
-          throw new Error('The installer checksum did not match the release. Nothing was installed.');
-        }
-        if (this.disposed) return;
-        await rename(partial, destination);
+        await withVerifiedDownload({
+          directory: this.directory, sha256: release.sha256, expectedBytes: release.bytes, maxBytes: release.bytes, signal,
+          request: headers => this.fetchInstaller(release.githubUrl, headers, signal),
+          progress: progress => this.set({ ...this.state, progress, message: `Downloading desktop update… ${progress}%` }),
+        }, path => rename(path, destination));
         this.set({ status: 'ready', installed: this.target.version, available: release.version,
           message: 'Installer verified and ready. Open it when you finish your lesson.' });
       } catch {
         // Do not expose signed GitHub redirect URLs or raw network diagnostics.
         this.set({ status: 'available', retry: true, installed: this.target.version, available: release.version,
           message: 'The installer could not be downloaded and verified. Retry the download; nothing was installed.' });
-      } finally { if (temporary) await rm(temporary, { recursive: true, force: true }).catch(() => {}); }
+      }
     });
+  }
+  private async fetchInstaller(url: string, headers: Record<string,string>, signal: AbortSignal) {
+    for (let redirects = 0; redirects <= 5; redirects++) {
+      const response = await this.fetcher(url, { credentials: 'omit', redirect: 'manual', headers, signal });
+      if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+      const location = response.headers.get('location'); await response.body?.cancel();
+      if (!location) throw new Error('Missing installer redirect.');
+      const next = new URL(location, url);
+      if (next.protocol !== 'https:' || next.username || next.password
+          || !['github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(next.hostname)) {
+        throw new Error('The installer download left the official release hosts.');
+      }
+      url = next.href;
+    }
+    throw new Error('Too many installer redirects.');
   }
   async installerPath(): Promise<string | undefined> {
     if (this.state.status !== 'ready' || !this.release || !this.path || this.disposed) return undefined;

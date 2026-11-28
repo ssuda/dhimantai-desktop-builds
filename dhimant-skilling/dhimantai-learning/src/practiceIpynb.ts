@@ -222,7 +222,7 @@ export function samplesMarkdown(rows: {id: string; verdict: string; given: strin
     timeout: 'Time limit exceeded', compile_error: 'Compilation error', not_run: 'Not run'} as Record<string, string>)[verdict] ?? verdict;
   return [`**Sample tests · ${passed} of ${rows.length} passed${earlier ? ' for your earlier code' : ''}**`, '',
     ...(earlier ? ['_You changed your code while the samples ran. Check samples again for the current code._', ''] : []),
-    'These are the published examples. Hidden tests may check more cases. Submit for grading to run them.', '',
+    'Sample tests are a quick check. They do not prove the whole solution is correct. Submit for grading to run hidden tests.', '',
     ...rows.map(r => `- ${r.verdict === 'passed' ? '✅' : '❌'} **${quote(r.id)}** · ${label(r.verdict)}\n\n` +
       block([r.given && 'Input: ' + r.given, 'Expected: ' + r.expected, r.verdict === 'passed' ? '' : 'Actual: ' + (r.actual || '(empty)'),
         r.stderr && r.verdict !== 'passed' ? 'Error: ' + r.stderr : ''].filter(Boolean).join('\n')).replace(/^/gm, '  '))].join('\n') + '\n';
@@ -251,7 +251,13 @@ export function gradingMarkdown(report: TestReport, options: {next?: string; ear
   const compile = report.cases.find(c => c.verdict === 'compile_error' && c.stderr)?.stderr ?? '';
   const lines = [`**Graded submission · ${report.passed} of ${report.total} tests passed**`, ''];
   if (options.earlier) lines.push('_These results are for your earlier code. You changed it while it was being graded._', '');
-  if (report.all_passed) lines.push('✅ Every test passed, including the hidden ones. This problem is solved.', '');
+  if (report.all_passed) {
+    lines.push('✅ Every test passed, including the hidden ones. This problem is solved.', '');
+    if (hidden.length > 0) {
+      const kinds = [...new Set(hidden.map(c => (c as {category?: string}).category).filter((c): c is string => !!c && c !== 'other'))];
+      lines.push(kinds.length ? `Hidden tests also checked: ${kinds.join(', ')}.` : 'Hidden tests also checked zero values, boundary cases, and large inputs.', '');
+    }
+  }
   lines.push(`- Published samples: ${report.public.passed} of ${report.public.total}`,
     `- Hidden tests: ${hidden.length - failedHidden.length} of ${hidden.length}`, '');
   if (failedPublic.length) lines.push(`Sample ${failedPublic.map(c => quote(c.id)).join(', ')} failed. Use Check samples to compare the output.`, '');

@@ -58,7 +58,7 @@ await build({entryPoints: [resolve(root, 'webview/audioControls.ts')], bundle: t
   outfile: resolve(outdir, 'audioControls.js'), format: 'iife', globalName: 'DhimantAudio',
   footer: {js: 'globalThis.DhimantAudio = DhimantAudio;'}, target: 'es2022'});
 await build({
-  entryPoints: [resolve(root, 'webview/room.ts'), resolve(root, 'webview/learningWorkspace.ts'), resolve(root, 'webview/courseNotes.ts')], bundle: true, minify: true,
+  entryPoints: [resolve(root, 'webview/room.ts'), resolve(root, 'webview/learningVoice.ts'), resolve(root, 'webview/learningWorkspace.ts'), resolve(root, 'webview/courseNotes.ts')], bundle: true, minify: true,
   outdir, target: 'es2022', assetNames: 'fonts/[name]', legalComments: 'eof',
   loader: {'.woff2': 'file', '.woff': 'file', '.ttf': 'file'},
 });
@@ -94,12 +94,12 @@ for (const source of [...readerCss.matchAll(/src:([^;}]+)/g)]) {
   readerCss = readerCss.replace(source[0], `src:url("data:font/woff2;base64,${bytes.toString('base64')}") format("woff2")`);
 }
 await writeFile(resolve(study, 'reader.css'), readerCss);
-const editorPackages = ['codemirror', 'style-mod', 'w3c-keyname', 'crelt'];
+const editorPackages = ['@xterm/xterm', '@xterm/addon-fit', '@xterm/headless', 'codemirror', 'style-mod', 'w3c-keyname', 'crelt'];
 for (const scope of ['@codemirror', '@lezer']) {
   for (const name of await readdir(resolve(root, 'node_modules', scope))) editorPackages.push(scope + '/' + name);
 }
 await writeFile(resolve(outdir, 'editor-licenses.txt'), (await Promise.all(editorPackages.map(async name =>
-  name + '\n\n' + await readFile(resolve(root, 'node_modules', name, 'LICENSE'), 'utf8')))).join('\n\n'));
+  name + '\n\n' + await readFile(resolve(root, 'node_modules', name === '@xterm/headless' ? '@xterm/xterm' : name, 'LICENSE'), 'utf8')))).join('\n\n'));
 const lessons = resolve(root, '../../content/courses/build-an-llm-from-scratch');
 const labs = resolve(root, 'media/course/labs');
 const computeCatalog=JSON.parse(await readFile(resolve(root,'media/course/lab_compute.json'),'utf8'));

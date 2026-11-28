@@ -35,6 +35,12 @@ export async function run() {
   const command = vscode.commands.executeCommand;
   const check = 'dhimantai.skilling.check', grade = 'dhimantai.skilling.grade', ask = 'dhimantai.skilling.ask';
   try {
+    if (process.platform === 'darwin') {
+      await page.waitForFunction(() => {
+        const area = document.querySelector('.monaco-workbench')?.getBoundingClientRect();
+        return area?.x === 0 && area.y === 0 && area.width === outerWidth && area.height === outerHeight;
+      }, undefined, {timeout: 10000});
+    }
     const session = await page.context().newCDPSession(page);
     // Electron only accepts the focused window's menu. Keep this disposable test window focused during automation.
     await session.send('Emulation.setFocusEmulationEnabled', {enabled:true});

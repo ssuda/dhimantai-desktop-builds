@@ -14,7 +14,7 @@ import type { LocalTestResult } from './localRunner';
 import { cellRun } from './notebookCoach';
 import { gradeLocally } from './notebookSubmission';
 import { exerciseResult, CourseworkResult, CourseworkHelp } from './courseworkProgress';
-import { helpSinceAssessment } from './helpRecord';
+import { grantedHelpLevel, helpSinceAssessment } from './helpRecord';
 import { PracticeAttachment, attachmentNote } from './practiceAttachments';
 import { notebookPrompt } from './notebookPrompt';
 import { contextFor, jupyterMetadata, learnerCell } from './notebookCommands';
@@ -220,9 +220,10 @@ export function registerPracticeInNotebook(host: PracticeHost): vscode.Disposabl
         return;
       }
       rememberLadderToken(coach.path, reply.ladder_token ?? ladderToken(coach.path));
-      if (target.practice) await host.note(account, helpLevel ? {type: 'help', id: link.questionId, level: reply.help_level ?? helpLevel} : {type: 'ask', id: link.questionId});
+      const level = grantedHelpLevel(helpLevel, reply.help_level);
+      if (target.practice) await host.note(account, level ? {type: 'help', id: link.questionId, level} : {type: 'ask', id: link.questionId});
       // Stronger help needs a run of code changed after this help.
-      if (helpLevel) s.countedSource = code;
+      if (level) s.countedSource = code;
       const prose = [reply.guidance, reply.prompt].filter(v => typeof v === 'string' && v.trim() && !/^(null|undefined)$/i.test(v.trim())).join('\n\n');
       // Quote the line Instructor points at, but never an empty box for a blank line.
       const quoted = typeof reply.line === 'number' && reply.line >= 1 && reply.line <= selectedLines.length
@@ -230,7 +231,6 @@ export function registerPracticeInNotebook(host: PracticeHost): vscode.Disposabl
       const where = quoted ? `Line ${reply.line}: ${quoted}` : '';
       const currentContext = currentSource() === code && s.runStart === runStart;
       s.lastReply = currentContext ? {stage, text: prose.slice(0, 1500)} : undefined;
-      const level = helpLevel ? reply.help_level ?? helpLevel : undefined;
       const response = prose || `${assistant} returned no guidance. Try asking again.`;
       const saved = await write(doc, 'tutor', tutorMarkdown(level ? `Step ${level} of ${MAX_HELP_LEVEL} · ${HELP_LEVELS[level - 1].label}` : heading,
         response, [!currentContext && 'This explanation refers to the code and run when you asked. They have since changed.', where].filter(Boolean).join('\n'), assistant), promptCell);
@@ -318,7 +318,7 @@ export function registerPracticeInNotebook(host: PracticeHost): vscode.Disposabl
         () => gradeLocally(() => api.gradingSuite(link.questionId), cases => host.tests(doc, link.language, code, cases), link.questionId));
       if (doc.isClosed) return;
       const before = host.records(account).find(r => r.id === link.questionId);
-      const all = await host.note(account, {type: 'graded', id: link.questionId, passed: report.passed, total: report.total});
+      const all = await host.note(account, {type: 'graded', id: link.questionId, passed: report.passed, total: report.total, declaration: choice.value});
       const topic = topicOf(link.questionId);
       const next = report.all_passed && topic ? nextExercise(topic.questions, all, link.questionId) : undefined;
       await write(doc, 'grading', gradingMarkdown(report, {next: next?.title, earlier: source(doc) !== code}));
@@ -419,7 +419,7 @@ export function registerPracticeInNotebook(host: PracticeHost): vscode.Disposabl
     const service = () => host.service(target.link.environment);
     const auth = new Auth(host.secrets, () => target.link.environment, service);
     const current = prompt = notebookPrompt(host.media, target.cell, assistant, target.editor.viewColumn,
-      new Api(auth, service, target.link.account || undefined));
+      new Api(auth, service, target.link.account || undefined), target.coach, target.practice ? target.link : undefined);
     const message = await current.result;
     if (prompt === current) prompt = undefined;
     if (!message || target.doc.isClosed || target.cell.document.isClosed) return;

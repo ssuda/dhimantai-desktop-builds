@@ -11,11 +11,11 @@ export function notebookRuntimeControls(webview: vscode.Webview, media: vscode.U
 <option value="colab">Google Colab · GPU labs</option>
 <option value="cloud">Cloud GPU / Jupyter server</option>
 <option value="jupyter">Your GPU / Jupyter server</option>
-<option value="terminal">Open course terminal</option><option value="setup">Set up / rebuild course</option>
+<option value="setup">Set up / rebuild course</option>
 </select><button id="new-notebook" class="secondary">New notebook</button></div>
-<p id="runtime-target" class="muted">Choose a course to prepare its workstation or open its terminal. Source files use Run code.</p>
+<p id="runtime-target" class="muted">Choose a course to prepare its workstation. Source files use Run code.</p>
 <p class="muted">Course container setup takes several minutes and needs internet access. Choose Set up / rebuild course to prepare it. For GPU labs, use Google Colab and run the course preflight. Cloud GPU and your own Jupyter server are also available. Inference Engineering students provide their own GPU access; compute costs are separate from the course fee.</p>
-<details><summary>How do I open the course terminal?</summary><p id="runtime-help">Course code and tests run in the course container. dhimantAI downloads and installs Podman, prepares course dependencies and checks execution. Follow any operating-system installation prompts. The Course Runtime terminal runs commands inside that container for every course language. Use the same container commands on Windows, macOS and Linux. Python notebooks can also connect to Google Colab or your own GPU through Jupyter. You write and save notebooks in VS Code; the selected kernel supplies execution. Select Another Kernel → Existing Jupyter Server connects your machine. Runtime selection alone does not verify a GPU.</p></details>
+<details><summary>Where does my code run?</summary><p id="runtime-help">Course code and tests run in the course container. dhimantAI downloads and installs Podman, prepares course dependencies and checks execution. Follow any operating-system installation prompts. Bash and SQL cells run commands inside the course container. Use the same container commands on Windows, macOS and Linux. Python notebooks can also connect to Google Colab or your own GPU through Jupyter. You write and save notebooks in VS Code; the selected kernel supplies execution. Select Another Kernel → Existing Jupyter Server connects your machine. Runtime selection alone does not verify a GPU.</p></details>
 <p id="runtime-status" role="status">No notebook selected.</p>
 </section><script nonce="${nonce}" src="${webview.asWebviewUri(vscode.Uri.joinPath(media, 'notebookRuntime.js'))}"></script>`;
 }
@@ -56,7 +56,7 @@ export function bindNotebookRuntime(webview: vscode.Webview, podman: (doc: vscod
       if (!['runtime', 'newNotebook'].includes(message?.type) || busy) return;
       const doc = notebook;
       if (message.type === 'runtime' && (!(typeof message.runtime === 'string' &&
-          (['colab', 'cloud', 'jupyter', 'podman', 'terminal', 'setup'].includes(message.runtime) || /^machine:[a-z][a-z0-9-]{0,62}$/.test(message.runtime))) ||
+          (['colab', 'cloud', 'jupyter', 'podman', 'setup'].includes(message.runtime) || /^machine:[a-z][a-z0-9-]{0,62}$/.test(message.runtime))) ||
           (doc ? doc.isClosed || message.uri !== doc.uri.toString() : message.uri || ['colab', 'cloud', 'jupyter'].includes(message.runtime)))) return;
       busy = true; status = message.type === 'newNotebook' ? 'Creating a notebook…' :
         message.runtime === 'colab' ? 'Opening Google Colab runtime setup…' :
@@ -67,11 +67,11 @@ export function bindNotebookRuntime(webview: vscode.Webview, podman: (doc: vscod
         if (message.runtime?.startsWith('machine:') && doc) {
           const target = message.runtime.slice(8);
           await vscode.commands.executeCommand('dhimantai.selectCourseMachine',doc.uri,target);
-          status = 'Ready · ' + target + '. New cells and terminals use this machine.';
+          status = 'Ready · ' + target + '. New cells use this machine.';
         }
-        else if (message.runtime === 'setup' || message.runtime === 'terminal' || (message.runtime === 'podman' && !doc)) {
-          const result = await vscode.commands.executeCommand(message.runtime === 'terminal' ? 'dhimantai.courseTerminal' : 'dhimantai.setupCourse', doc?.uri);
-          status = result ? message.runtime === 'terminal' ? 'Course terminal opened.' : 'Course workstation ready. Code execution verified.' : 'Course setup was not completed. Choose the runtime again to retry.';
+        else if (message.runtime === 'setup' || (message.runtime === 'podman' && !doc)) {
+          const result = await vscode.commands.executeCommand('dhimantai.setupCourse', doc?.uri);
+          status = result ? 'Course workstation ready. Code execution verified.' : 'Course setup was not completed. Choose the runtime again to retry.';
         }
         else if (message.type === 'newNotebook') await newNotebook();
         else if (message.runtime === 'colab') status = await useColabForNotebook(doc) ?? '';

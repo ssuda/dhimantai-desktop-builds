@@ -66,7 +66,8 @@ export function projectResultStatus(record: SavedProject, digest?: string, avail
   const changedGit = record.projectId === 'shelf' && git && (last.gitFingerprint
     ? last.gitFingerprint !== snapshot.gitFingerprint : git.state !== 'available' || git.branch !== last.git.branch ||
       git.head !== last.git.head || !last.git.dirty && git.changed_files.length > 0);
-  if (changedGit || digest && digest !== last.digest) return 'Changed since submission · submit again';
+  if (changedGit || digest && digest !== last.digest)
+    return record.projectId === 'market-checkout' ? 'Files changed · verify repair again' : 'Changed since submission · submit again';
   if (last.outcome === 'needs_work') return 'Needs work · final check did not pass';
   return last.evidence === 'reading_checks_and_self_report'
     ? 'Completed locally · reading self-report' : 'Completed locally · final checks passed';

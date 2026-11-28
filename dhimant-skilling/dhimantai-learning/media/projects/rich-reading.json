@@ -75,7 +75,7 @@
       "title": "3. Navigate into Console.print",
       "goal": "Find a method in a long file and identify its major calls without reading the entire file.",
       "opening": "Large files are navigable through symbols and questions. Focus on where arguments become renderable objects.",
-      "task": "From the caller, use Go to Definition if available. Otherwise Quick Open rich/console.py and search def print(. Coach's file link jumps there. Skim the signature and find _collect_renderables, render and buffer extension. Trace those calls for the plain string input.",
+      "task": "From the caller, use Go to Definition if available. Otherwise Quick Open rich/console.py and search def print(. The mentor's file link jumps there. Skim the signature and find _collect_renderables, render and buffer extension. Trace those calls for the plain string input.",
       "files": [
         "rich/console.py",
         "reading/examples.py",
@@ -111,7 +111,7 @@
       },
       "check": "rich:text",
       "expected": "Your trace links the caller's string to Text and distinguishes preparation from final output.",
-      "hint": "Place the cursor near render_str before asking Coach about it; the shared context will show that region. Trace only the markup=False route first.",
+      "hint": "Place the cursor near render_str before asking the mentor about it; the shared context will show that region. Trace only the markup=False route first.",
       "reflection": "What would change in the route if markup were enabled?",
       "nextAction": {
         "file": "rich/console.py",
@@ -265,8 +265,8 @@
         "rich/markup.py": "def render("
       },
       "check": "rich:test-markup",
-      "expected": "Markup tests run and your notes make the investigation reproducible. Coach help and a local checkpoint are not independent mastery or an official submission.",
-      "hint": "Search a literal input from a test, follow only the parser branch it triggers, and explain why its assertion follows. Ask Coach for one smaller step if the trace becomes too broad.",
+      "expected": "Markup tests run and your notes make the investigation reproducible. Mentor help and a local checkpoint are not independent mastery or an official submission.",
+      "hint": "Search a literal input from a test, follow only the parser branch it triggers, and explain why its assertion follows. Ask the mentor for one smaller step if the trace becomes too broad.",
       "reflection": "How would you begin the next unfamiliar repository using what worked here?",
       "nextAction": {
         "file": "tests/test_markup.py",

@@ -1,7 +1,7 @@
 import {spawn, ChildProcessWithoutNullStreams} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {randomUUID} from 'node:crypto';
-import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile, rename, rm, writeFile} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {programEnvironment, assertInCourseContainer, Toolchains, which} from './localRunner';
@@ -9,12 +9,18 @@ import type {CourseEngine} from './courseEngine';
 import type {Execution} from './api';
 import {RuntimePreparationError} from './runtimeErrors';
 
+import {ProgramStdin} from './programStdin';
+import {CellTerminalTranscript} from './cellTerminalTranscript';
+
+export type TerminalControl = {data:string} | {cols:number; rows:number};
 export type CellEvent = {kind:'stream'; stream:'stdout'|'stderr'; text:string}
+  | {kind:'terminal'; id:string; mode?:'stdin'; data?:string}
   | {kind:'phase'; phase:'preparing'|'running'}
   | {kind:'input'; prompt:string} | {kind:'display'; data:Record<string,string>};
 export interface CellOptions {
   argv?: string[]; files?: {name:string;content:string}[]; interactive?:boolean;
-  setup?:string; database?:'lab'; signal?:AbortSignal; event?:(event:CellEvent)=>void;
+  terminal?:boolean; postgresTerminal?:boolean;
+  trace?:boolean; observeFunction?:string; setup?:string; database?:'lab'; signal?:AbortSignal; event?:(event:CellEvent)=>void;
 }
 export interface CellTransport {target:string; start:()=>Promise<ChildProcessWithoutNullStreams>}
 
@@ -33,9 +39,9 @@ export class NotebookCells {
   private launching=false;
   private starting?:Promise<ChildProcessWithoutNullStreams>;
   private processes = new Map<ChildProcessWithoutNullStreams, Promise<void>>();
-  private pending?:{id:string; event?:(event:CellEvent)=>void; finish:(execution:Execution)=>void};
+  private pending?:{id:string; screen?:CellTerminalTranscript; stdin?:ProgramStdin; terminal:boolean; prompt:string; event?:(event:CellEvent)=>void; finish:(execution:Execution)=>void};
   constructor(private tools:()=>Toolchains, private engine?: (language:string)=>Promise<CourseEngine|undefined>,
-    private workspace?:(engine?:CourseEngine)=>Promise<string>, private timeout=0, private transport?:CellTransport) {}
+    private workspace?:(engine?:CourseEngine)=>Promise<string>, private timeout=0, private transport?:CellTransport, private instructorWorkspace=false) {}
   private async start(language:string) {
     const requestedGeneration=this.generation;
     const engine=await this.engine?.(language);
@@ -63,12 +69,18 @@ export class NotebookCells {
       const helper=join(folder,'.dhimantai-runtime');
       await mkdir(helper,{recursive:true});
       const script=join(helper,'cells.py');
-      await Promise.all(['cells.py', 'sql_runtime.py', 'lab_scenarios.py'].map(async file =>
-        writeFile(join(helper,file),await readFile(resolve(__dirname,'../../media/course',file)))));
+      // A terminal and a code cell can start together in this folder. Publish each complete helper atomically.
+      await Promise.all(['cells.py', 'cell_shell.py', 'lesson_trace.py', 'sql_runtime.py', 'lab_scenarios.py'].map(async file => {
+        const target = join(helper,file), temporary = target + '.' + randomUUID() + '.tmp';
+        try {
+          await writeFile(temporary, await readFile(resolve(__dirname,'../../media/course',file)));
+          await rename(temporary,target);
+        } finally {await rm(temporary,{force:true});}
+      }));
+      const args = engine && this.instructorWorkspace ? await engine.instructorCellArgs(folder)
+        : engine ? engine.execArgs(folder,'python',['-u',engine.path(script)]) : ['-u',script];
       if (generation!==this.generation) throw new Error('Notebook runtime restarted. Run again.');
-      const child=spawn(engine?.bin ?? python!,engine
-        ? engine.execArgs(folder,'python',['-u',engine.path(script)])
-        : ['-u',script],{cwd:folder,env:programEnvironment(),windowsHide:true});
+      const child=spawn(engine?.bin ?? python!,args,{cwd:folder,env:programEnvironment(),windowsHide:true});
       return this.attach(child);
     })();
     try{return await this.starting;}finally{this.starting=undefined;}
@@ -99,7 +111,25 @@ export class NotebookCells {
           const message=JSON.parse(line), pending=this.pending;
           if(!pending || pending.id!==message.id)return;
           if(message.kind==='done')pending.finish(message.execution);
-          else if(['stream','input','display'].includes(message.kind))pending.event?.(message);
+          else if (message.kind === 'terminal') {
+            pending.screen ??= new CellTerminalTranscript();
+            if (typeof message.data === 'string') pending.screen.write(message.data);
+            pending.event?.(message);
+          }
+          else if (message.kind === 'input' && pending.terminal) {
+            if (!pending.stdin) {
+              const echo = (data:string) => pending.event?.({kind:'terminal', id:pending.id, data});
+              pending.stdin = new ProgramStdin(echo, line => this.input(line), () => this.stop());
+              pending.event?.({kind:'terminal', id:pending.id, mode:'stdin'});
+            }
+            pending.stdin.prompt(pending.prompt);
+          } else if (['stream','input','display'].includes(message.kind)) {
+            if (message.kind === 'stream' && pending.terminal) {
+              pending.prompt = (pending.prompt + message.text).slice(-4000).split('\n').at(-1) ?? '';
+              pending.stdin?.prompt(pending.prompt);
+            }
+            pending.event?.(message);
+          }
         } catch {stopped('Invalid notebook runtime response. Restart the runtime to retry.');}
       });
       return child;
@@ -122,8 +152,15 @@ export class NotebookCells {
         this.pending?.finish({status:'timeout',exit_code:null,stdout:'',stderr:'Notebook cell timed out. Run the required cells again.',command:language,duration_seconds:this.timeout/1000,truncated:true});
         this.restart();
       },this.timeout):undefined;
-      this.pending={id,event:options.event,finish:execution=>{
+      this.pending={id,event:options.event,terminal:!!options.terminal,prompt:'',finish:async execution=>{
+        const screen = this.pending?.screen;
+        this.pending?.stdin?.dispose();
         clearTimeout(timer);options.signal?.removeEventListener('abort',abort);this.pending=undefined;
+        if (screen) {
+          const transcript = await screen.finish();
+          execution = {...execution, stdout:(execution.stdout + transcript.text).slice(-200000),
+            truncated:execution.truncated || !!transcript.truncated};
+        }
         resolve({...execution,...(this.target?{runtime_target:this.target}:{})});
       }};
       options.signal?.addEventListener('abort',abort,{once:true});
@@ -132,7 +169,40 @@ export class NotebookCells {
       event?.({kind:'phase',phase:'running'});
     });
   }
+  async postgresSocket() {
+    const result = await this.run('pglab', '', '', {database:'lab', postgresTerminal:true});
+    if (result.exit_code !== 0) throw new Error(result.stderr || 'Could not start the PostgreSQL lab.');
+    return result.stdout.trim();
+  }
+  async postgresClients(engine:CourseEngine) {
+    const socket = await this.postgresSocket();
+    const folder = this.folder;
+    if (!folder) throw new Error('The notebook runtime restarted.');
+    const environment = socket ? ['PGHOST='+socket, 'PGPORT=5432', 'PGDATABASE=postgres', 'PGUSER=postgres'] : [];
+    // A second PTY keeps psql connected while other notebook cells run against the same server.
+    return () => new NotebookCells(() => ({}), undefined, undefined, 0, {
+      target:engine.target,
+      start:async () => spawn(engine.bin, engine.execArgs(folder,'env', [
+        ...environment, 'python', '-u', engine.path(join(folder,'.dhimantai-runtime','cells.py')),
+      ]), {cwd:folder, env:programEnvironment(), windowsHide:true}),
+    });
+  }
   input(value:string|null){if(this.pending)this.child?.stdin.write(JSON.stringify({action:'input',id:this.pending.id,value})+'\n');}
+  terminal(id:string, control:TerminalControl) {
+    const run = this.pending;
+    if (!run || !(run.stdin || run.screen) || run.id !== id || !control || typeof control !== 'object') return;
+    if ('data' in control) {
+      if (typeof control.data !== 'string' || control.data.length > 4096) return;
+      if (run.stdin) { run.stdin.write(control.data); return; }
+      this.child?.stdin.write(JSON.stringify({action:'terminal', id, data:control.data})+'\n');
+    } else {
+      const {cols, rows} = control;
+      if (!Number.isInteger(cols) || cols < 2 || cols > 500 || !Number.isInteger(rows) || rows < 1 || rows > 200) return;
+      if (run.stdin) { run.stdin.resize(cols); return; }
+      run.screen!.resize(cols, rows);
+      this.child?.stdin.write(JSON.stringify({action:'terminal', id, cols, rows})+'\n');
+    }
+  }
   stop(){this.child?.stdin.write(JSON.stringify({action:'stop'})+'\n');}
   restart(){
     this.generation++; this.folder=undefined;

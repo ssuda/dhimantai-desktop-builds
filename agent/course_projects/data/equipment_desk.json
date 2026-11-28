@@ -1,0 +1,137 @@
+{
+  "course": "laravel-react-mysql",
+  "project": "equipment-desk",
+  "version": "1",
+  "items": [
+    "Camera",
+    "Tripod"
+  ],
+  "quantity": {
+    "min": 1,
+    "max": 20
+  },
+  "entries": [
+    {
+      "id": "request",
+      "checkpoint": "request-v1",
+      "title": "Follow a checkout",
+      "assignment": "Add a read-only route that returns one inventory item. Choose how to verify its response.",
+      "file": "routes/web.php",
+      "symbol": "Route::post",
+      "concept": "The React form sends a request. Laravel matches the URL to a route and passes the request to the controller.",
+      "task": "Run the desk, borrow two cameras and reload. Add a read-only route for one item. How can you check that it reads the right row?",
+      "chapter": "6050fa5c-6bfc-5532-a4b9-39e464db5810"
+    },
+    {
+      "id": "php",
+      "checkpoint": "php-v1",
+      "title": "Model stock in PHP",
+      "assignment": "Make checkout handle requests for available and unavailable stock. Choose how to test the result.",
+      "file": "app/Http/Controllers/LoanController.php",
+      "symbol": "function store",
+      "concept": "Laravel validates the form and returns its named fields in a PHP array. The item model represents one inventory row.",
+      "task": "Predict the response and remaining stock, then implement the decision in the controller.",
+      "demonstration": {
+        "before": "        // Decide whether the desk can record this checkout.",
+        "after": "        $quantity = (int) $fields['quantity'];\n        // Decide whether the desk can record this checkout."
+      },
+      "chapter": "70b4d92f-63de-53bb-affc-1307a9fd387e"
+    },
+    {
+      "id": "schema",
+      "checkpoint": "application-v1",
+      "title": "Design the inventory and loan tables in MySQL",
+      "file": "database/migrations/2026_01_01_000000_create_equipment_tables.php",
+      "symbol": "Schema::create('loans'",
+      "concept": "The items table gives each piece of equipment type a stable key. A loan stores the item key and its own quantity. The foreign key ties the rows together. A LEFT JOIN retains equipment with no loans. COUNT(*) on that join counts the unmatched item row, whereas COUNT(loans.id) counts actual loans. Use COALESCE on the sum when the desired result for an unused item is zero.",
+      "task": "Open Project Console, select MySQL and inspect SHOW CREATE TABLE loans. Run App, make a checkout and compare the items and loans rows. Write your report and include an item with zero loans.",
+      "assignment": "Write an inventory report with one row per item containing stock on hand, number of checkouts, and total units loaned. Verify it on an item with zero loans and another with two loans of different quantities.",
+      "checks": [
+        "An unused item appears once with zero checkouts and zero units loaned.",
+        "The count of checkout rows and sum of units are independently correct.",
+        "The report groups by stable item identity and includes the SQL and observed rows."
+      ],
+      "chapter": "34d9fc95-4cce-54aa-a875-bc408b5b5e0c"
+    },
+    {
+      "id": "validation",
+      "checkpoint": "application-v1",
+      "title": "Build a Laravel request contract",
+      "file": "app/Http/Controllers/LoanController.php",
+      "symbol": "validate(",
+      "concept": "Browser controls guide the person entering data. The server validates every request before writing. With Accept: application/json, Laravel returns a 422 response containing field errors. Route model binding resolves the item and produces a 404 for an unknown ID. A valid quantity can still exceed available stock, which the controller reports as 409.",
+      "task": "Trace a checkout in Run App. Add the optional purpose field to a new migration and the controller. Compare a missing purpose, a valid value and an 81-character value.",
+      "assignment": "Add an optional purpose field with an 80-character limit. Add a new reversible migration for the column, validate and persist the field, and send requests with a missing, valid and oversized purpose.",
+      "checks": [
+        "Existing rows remain readable after migration.",
+        "A valid purpose is stored and an omitted purpose is accepted.",
+        "An oversized purpose yields a field-specific 422 and no stock or loan changes."
+      ],
+      "chapter": "bd266003-8eea-5c89-b723-6ef46c9471fb"
+    },
+    {
+      "id": "transactions",
+      "checkpoint": "application-v1",
+      "title": "Prevent two checkouts from taking the last item",
+      "file": "app/Http/Controllers/LoanController.php",
+      "symbol": "function store",
+      "concept": "Reading the current value and writing a value computed in PHP leaves time for another request to change stock. The starter issues one UPDATE with an available >= quantity condition. InnoDB obtains a row lock and checks the condition as it applies each change. The affected row count decides whether the checkout may continue. The stock update and loan insert share one transaction, so an insert failure rolls the stock update back.",
+      "task": "Follow the available-stock update and the loan insert. Use two separate project terminal sessions on a disposable item with one unit. Record the winner, the losing response and the final rows. Then test a rollback.",
+      "assignment": "Demonstrate the last-unit case with two independent clients or SQL sessions. Also cause a loan insert to fail inside a disposable transaction after decrementing stock, roll it back, and reconcile the item and loan rows.",
+      "checks": [
+        "Competing requests can consume at most one last unit.",
+        "The losing attempt leaves stock and history consistent.",
+        "A failed insert followed by rollback restores the original stock."
+      ],
+      "chapter": "5e61e7c8-4c56-5011-99e8-8eec4a21945b"
+    },
+    {
+      "id": "react",
+      "checkpoint": "application-v1",
+      "title": "Connect a React form to Laravel",
+      "file": "resources/js/Desk.jsx",
+      "symbol": "preventDefault",
+      "concept": "The component renders items from state and keys each row by its database ID. The form handler prevents navigation, sends JSON and waits for the response before resetting the form. The Blade view supplies a CSRF token for the current session. A 409 triggers a fresh inventory read. A transient failure after sending a POST can leave the outcome unknown, so automatically replaying a checkout can create a second loan.",
+      "task": "Trace the submit handler in Desk.jsx. Add purpose to the form and display field errors beside the controls. Use Run App to rebuild your changes, then try a rejected checkout and correct it.",
+      "assignment": "Expose the optional purpose field in React. Render server field errors beside their controls and associate them with accessible descriptions. Preserve valid entries after both a 422 and a 409.",
+      "checks": [
+        "Keyboard users can label, submit and correct every input.",
+        "A rejection preserves the alias, purpose and requested quantity.",
+        "A successful checkout uses the remaining stock returned by the server and survives reload."
+      ],
+      "chapter": "ef868c75-e6f7-5d38-b44d-a97412fd3a2d"
+    },
+    {
+      "id": "testing",
+      "checkpoint": "application-v1",
+      "title": "Test HTTP behaviour against real MySQL",
+      "file": "tests/check_checkout.py",
+      "symbol": "def checkout",
+      "concept": "A useful integration test inspects independent evidence. The response status, a fresh GET and the loan count each check a different part of the request. Keep test records distinct from existing work and use a disposable database for destructive experiments. A test for a rejected checkout should establish both the error response and the absence of partial writes.",
+      "task": "Open the project terminal and run python3 tests/check_checkout.py. The test creates and removes its own inventory item. Extend it with a purpose boundary case and a persistence assertion, and show that it detects a temporary regression.",
+      "assignment": "Extend the integration check for your purpose field. Add one boundary value and one value just beyond it, then introduce a temporary persistence error and show that your test detects it. Restore the implementation.",
+      "checks": [
+        "The boundary test inspects stored purpose and quantity.",
+        "A rejected request cannot leave a new loan or decrement.",
+        "Two successive runs finish with the same result and preserve other records."
+      ],
+      "chapter": "338b3a77-116e-5ae0-837b-a5c43c8d9242"
+    },
+    {
+      "id": "capstone",
+      "checkpoint": "application-v1",
+      "title": "Deliver an equipment checkout and returns app",
+      "file": "routes/web.php",
+      "symbol": "Route::post",
+      "concept": "A return belongs to a particular loan. A second attempt to return the same loan must leave stock at the same value. A timestamp can represent a completed return, and a conditional update inside a transaction can tie that transition to restoring stock. Decide whether your service supports partial returns before choosing the schema. Document that decision in terms the operator can use.",
+      "task": "Build whole-loan returns, due dates and an overdue report in your desk. Use Run App to demonstrate a checkout, a return and a repeated return. Record the observed rows and your test evidence in the project README.",
+      "assignment": "Deliver a working checkout and whole-loan return flow with due dates and an overdue report. Demonstrate the real application to a reviewer who changes a due date and repeats a return.",
+      "checks": [
+        "A return restores the correct quantity exactly once.",
+        "The overdue report excludes completed returns and documents its date boundary.",
+        "The handoff includes migrations, build and run instructions, reproducible checks and one known limitation."
+      ],
+      "chapter": "81722c06-88bf-5c98-85ec-855d8eae5f45"
+    }
+  ]
+}

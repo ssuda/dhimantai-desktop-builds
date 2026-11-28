@@ -1,4 +1,5 @@
 import { CourseWorkspaces, CourseScope, notebookFile } from './courseWorkspace';
+import { exerciseLanguages } from './courseRecipe';
 import * as vscode from 'vscode';
 import { Api, ApiError, Chapter, Course, Language, GeneratedExercise, PracticeQuestion, QuestionPool } from './api';
 import { Auth } from './auth';
@@ -7,10 +8,11 @@ import { useColabForNotebook } from './colab';
 import { openNotebookKernelPicker } from './notebookKernelPicker';
 import { Environment, EnvironmentName } from './environments';
 import { ProjectResults, ProjectSummary } from './projectResults';
-import { byDifficulty, dueReviews, hardReady, onRecordsChanged, ProblemRecord, progressText, rememberTopic, sharedRecords, trend, trendText } from './helpRecord';
+import { byDifficulty, dueReviews, hardReady, onRecordsChanged, ProblemRecord, progressText, rememberTopic, sharedRecords, solvedHelp, trend, trendText } from './helpRecord';
 import { courseCoverage, coverageLabel } from './courseProgress';
 import { learnerRpc, PublicCatalog } from './learnerCatalog';
 import { CATALOG_PROJECTS, PROJECT_COURSES, projectCourseChoices } from './catalogProjects';
+import { checkGeneratedLocally, GENERATION_ATTEMPTS, withGenerationRetry } from './practiceNotebook';
 
 type Scope = { account: string; environment: EnvironmentName };
 type WorkstationTarget = string | vscode.Uri | Extract<Node, {kind: 'course'}> | {kind: 'bundledProject'; projectId: string};
@@ -106,8 +108,8 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
           item.tooltip = expired ? 'Your access to this course ended. Buy it again from the Course Catalog to continue.'
             : 'Purchase this course or a bundle to unlock this chapter.';
           item.accessibilityInformation = {label: `${node.chapter.name}, ${expired ? 'access ended. Buy the course again' : 'locked. Purchase to unlock'}`};
-          item.command = expired ? { command: 'dhimantai.courseCatalog', title: 'Buy this course again' }
-            : { command: 'dhimantai.pricing', title: 'View course pricing' };
+          item.command = {command:'dhimantai.courseCatalog', title:expired ? 'Buy this course again' : 'View course pricing',
+            arguments:[node.chapter.id]};
           return item;
         }
         const item = folder(node.chapter.name, 'book');
@@ -125,7 +127,8 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
         const records = sharedRecords(node.parent.account), solved = records.find(r => r.id === q.id)?.solved;
         // Hard is a stretch goal, not a lock: it stays openable.
         const stretch = !solved && q.difficulty?.toLowerCase() === 'hard' && !hardReady(node.siblings ?? [], records);
-        item.description = [solved ? (solved.help ? '✓ solved · needed help' : '✓ solved') : '', q.language, q.difficulty,
+        const completion = {reported:'✓ solved · with help', unknown:'✓ solved · help unspecified', none_reported:'✓ solved · without help'};
+        item.description = [solved ? completion[solvedHelp(solved)] : '', q.language, q.difficulty,
           stretch ? 'Try after 2 Medium solved independently' : ''].filter(Boolean).join(' · ');
         item.iconPath = new vscode.ThemeIcon(solved ? 'pass' : q.kind === 'written' ? 'note' : 'code');
         item.command = { command: 'dhimantai.openPracticeQuestion', title: 'Open practice exercise', arguments: [node] };
@@ -299,13 +302,13 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
         const legacy = courses.length > 0 && courses.every(course => course.project_coach === undefined);
         const action = 'Open Course Catalog';
         const choice = await vscode.window.showInformationMessage(
-          legacy ? 'This service version offers Project Instructor through the course titled Python. Open the Course Catalog to check access.'
-            : 'Project Instructor needs an accessible chapter. Start the companion course in the Course Catalog, or check your existing course using the account you joined with. An active free first chapter includes the Instructor.', action);
+          legacy ? 'This service version offers Project Mentor guidance through the course titled Python. Open the Course Catalog to check access.'
+            : 'Project Mentor guidance needs an accessible chapter. Start the companion course in the Course Catalog, or check your existing course using the account you joined with. An active free first chapter includes project guidance.', action);
         if (choice === action) await vscode.commands.executeCommand('dhimantai.courseCatalog', legacy ? 'python' : PROJECT_COURSES[project.id]);
         return;
       }
       const choice = await vscode.window.showQuickPick(choices, {title: project.title,
-        placeHolder: 'Choose a course for the project workspace and Instructor'});
+        placeHolder: 'Choose a course for Project Mentor'});
       if (!choice) return;
       await this.requireScope(scope);
       return {...scope, course: choice.label};
@@ -430,6 +433,27 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     await this.containers.enter({...scope, course}, {kind: 'notebook', language, notebook});
   }
 
+  async chooseExercise(chapter: ChapterNode) {
+    await this.requireScope(chapter);
+    if (chapter.chapter.locked || chapter.chapter.expired) return;
+    const children = await this.getChildren(chapter);
+    const choices = children.flatMap((node): (vscode.QuickPickItem & {node: Node})[] => {
+      if (node.kind === 'pool') {
+        const siblings = byDifficulty(node.questions ?? []);
+        return siblings.map(question => ({label:question.title, description:[question.language, question.difficulty].filter(Boolean).join(' · '),
+          node:{kind:'question', parent:chapter, question, siblings:siblings.filter(q => q.topic === question.topic)}}));
+      }
+      if (node.kind === 'generate') return [{label:'Generate an exercise…', node}];
+      return node.kind === 'notice' ? [{label:node.label, node}] : [];
+    });
+    await this.requireScope(chapter);
+    const selected = await vscode.window.showQuickPick(choices, {title:chapter.course + ' · ' + chapter.chapter.name, placeHolder:'Choose an exercise'});
+    if (!selected) return;
+    if (selected.node.kind === 'question') return this.openQuestion(selected.node);
+    if (selected.node.kind === 'generate') return this.generate(chapter);
+    if (selected.node.kind === 'notice') void vscode.window.showInformationMessage('Refresh Practice and open the chapter to try again.');
+  }
+
   async openQuestion(node: Extract<Node, {kind: 'question'}>) {
     await this.requireScope(node.parent);
     // The notebook names the next exercise in this topic after a graded pass.
@@ -442,29 +466,64 @@ export class PracticeBrowser implements vscode.TreeDataProvider<Node>, vscode.Di
     await vscode.commands.executeCommand('dhimantai.openExercise', node.question.id, node.parent.account, node.parent.course, node.question.title);
   }
 
-  async generate(node: ChapterNode) {
+  /** `repeat` keeps the learner's language, difficulty and focus when they choose Try again. */
+  async generate(node: ChapterNode, repeat?: GenerationChoice) {
     await this.requireScope(node);
     if (node.chapter.locked) { await vscode.commands.executeCommand('dhimantai.pricing'); return; }
     if (!vscode.workspace.getConfiguration('dhimantai').get<boolean>('aiAssistance', true)) {
       throw new Error('Turn on AI assistance in dhimantAI settings to generate an exercise.');
     }
-    const language = await vscode.window.showQuickPick(node.languages.map(l => ({label: l.name, id: l.id})),
-      { title: node.chapter.name, placeHolder: 'Choose the programming language' });
+    const choice = repeat ?? await this.chooseGeneration(node);
+    if (!choice) return;
+    await this.requireScope(node);
+    const api = this.scopedApi(node);
+    let exercise: GeneratedExercise;
+    try {
+      // A rejected or mismatched example is drafted again automatically before the learner sees an error.
+      exercise = await withGenerationRetry(async attempt => {
+        const suffix = attempt > 1 ? ` (attempt ${attempt} of ${GENERATION_ATTEMPTS})` : '';
+        const generated = await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: 'Generating your practice exercise…' + suffix},
+          () => api.generateExercise(node.chapter.id, choice.language.id, choice.difficulty.toLowerCase(), choice.focus));
+        await this.requireScope(node);
+        return vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: 'Checking the example on your computer…' + suffix},
+          () => checkGeneratedLocally(generated, async (lang, source, tests) => {
+            if (!this.containers?.enabled) throw new Error('Set up the course runtime to generate exercises: the example is checked in your course container.');
+            const engine = await this.containers.setup({course:node.course, account:node.account, environment:node.environment});
+            return engine.tests(lang, {source, stdin: '', argv: [], files: []}, tests);
+          }));
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(message, 'Try again').then(again => {
+        if (again) void vscode.commands.executeCommand('dhimantai.generateExercise', node, choice);
+      });
+      return;
+    }
+    await this.requireScope(node);
+    await vscode.commands.executeCommand('dhimantai.openPracticeNotebook', '', node.account, node.course, exercise);
+  }
+
+  private async chooseGeneration(node: ChapterNode): Promise<GenerationChoice | undefined> {
+    // A Python course practises Python: offer only the languages its course runtime teaches.
+    const recipe = await this.containers?.configuration({course:node.course, account:node.account, environment:node.environment})
+      .then(config => config.recipe, () => undefined);
+    await this.requireScope(node);
+    const languages = exerciseLanguages(node.languages, recipe);
+    const language = languages.length === 1 ? {label: languages[0].name, id: languages[0].id}
+      : await vscode.window.showQuickPick(languages.map(l => ({label: l.name, id: l.id})),
+        { title: node.chapter.name, placeHolder: 'Choose the programming language' });
     if (!language) return;
     const difficulty = await vscode.window.showQuickPick(['Easy', 'Medium', 'Hard'],
-      { title: node.chapter.name, placeHolder: 'Choose the exercise difficulty' });
+      { title: node.chapter.name + ' · ' + language.label, placeHolder: 'Choose the exercise difficulty' });
     if (!difficulty) return;
     const focus = await vscode.window.showInputBox({ title: 'Generate an exercise', prompt: 'Optional focus. Press Enter to use the chapter.',
       placeHolder: 'For example, indexing lists', validateInput: text => [...text.trim()].length > 200 ? 'Use up to 200 characters.' : undefined });
     if (focus === undefined) return;
-    await this.requireScope(node);
-    const api = this.scopedApi(node);
-    const exercise = await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: 'Generating your practice exercise…'},
-      () => api.generateExercise(node.chapter.id, language.id, difficulty.toLowerCase(), focus.trim()));
-    await this.requireScope(node);
-    await vscode.commands.executeCommand('dhimantai.openPracticeNotebook', '', node.account, node.course, exercise);
+    return {language: {label: language.label, id: language.id}, difficulty, focus: focus.trim()};
   }
 }
+
+interface GenerationChoice { language: {label: string; id: string}; difficulty: string; focus: string }
 
 export function exerciseNotebook(result: GeneratedExercise, environment: EnvironmentName): vscode.NotebookData {
   const { exercise, course, chapter, language, kernel, difficulty } = result;

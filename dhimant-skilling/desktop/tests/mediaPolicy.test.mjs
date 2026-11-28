@@ -34,6 +34,25 @@ test('denial and navigation during consent never grant capture', async () => {
   assert.equal(await policy.request(1, origin, ['video'], async () => { policy.forget(1); return true; }, active), false);
   assert.equal(policy.check(1, origin, 'video'), false);
 });
+test('remounting one notebook retains pending and approved consent, a new frame asks again', async () => {
+  const policy = registered();
+  let prompts = 0, answer;
+  const pending = policy.request(1, origin, ['audio'], () => {
+    prompts++;
+    return new Promise(resolve => { answer = resolve; });
+  }, active);
+  policy.register(1, 'frame', origin, learningExtension, true);
+  answer(true);
+  assert.equal(await pending, true);
+  policy.register(1, 'frame', origin, learningExtension, true);
+  const prompt = async () => { prompts++; return true; };
+  assert.equal(await policy.request(1, origin, ['audio'], prompt, active), true);
+  assert.equal(prompts, 1);
+  policy.register(1, 'replacement', origin, learningExtension, true);
+  assert.equal(policy.check(1, origin, 'audio'), false);
+  assert.equal(await policy.request(1, origin, ['audio'], prompt, active), true);
+  assert.equal(prompts, 2);
+});
 test('concurrent requests cannot open overlapping permission prompts', async () => {
   const policy = registered(); let finish;
   const pending = policy.request(1, origin, ['audio'], () => new Promise(resolve => { finish = resolve; }), active);

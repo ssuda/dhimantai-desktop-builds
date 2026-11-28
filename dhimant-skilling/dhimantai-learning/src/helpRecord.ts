@@ -1,6 +1,7 @@
 // How much help each Practice problem took, kept on this computer. A strong engineer needs less help over
 // time, so the measure a learner sees is a trend: problems solved without help, and how far up the help
 // ladder the rest needed. It holds counts and times only, never code, questions or Instructor replies.
+import type { CourseworkHelp } from './courseworkProgress';
 
 /** The help ladder: a question, a hint, where to look, then a worked example on a different problem. */
 export const HELP_LEVELS = [
@@ -14,6 +15,12 @@ export const HELP_LEVELS = [
     message: 'Show the same idea on a different, smaller problem so I can apply it to mine.'},
 ] as const;
 export const MAX_HELP_LEVEL = 4;
+
+/** The service may also grant a rung when a learner types a hint request. */
+export function grantedHelpLevel(requested?: number, granted?: number) {
+  if (granted === undefined || !Number.isInteger(granted) || granted < 1 || granted > MAX_HELP_LEVEL) return requested;
+  return requested === undefined ? granted : Math.min(requested, granted);
+}
 
 export interface ProblemRecord {
   id: string;
@@ -36,7 +43,7 @@ export interface ProblemRecord {
   /** First time every published sample passed. Samples alone never make a problem solved. */
   samplesPassed?: number;
   /** First graded submission that passed every test, hidden ones included, and the help used before it. */
-  solved?: {at: number; help: number; maxLevel: number};
+  solved?: {at: number; help: number; maxLevel: number; declaration?: CourseworkHelp};
   /** Spaced re-practice after the first graded pass: the next review dates, earliest first. */
   reviewDue?: number[];
 }
@@ -49,7 +56,7 @@ export type HelpEvent =
   | {type: 'ask'; id: string}
   | {type: 'samples'; id: string; passed: number; total: number}
   /** A server check against every test, hidden cases included. */
-  | {type: 'graded'; id: string; passed: number; total: number};
+  | {type: 'graded'; id: string; passed: number; total: number; declaration: CourseworkHelp};
 
 const DAY = 86_400_000;
 /** Re-practice a solved problem after one, three and seven days. */
@@ -75,7 +82,7 @@ export function record(records: ProblemRecord[], event: HelpEvent, now = Date.no
   if (event.type === 'samples' && event.total > 0 && event.passed === event.total) p.samplesPassed ??= now;
   if (event.type === 'graded' && event.total > 0 && event.passed === event.total) {
     if (!p.solved) {
-      p.solved = {at: now, help: help(p), maxLevel: p.level};
+      p.solved = {at: now, help: help(p), maxLevel: p.level, declaration: event.declaration};
       p.reviewDue = REVIEW_DAYS.map(days => now + days * DAY);
     } else if (p.reviewDue?.length && p.reviewDue[0] <= now) {
       // A review done on time moves on to the next interval; an early pass changes nothing.
@@ -88,6 +95,11 @@ export function record(records: ProblemRecord[], event: HelpEvent, now = Date.no
 
 export function helpSinceAssessment(r: ProblemRecord | undefined) {
   return r ? help(r) > (r.assessedHelp ?? 0) : false;
+}
+
+/** Older records only counted in-app help. A zero count cannot establish what the learner declared. */
+export function solvedHelp(solved: NonNullable<ProblemRecord['solved']>): CourseworkHelp {
+  return solved.declaration ?? (solved.help > 0 ? 'reported' : 'unknown');
 }
 
 /**
@@ -104,6 +116,7 @@ export interface Trend {
   /** The most recent solved problems, newest last, and how many of them needed no help at all. */
   solved: number;
   independent: number;
+  assisted: number;
   /** Highest ladder rung used, per recent solved problem: the curve a learner wants to fall. */
   levels: number[];
   medianMinutesToSolve?: number;
@@ -112,14 +125,22 @@ export interface Trend {
 export function trend(records: ProblemRecord[], window = 5): Trend {
   const recent = records.filter(r => r.solved).sort((a, b) => a.solved!.at - b.solved!.at).slice(-window);
   const minutes = recent.map(r => (r.solved!.at - r.opened) / 60000).sort((a, b) => a - b);
-  return {solved: recent.length, independent: recent.filter(r => r.solved!.help === 0).length,
+  const declarations = recent.map(r => solvedHelp(r.solved!));
+  return {solved: recent.length, independent: declarations.filter(h => h === 'none_reported').length,
+    assisted: declarations.filter(h => h === 'reported').length,
     levels: recent.map(r => r.solved!.maxLevel),
     ...(minutes.length ? {medianMinutesToSolve: Math.round(minutes[Math.floor((minutes.length - 1) / 2)] * 10) / 10} : {})};
 }
 
+function helpBreakdown(t: Trend): string {
+  const unknown = t.solved - t.independent - t.assisted;
+  return [t.independent && `${t.independent} without help`, t.assisted && `${t.assisted} with help`,
+    unknown && `${unknown} with no help declaration`].filter(Boolean).join(', ');
+}
+
 export function trendText(t: Trend): string {
   if (!t.solved) return 'Pass every graded test on a problem to start your record.';
-  return `Last ${t.solved} solved: ${t.independent} without help.`;
+  return `Last ${t.solved} solved: ${helpBreakdown(t)}.`;
 }
 
 /** What a learner may share for a study: counts and times, no code or conversation. */
@@ -129,7 +150,7 @@ export function exportRecords(records: ProblemRecord[]) {
       secondsToFirstRun: r.firstRun ? Math.round((r.firstRun - r.opened) / 1000) : null, runs: r.runs,
       ladder: {question: r.ladder[0], hint: r.ladder[1], where: r.ladder[2], example: r.ladder[3]}, otherAsks: r.asks,
       solved: r.solved ? {secondsToSolve: Math.round((r.solved.at - r.opened) / 1000), helpBeforeSolve: r.solved.help,
-        highestLevel: r.solved.maxLevel, independent: r.solved.help === 0} : null})),
+        highestLevel: r.solved.maxLevel, helpStatus: solvedHelp(r.solved), independent: solvedHelp(r.solved) === 'none_reported'} : null})),
     trend: trend(records)};
 }
 
@@ -146,9 +167,8 @@ export function dueReviews(records: ProblemRecord[], now = Date.now()): ProblemR
 
 /** Total solved and solved without help, for a progress line. */
 export function progressText(records: ProblemRecord[]): string {
-  const solved = records.filter(r => r.solved), independent = solved.filter(r => r.solved!.help === 0).length;
-  if (!solved.length) return 'No problems solved yet';
-  return `${solved.length} solved · ${independent} without help`;
+  const total = trend(records, MAX_RECORDS);
+  return total.solved ? `${total.solved} solved · ${helpBreakdown(total)}` : 'No problems solved yet';
 }
 
 export interface Exercise { id: string; title: string; difficulty?: string }
@@ -162,7 +182,7 @@ export function byDifficulty<T extends Exercise>(questions: T[]): T[] {
 
 /** Hard exercises are a stretch: suggested after two Medium ones solved without help. Never a hard lock. */
 export function hardReady(questions: Exercise[], records: ProblemRecord[]): boolean {
-  const solo = new Set(records.filter(r => r.solved?.help === 0).map(r => r.id));
+  const solo = new Set(records.filter(r => r.solved && solvedHelp(r.solved) === 'none_reported').map(r => r.id));
   return questions.filter(q => rank(q.difficulty) === 1 && solo.has(q.id)).length >= 2;
 }
 

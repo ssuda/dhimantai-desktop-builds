@@ -5,12 +5,12 @@ import {createConnection} from 'node:net';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
-import {ensureFreeCAD} from './freecadInstaller';
-import {presentFreeCAD} from './freecadFocus';
+import {compatibleMacQt, ensureFreeCAD, macFreeCADBundle} from './freecadInstaller';
+import {FreeCADControls, freecadDemonstration} from './freecadDemo';
 import {CadAction} from './freecadCourse';
 
-export interface CadState {status:string;radius?:number;validSolid?:boolean;selected?:string[];jpeg?:string;pid?:number;title?:string}
-type Action=CadAction|'resume'|'state';
+export interface CadState {status:string;radius?:number;validSolid?:boolean;selected?:string[];jpeg?:string;pid?:number;title?:string;qtVersion?:string;cocoaFix?:boolean;pointerVersion?:number;starter?:boolean;controls?:FreeCADControls}
+type Action='observe'|'resume'|'state'|'ui';
 
 async function privateKey(folder:string) {
   const file=join(folder,'.connection-key');
@@ -71,7 +71,15 @@ export async function openFreeCAD(root:string,assets:string,accountScope:string,
   }
   const call=(action:Action)=>request(pipe,key,action,signal);
   async function launch(){
-    try {await call('resume');return;} catch(e) {
+    try {
+      // The running bridge can have unsaved edits. Let the learner save those
+      // before replacing it with the bridge used by Cua Driver.
+      const existing=await call('state');
+      if(existing.pointerVersion!==1 || (process.platform==='darwin' && (!compatibleMacQt(existing.qtVersion) || !existing.cocoaFix))){
+        throw new Error('Save your work and quit the previous FreeCAD lesson window, then reopen this lesson to load the updated Instructor.');
+      }
+      await call('resume');return;
+    } catch(e) {
       const code=(e as NodeJS.ErrnoException).code;
       if(code!=='ENOENT' && code!=='ECONNREFUSED')throw e;
       if(code==='ECONNREFUSED' && process.platform!=='win32')await rm(pipe,{force:true});
@@ -80,7 +88,10 @@ export async function openFreeCAD(root:string,assets:string,accountScope:string,
     signal.throwIfAborted();
     const file=join(folder,'Mounting-plate.FCStd');
     const staged=join(folder,'.starter-'+randomBytes(8).toString('hex'));
-    await copyFile(join(assets,'Mounting-plate.FCStd'),staged);
+    const starter=join(assets,'Mounting-plate.FCStd');
+    const starterBytes=await readFile(starter);
+    const starterSignature=starterBytes.length+':'+createHash('sha256').update(starterBytes).digest('hex');
+    await copyFile(starter,staged);
     try {await link(staged,file);} catch(e) {
       if((e as NodeJS.ErrnoException).code!=='EEXIST')throw e;
     } finally {await rm(staged,{force:true});}
@@ -97,8 +108,17 @@ export async function openFreeCAD(root:string,assets:string,accountScope:string,
     }
     const args=app.flatpak?['run','--filesystem='+folder,'--filesystem='+socketRoot,app.flatpak,macro]:[macro];
     progress('Opening the mounting plate in FreeCAD…');
-    const child=spawn(app.command,args,{detached:true,stdio:'ignore',
-      env:{...process.env,DHIMANT_CAD_KEY:key,DHIMANT_CAD_PIPE:pipe,DHIMANT_CAD_EXERCISE:file}});
+    // Launch Services registers the lesson window as FreeCAD, so macOS
+    // accessibility clients and the Dock resolve the same instance.
+    const bundle = process.platform === 'darwin' ? await macFreeCADBundle(app.command) : undefined;
+    if(process.platform === 'darwin' && !bundle)throw new Error('A compatible macOS FreeCAD application is required. Reopen the lesson to install it.');
+    const child=bundle
+      ? spawn('/usr/bin/open',['-n','-a',bundle,'--env','DHIMANT_CAD_PIPE='+pipe,'--env','DHIMANT_CAD_EXERCISE='+file,
+          '--env','DHIMANT_CAD_STARTER='+starterSignature,
+          '--env','QT_PLUGIN_PATH='+join(assets,'macos'),'--env','QT_QPA_PLATFORM_PLUGIN_PATH='+join(assets,'macos','platforms'),
+          '--args',macro],{stdio:'ignore'})
+      : spawn(app.command,args,{detached:true,stdio:'ignore',
+          env:{...process.env,DHIMANT_CAD_KEY:key,DHIMANT_CAD_PIPE:pipe,DHIMANT_CAD_EXERCISE:file,DHIMANT_CAD_STARTER:starterSignature}});
     let failure:Error|undefined;
     child.on('error',e=>{failure=e;});
     child.on('exit',code=>{if(code)failure=new Error('FreeCAD exited during startup (code '+code+').');});
@@ -107,7 +127,11 @@ export async function openFreeCAD(root:string,assets:string,accountScope:string,
       await delay(Math.min(1500,200+i*100),undefined,{signal});
       if(failure)throw failure;
       // The GUI event loop is running now, including its first-run Start tab.
-      try {await call('resume');return;} catch(e) {
+      try {
+        const state=await call('resume');
+        if(state.status==='incompatible-cocoa')throw new Error('FreeCAD could not load the macOS accessibility fix. Quit FreeCAD and reopen the lesson.');
+        return;
+      } catch(e) {
         if(!['ENOENT','ECONNREFUSED'].includes((e as NodeJS.ErrnoException).code??''))throw e;
       }
     }
@@ -120,13 +144,9 @@ export async function openFreeCAD(root:string,assets:string,accountScope:string,
   const job=launch();
   launches.set(pipe,job);
   try{await job;}finally{if(launches.get(pipe)===job)launches.delete(pipe);}
-  let cuaAvailable=true;
+  const demonstrate = freecadDemonstration(() => call('ui'), signal);
   return {call:async(action:CadAction|'state')=>{
-    if(cuaAvailable && action!=='state' && action!=='observe'){
-      const target=await call('state');
-      if(target.status!=='ready')return target;
-      if(target.pid && target.title)cuaAvailable=await presentFreeCAD({pid:target.pid,title:target.title},signal);
-    }
+    if (action !== 'observe' && action !== 'state') return demonstrate(action);
     const {pid:_pid,title:_title,...result}=await call(action);
     return result;
   }};

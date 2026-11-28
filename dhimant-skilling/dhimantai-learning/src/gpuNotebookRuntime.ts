@@ -306,7 +306,7 @@ export class GpuNotebookRuntime implements vscode.Disposable {
       await vscode.commands.executeCommand('jupyter.restartkernel', connection.doc.uri);
     }
   }
-  input(value:string|null){this.ssh?.input(value);}
+  controlTerminal(id:string, control:import('./notebookCells').TerminalControl) { this.ssh?.controlTerminal(id, control); }
   async pause(){await this.cloud?.pause();}
   async terminal(){if(this.ssh)return this.ssh.terminal();throw new Error('Open a terminal in the selected Jupyter server.');}
   finish():Promise<string|undefined> {

@@ -1,10 +1,11 @@
 import { controlDialog, controlStyles, desktopControlsClient } from './desktopControlView';
 import { catalogClient } from './catalogClient';
-import { CatalogSection, categoryOf, escape, sectionChips, sectionOf, styleOf, typeColors, typeIcon } from './catalogLayout';
+import { CatalogSection, categoryOf, categoryHue, escape, filterOptions, orderedSections, sectionKey, sectionChips, sectionOf, styleOf, typeColors, typeIcon } from './catalogLayout';
 import { catalogGuide, setupCourseNames } from './catalogGuide';
 import { catalogStyles } from './catalogStyles';
 import {canResumePurchase, paymentsPage} from './managePayments';
-import { accessLabel, applyTeachingChapters, catalogChapter, chapterActionLabel, coursePriceKind, courseSuggestions, lessonsCovered, openChapter, resumeTopic } from './catalogDiscovery';
+import { accessLabel, applyTeachingChapters, catalogChapter, chapterActionLabel, courseLearningStatus, coursePriceKind, courseSuggestions, openChapter, resumeTopic } from './catalogDiscovery';
+import {equipmentLesson} from './studioTypes';
 import type { SkillingProfile } from './skilling';
 import { ESSENTIAL_PATHS } from './essentials';
 import * as vscode from 'vscode';
@@ -16,6 +17,7 @@ import { accessPeriod, CatalogCourse, LearningOffer, learnerRpc, PublicCatalog }
 import { Api, Course, LearningPurchases } from './api';
 import { checkoutUri, priceLabel } from './learningBilling';
 import type { CompanionCourse } from './studyContent';
+import { architectureCase } from './architectureMemory';
 import { CATALOG_PROJECTS, PROJECT_COURSES, projectAccessEnded } from './catalogProjects';
 import { ProjectResults, ProjectSummary } from './projectResults';
 import { compareCourseActivity, courseCoverage, coverageLabel, coverageNote, topicCoverageHtml } from './courseProgress';
@@ -60,7 +62,7 @@ export class CourseCatalog implements vscode.Disposable {
       : vscode.commands.executeCommand('dhimantai.openLearningRoom');
   }
   private sequence = 0;
-  private selection?: { environment: EnvironmentName; account?: string; accountLabel?: string; catalog: PublicCatalog; catalogUnavailable?: boolean; billing?: LearningPurchases; lessons?: Course[] };
+  private selection?: { environment: EnvironmentName; account?: string; accountLabel?: string; catalog: PublicCatalog; catalogUnavailable?: boolean; billing?: LearningPurchases; lessons?: Course[]; practiceProgress?: Record<string,'completed' | 'in_progress'> };
   private purchasing = false;
   private scope?: {environment: EnvironmentName; account?: string; accountLabel?: string};
   private refreshQueued?: boolean;
@@ -69,9 +71,11 @@ export class CourseCatalog implements vscode.Disposable {
   private welcomePending?: Promise<void>;
   private subscriptions: vscode.Disposable[];
   private projects: ProjectSummary[] = [];
+  private projectRefresh = 0;
   private studyCourses = new Set<string>();
   private pathways:Record<string,SkillingProfile> = {};
   private focusCourse?:string;
+  private focusProjects = false;
   private payments = false;
   private setup?: {message: string; busy: boolean};
   private starting?: {id: string; choosing: boolean};
@@ -93,7 +97,11 @@ export class CourseCatalog implements vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('dhimantai.environment')) { this.starting = undefined; this.clearAccount(); void this.refresh(); }
       }),
-      vscode.window.onDidChangeWindowState(state => { if (state.focused && this.awaitingPayment) void this.refresh(true); })];
+      vscode.window.onDidChangeWindowState(state => {
+        if (!state.focused) return;
+        if (this.awaitingPayment) void this.refresh(true);
+        else if (this.panel?.visible && !this.payments && !this.purchasing) void this.refreshProjectCards();
+      })];
   }
   dispose() { this.starting = undefined; this.sequence++; this.panel?.dispose(); this.subscriptions.forEach(d => d.dispose()); }
   private clearAccount() {
@@ -131,9 +139,10 @@ export class CourseCatalog implements vscode.Disposable {
     await this.open();
     await state.update('courseCatalogWelcomeShown', true);
   }
-  async open(courseId?:string, payments = false) {
+  async open(courseId?:string, payments = false, projects = false) {
     const changed=this.payments!==payments;this.payments=payments;
     this.focusCourse=courseId;
+    this.focusProjects=projects;
     if (!this.panel) {
       this.panel = vscode.window.createWebviewPanel('dhimantai.courseCatalog', 'dhimantAI Course Catalog', vscode.ViewColumn.One,
         { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true });
@@ -161,12 +170,39 @@ export class CourseCatalog implements vscode.Disposable {
       if (!payments && this.selection.catalogUnavailable) return this.refresh();
       if(changed)this.render(this.selection.catalog);
       if (changed && payments) return this.refresh(!!this.awaitingPayment);
+      if (changed && !payments) void this.refreshProjectCards();
+      if (projects) void this.panel.webview.postMessage({type:'browseProjects'});
       if (courseId) void this.panel.webview.postMessage({type:'focusCourse', id:courseId});
+      this.focusProjects = false;
       this.focusCourse = undefined;
       return;
     }
     await this.refresh();
   }
+  private async readPracticeProgress(account?: string) {
+    if (!account) return;
+    try { return await new Api(this.auth, this.service, account).projectPracticeProgress(); }
+    catch { return undefined; }
+  }
+
+  private async refreshProjectCards() {
+    const selection = this.selection, sequence = this.sequence;
+    if (!selection) return;
+    const {environment, account} = selection, refresh = ++this.projectRefresh;
+    const [projects, progress] = await Promise.all([
+      this.results?.summaries(this.media, environment, account ?? 'local') ?? [],
+      this.readPracticeProgress(account),
+    ]);
+    const session = await this.auth.session();
+    if (refresh !== this.projectRefresh || sequence !== this.sequence || selection !== this.selection ||
+        this.payments || this.purchasing || environment !== this.environment() || account !== session?.user.id) return;
+    if (JSON.stringify(projects) === JSON.stringify(this.projects) &&
+        JSON.stringify(progress) === JSON.stringify(selection.practiceProgress)) return;
+    this.projects = projects;
+    selection.practiceProgress = progress;
+    this.render(selection.catalog);
+  }
+
   async refresh(checkPayments = false, openSetup = false) {
     if (!this.panel) return;
     if (this.purchasing) { this.refreshQueued = (this.refreshQueued ?? false) || checkPayments; return; }
@@ -198,7 +234,7 @@ export class CourseCatalog implements vscode.Disposable {
         else if (billing?.more_pending) billingMessage = 'Checked three pending orders. Refresh again to check the next orders.';
       }
       let catalogUnavailable = false;
-      const [catalog, books, progress, pathways] = await Promise.all([
+      const [catalog, books, progress, pathways, practiceProgress] = await Promise.all([
         learnerRpc<PublicCatalog>(env, 'public_learning_catalog', {}, token).catch(error => {
           if (!this.payments || !billing) throw error;
           catalogUnavailable = true;
@@ -208,13 +244,14 @@ export class CourseCatalog implements vscode.Disposable {
         STUDY_ENABLED && account ? new Api(this.auth, () => env, account).studyCatalog().catch(() => ({courses:[]})) : Promise.resolve({courses:[]}),
         account ? new Api(this.auth, () => env, account).practiceCatalog().catch(() => undefined) : undefined,
         fetch(env.apiUrl.replace(/\/+$/,'')+'/skilling/catalog',{signal:AbortSignal.timeout(10000)}).then(async r=>r.ok?(await r.json()).courses:{}).catch(()=>({})),
+        this.payments ? undefined : this.readPracticeProgress(account),
       ]);
       if (sequence !== this.sequence || environment !== this.environment()) return;
       if (account !== (await this.auth.session())?.user.id || sequence !== this.sequence || environment !== this.environment()) return;
       this.projects = projects; this.pathways = pathways;
       applyTeachingChapters(catalog.courses, progress?.courses);
       this.studyCourses = new Set(books.courses.filter(c => c.chapters.length).map(c => c.title));
-      this.selection = {...this.scope, environment, account, catalog, catalogUnavailable, billing, lessons:progress?.courses};
+      this.selection = {...this.scope, environment, account, catalog, catalogUnavailable, billing, lessons:progress?.courses, practiceProgress:this.payments ? this.selection?.practiceProgress : practiceProgress};
       if (checkPayments && billing && this.awaitingPayment) {
         const opened = billing.purchases.find(p => p.id === this.awaitingPayment);
         if (opened && (opened.status === 'paid' || opened.status === 'refunded' || opened.attempt_state === 'failed'))
@@ -288,7 +325,7 @@ export class CourseCatalog implements vscode.Disposable {
         if (!await stillSignedIn()) return;
         this.joined();
       }
-      if (id === 'erpnext-essentials') await vscode.commands.executeCommand('dhimantai.openBrowserCourse', id);
+      if (id === 'erpnext-essentials') await vscode.commands.executeCommand('dhimantai.openBrowserCourse', id, true);
       else if (!course.enrolled) {
         const first = course.chapters.find(ch => openChapter(course, ch));
         if (!first) throw new Error('You joined this course, but its first lesson is unavailable.');
@@ -302,7 +339,7 @@ export class CourseCatalog implements vscode.Disposable {
         const chapterIds = new Set(course.chapters.map(ch => ch.id));
         const subject = lessons.courses.find(item => item.chapters.some(ch => chapterIds.has(ch.id)));
         applyTeachingChapters([course], lessons.courses);
-        const lesson = catalogChapter(course);
+        const lesson = this.projectChapter(course);
         if (!subject || !lesson) throw new Error('Your first lesson is not available yet. Refresh courses and try again.');
         await vscode.commands.executeCommand('dhimantai.openLearningRoom', subject.name, lesson.id);
       }
@@ -321,6 +358,17 @@ export class CourseCatalog implements vscode.Disposable {
         this.showCourseStart();
       }
     }
+  }
+
+  private projectChapter(course:CatalogCourse) {
+    const account=this.selection?.account;
+    if(course.id==='laravel-react-mysql' && course.enrolled && account && this.selection?.environment===this.environment()) {
+      const scope=createHash('sha256').update(this.environment()+'\0'+account).digest('hex').slice(0,24);
+      const saved=this.state?.get<{mode:string;lesson:string}[]>('buildStudio.'+scope)?.find(row=>row.mode==='guided');
+      const chapter=saved && course.chapters.find(ch=>equipmentLesson(ch.id)===saved.lesson && openChapter(course,ch));
+      if(chapter)return chapter;
+    }
+    return catalogChapter(course);
   }
 
   private projectAccessEnded(id: string) { return projectAccessEnded(id, this.selection?.catalog.courses, this.selection?.lessons); }
@@ -356,7 +404,7 @@ export class CourseCatalog implements vscode.Disposable {
       const course = this.selection?.catalog.courses.find(c => c.id === message.id);
       if (course?.expired || course && !course.enrolled && !course.can_join) return;
       if (course && !course.enrolled) return this.startCourse(message.id);
-      return vscode.commands.executeCommand('dhimantai.openBrowserCourse', message.id);
+      return vscode.commands.executeCommand('dhimantai.openBrowserCourse', message.id, true);
     }
     if (message?.type === 'browserDemo') return vscode.commands.executeCommand('dhimantai.openErpDemo');
     // Navigation and sign-in must also work while loading or when the catalog is offline.
@@ -385,12 +433,19 @@ export class CourseCatalog implements vscode.Disposable {
     if (message?.type === 'tutor') return vscode.commands.executeCommand('dhimantai.openLearningRoom');
     if (message?.type === 'doubtSolver') return vscode.commands.executeCommand('dhimantai.openDoubtSolver');
     if (message?.type === 'certificates') return vscode.commands.executeCommand('dhimantai.courseGrade', '__certificates__');
+    if(message?.type==='projectChapter') {
+      const course=this.selection?.catalog.courses.find(c=>c.id==='laravel-react-mysql' && c.enrolled);
+      const chapter=course?.chapters.find(c=>c.id===message.id && openChapter(course,c));
+      if(chapter && this.selection?.environment===this.environment() && equipmentLesson(chapter.id))
+        return vscode.commands.executeCommand('dhimantai.openLearningRoom',course!.title,chapter.id);
+      return;
+    }
     if (message?.type === 'practice') {
       const course = this.selection?.catalog.courses.find(c => c.id === message.id && c.enrolled);
       const subject = course && this.selection?.lessons?.find(lesson => lesson.chapters.some(ch => course.chapters.some(c => c.id === ch.id)))?.name;
-      if (!message.id) return vscode.commands.executeCommand('dhimantai.browsePractice');
+      if (!message.id) return vscode.commands.executeCommand('dhimantai.myCourses');
       if (!course || this.selection?.environment !== this.environment()) return;
-      const chapter = catalogChapter(course);
+      const chapter = this.projectChapter(course);
       if (!chapter) return this.status('No chapter is currently available. Check the course outline and access.');
       return vscode.commands.executeCommand('dhimantai.openLearningRoom', subject ?? course.title, chapter.id);
     }
@@ -404,6 +459,11 @@ export class CourseCatalog implements vscode.Disposable {
     if (message?.type === 'capstone' && CODE_READING_PROJECTS_ENABLED && message.id === 'engineering-code-reading') {
       if (this.selection?.catalog.courses.find(c => c.id === message.id)?.expired) return;
       return vscode.commands.executeCommand('dhimantai.startCapstone', message.id);
+    }
+    if (message?.type === 'resumeProject') {
+      const saved = this.projects.find(p => p.root === message.id);
+      if (!saved || this.projectAccessEnded(saved.projectId)) return;
+      return vscode.commands.executeCommand('dhimantai.openSavedProject', saved.root);
     }
     if (message?.type === 'project') {
       const project = CATALOG_PROJECTS.find(p => p.id === message.id);
@@ -421,7 +481,7 @@ export class CourseCatalog implements vscode.Disposable {
       return;
     }
     if (['studioGuided','studioAssignment','studioPhp'].includes(message?.type) && message.id==='laravel-react-mysql') {
-      return vscode.commands.executeCommand('dhimantai.equipmentDesk',{mode:message.type==='studioAssignment'?'independent':'guided',
+      return vscode.commands.executeCommand('dhimantai.openProjectMentor',{project:'equipment-desk',mode:message.type==='studioAssignment'?'independent':'guided',
         ...(message.type==='studioPhp'?{lesson:'php'}:{})});
     }
     if (message?.type === 'courseProject') {
@@ -531,17 +591,17 @@ export class CourseCatalog implements vscode.Disposable {
     const pending = !!billing?.purchases.some(p => p.status === 'created' || p.status === 'creating');
     const resume = resumeOrder(courses).filter(c => c.id === 'erpnext-essentials' || catalogChapter(c)).slice(0, 3);
     const availableToLearn = (course: CatalogCourse) => !course.expired && (course.enrolled || course.can_join);
-    const discovery = (course: CatalogCourse) => `data-course="${escape(course.id)}" data-category="${escape(categoryOf(course))}" data-price="${coursePriceKind(course)}" data-track="${escape(sectionOf(course))}" data-level="${escape(course.level)}" data-enrolled="${course.enrolled}" data-available="${availableToLearn(course)}" data-covered="${lessonsCovered(course)}"`;
+    const discovery = (course: CatalogCourse) => `data-course="${escape(course.id)}" data-category="${escape(categoryOf(course))}" data-price="${coursePriceKind(course)}" data-track="${escape(sectionOf(course))}" data-level="${escape(course.level)}" data-enrolled="${course.enrolled}" data-available="${availableToLearn(course)}" data-status="${courseLearningStatus(course) ?? ''}"`;
     const chapterButton = (course: CatalogCourse, secondary = false) => {
       if (course.expired) return button('Access ended', 'practice', course.id, true, secondary);
       if (!course.can_join && !course.enrolled) return button('Enrollment closed', 'join', course.id, true, secondary);
-      const chapter = catalogChapter(course);
+      const chapter = this.projectChapter(course);
       if (!chapter) return button('No accessible chapter', 'practice', course.id, true, secondary);
       const action = course.enrolled ? 'practice' : !account ? 'signUp' : individual ? 'join' : 'signIn';
       const label = action === 'signIn' ? 'Use individual account' : chapterActionLabel(course, chapter);
       return button(label, action, course.id, false, secondary);
     };
-    const trackTag = (course: CatalogCourse) => `<span class="track-tag" data-tone="${styleOf(sectionOf(course))}">${escape(sectionOf(course))}</span>`;
+    const trackTag = (course: CatalogCourse) => `<span class="track-tag" data-color="${categoryHue(sectionOf(course))}" data-tone="${styleOf(sectionOf(course))}">${escape(sectionOf(course))}</span>`;
     const suggestions = courseSuggestions(courses);
     const courseCard = (course: CatalogCourse) => {
       const p=this.pathways?.[course.id];
@@ -553,7 +613,12 @@ export class CourseCatalog implements vscode.Disposable {
       const period = accessPeriod(course);
       const progress = course.enrolled ? coverageMeter(course) : '';
       // Covered chapters read as done (a check), never as cancelled (strikethrough).
-      const outline = `<ol>${course.chapters.map(ch => `<li>${ch.progress?.status === 'covered' ? `<span class="covered"><span aria-hidden="true">✓</span> ${escape(ch.name)}</span>` : escape(ch.name)}${ch.lesson && ch.lesson !== ch.name ? ' — ' + escape(ch.lesson) : ''}
+      const chapterName = (ch:CatalogCourse['chapters'][number]) => {
+        const title=course.id==='laravel-react-mysql' && course.enrolled && openChapter(course,ch) && equipmentLesson(ch.id)
+          ? button(ch.name,'projectChapter',ch.id,false,true) : escape(ch.name);
+        return ch.progress?.status==='covered' ? `<span class="covered"><span aria-hidden="true">✓</span> ${title}</span>` : title;
+      };
+      const outline = `<ol>${course.chapters.map(ch => `<li data-catalog-chapter="${escape(ch.id)}">${chapterName(ch)}${ch.lesson && ch.lesson !== ch.name ? ' — ' + escape(ch.lesson) : ''}
         <small class="muted">${course.enrolled ? ' · ' + escape(coverageLabel(ch.progress)) : ''}${course.expired ? ' · Locked' : ch.locked ? ' · Locked' : ch.free || course.is_free ? ' · Free' : course.unlocked ? ' · Unlocked' : ' · Locked'}</small>
         ${course.enrolled ? topicCoverageHtml(ch.progress) : ''}</li>`).join('')}</ol>`
         + (course.enrolled ? `<p class="muted small">${coverageNote}</p>` + button('Roadmap, grade & certificate', 'grade', course.id, false, true) : '');
@@ -572,23 +637,22 @@ export class CourseCatalog implements vscode.Disposable {
         </dialog>` : '';
       const style = styleOf(sectionOf(course));
       const access = accessLabel(course);
-      const priceNote = course.company_training || course.is_free || course.unlocked || offer ? '' : bundles.some(b => b.course_ids.includes(course.id))
-        ? 'Unlock with a bundle' : 'Full-course price coming soon';
+      const needsOffer = !course.company_training && !course.is_free && !course.unlocked && !offer && (!account || individual);
+      const bundlePricing = needsOffer && bundles.some(b => !b.owned && b.course_ids.includes(course.id))
+        ? `<button type="button" class="secondary" data-browse-category="type:bundle" data-browse-query="${escape(course.title)}">View bundle pricing</button>` : '';
+      const priceNote = needsOffer && !bundlePricing ? 'Full-course checkout is currently unavailable.' : '';
       const renew = !!(course.expired && unlock);
-      const outlineLabel = purchasable && !renew ? 'Outline · ' + priceLabel(purchasable.amount, purchasable.currency) + ' full course'
-        : priceNote ? 'Outline and access' : 'Course outline';
-      const extraActions = (renew ? '' : unlock)
-        + (STUDY_ENABLED && course.enrolled && this.studyCourses.has(course.title) ? button('Study', 'study', course.id, false, true) : '')
+      const extraActions = (STUDY_ENABLED && course.enrolled && this.studyCourses.has(course.title) ? button('Study', 'study', course.id, false, true) : '')
         + (CODE_READING_PROJECTS_ENABLED && course.id === 'engineering-code-reading' && !course.expired ? button('Read a project', 'capstone', course.id, false, true) : '');
-      return `<article class="course" data-tone="${style}" data-layout="${style}" ${discovery(course)} data-preview="${!!preview}">
+      return `<article class="course" data-category-card data-color="${categoryHue(sectionOf(course))}" data-tone="${style}" data-layout="${style}" ${discovery(course)} data-preview="${!!preview}">
         <div class="card-body"><div class="meta">${trackTag(course)}<span class="level">${escape(course.level)}</span><span>${course.chapters.length} chapters</span>
           ${course.enrolled ? '<span class="joined">✓ Joined</span>' : ''}</div>
           <h3>${escape(course.title)}</h3><p class="summary">${escape(course.summary)}</p>
           <span class="access-tag">${access}</span>
-          ${sample}<details data-course-outline><summary>${escape(outlineLabel)}</summary>
-            ${period ? `<p class="period">${escape(period)}</p>` : ''}${progress}${extraActions}${priceNote ? `<p>${priceNote}</p>` : ''}${course.prerequisites ? `<p>Before you start: ${escape(course.prerequisites)}</p>` : ''}${outline}${readiness}
+          ${priceNote ? `<p class="muted small">${priceNote}</p>` : ''}${sample}<details data-course-outline><summary>Course outline</summary>
+            ${period ? `<p class="period">${escape(period)}</p>` : ''}${progress}${extraActions}${course.prerequisites ? `<p>Before you start: ${escape(course.prerequisites)}</p>` : ''}${outline}${readiness}
           </details></div>
-        <div class="actions">${renew ? unlock : primary}
+        <div class="actions">${renew ? unlock : primary + unlock + bundlePricing}
           </div></article>`;
     };
     const courseById = new Map(courses.map(c => [c.id, c]));
@@ -598,9 +662,12 @@ export class CourseCatalog implements vscode.Disposable {
       const levels = [...new Set(members.flatMap(c => c?.level ? [c.level] : []))];
       const parts = offer.course_ids.map(id => single.get(id));
       const separate = parts.every(part => part && part.currency === offer.currency) ? parts.reduce((sum, o) => sum + o!.amount, 0) : 0;
+      const statuses = members.map(c => c && courseLearningStatus(c));
+      const status = statuses.every(s => s === 'covered') ? 'covered' : statuses.some(s => s === 'inProgress' || s === 'covered') ? 'inProgress'
+        : statuses.every(s => s === 'notStarted') ? 'notStarted' : '';
       const owned = members.filter(c => c?.unlocked).length;
-      return `<article class="course offer" data-bundle="${escape(offer.id)}" data-search-topics="${escape(titles.join(' '))}" data-levels="${escape(JSON.stringify(levels))}"
-        data-enrolled="${offer.owned}" data-available="${members.some(c => c && availableToLearn(c))}" data-covered="${members.every(c => c && lessonsCovered(c))}" data-tone="bundles"><div class="offer-head"><h3>${escape(offer.title)}</h3>
+      return `<article class="course offer" data-category-card data-price="paid" data-bundle="${escape(offer.id)}" data-search-topics="${escape(titles.join(' '))}" data-levels="${escape(JSON.stringify(levels))}"
+        data-enrolled="${offer.owned}" data-available="${members.some(c => c && availableToLearn(c))}" data-status="${status}" data-tone="bundles"><div class="offer-head"><h3>${escape(offer.title)}</h3>
         <p><strong class="price">${escape(priceLabel(offer.amount, offer.currency))}</strong>${separate > offer.amount ? ` <span class="save">Save ${escape(priceLabel(separate - offer.amount, offer.currency))}</span>` : ''}</p></div>
         <div class="offer-body"><ul class="members">${titles.slice(0, 3).map(title => `<li>${escape(title)}</li>`).join('')}</ul>
         ${titles.length > 3 ? `<details><summary>${titles.length - 3} more course${titles.length === 4 ? '' : 's'}</summary><ul class="members">${titles.slice(3).map(title => `<li>${escape(title)}</li>`).join('')}</ul></details>` : ''}
@@ -620,13 +687,13 @@ export class CourseCatalog implements vscode.Disposable {
       ? starterExercises.find(exercise => exercise.courseId === course.id) : undefined;
     const featured = resume[0] ?? free.find(c => c.level?.toLowerCase() === 'foundation') ?? free[0]
       ?? available.find(c => starter(c)) ?? available[0];
-    const homeCard = (course: CatalogCourse, first: boolean) => {
-      const chapter = catalogChapter(course);
+    const homeCard = (course: CatalogCourse, first: boolean, label = '') => {
+      const chapter = this.projectChapter(course);
       const number = chapter ? course.chapters.indexOf(chapter) + 1 : 0;
       const chapterTitle = (chapter?.lesson || chapter?.name || '').replace(new RegExp('^chapter\\s+' + number + '\\s*[:.·–—-]\\s*', 'i'), '');
       const activity = starter(course);
       const topic = resumeTopic(course, chapter?.id);
-      return `<article class="resume-card${first ? ' first' : ''}" data-home-course="${escape(course.id)}"><div class="meta">${trackTag(course)}<span>${escape(course.level)}</span></div>
+      return `<article class="resume-card${first ? ' first' : ''}" data-color="${categoryHue(sectionOf(course))}" data-tone="${styleOf(sectionOf(course))}" data-category-card data-home-course="${escape(course.id)}">${label ? `<p class="dh-eyebrow">${label}</p>` : ''}<div class="meta">${trackTag(course)}<span>${escape(course.level)}</span></div>
         <h3>${escape(course.title)}</h3>${first ? `<p>${escape(activity && !course.enrolled ? activity.activity + ' ' + activity.preparation : course.summary)}</p>` : ''}
         <p class="next">${course.id === 'erpnext-essentials' ? 'Guided tour with the Instructor' : chapter ? `Chapter ${number} · <strong>${escape(chapterTitle)}</strong>` : ''}</p>
         ${topic ? `<p class="small">Next topic · ${escape(topic)}</p>` : ''}
@@ -635,11 +702,25 @@ export class CourseCatalog implements vscode.Disposable {
         <div class="actions">${homeAction(course, !first)}<span class="home-access">${escape(accessLabel(course))}</span></div></article>`;
     };
     const otherHome = resume.length ? resume.slice(1) : available.filter(c => c !== featured && starter(c)).slice(0, 2);
-    const hero = featured ? `<section class="${resume.length ? 'resume' : 'intro'}" aria-labelledby="home-title">
-      <div class="home-feature">${homeCard(featured, true)}${otherHome.length ? `<div class="home-other">${otherHome.map(c => homeCard(c, false)).join('')}</div>` : ''}</div></section>` : '';
+    // Home asks what to work on: the course and the project sit side by side, and the learner chooses.
+    const savedProject = this.projects.find(p => p.root && p.title && p.status !== 'Project folder unavailable' && !this.projectAccessEnded(p.projectId));
+    const choosing = !!resume.length || !!savedProject;
+    const projectCard = savedProject ? `<article class="resume-card first project-choice" data-category-card data-tone="projects">
+        <p class="dh-eyebrow">Continue project</p><div class="meta"><span class="track-tag" data-tone="projects">Project</span></div>
+        <h3>${escape(savedProject.title)}</h3>${savedProject.status ? `<p class="next">${escape(savedProject.status)}</p>` : ''}
+        <div class="actions">${button(savedProject.status?.startsWith('Completed') ? 'Open project' : 'Resume project', 'resumeProject', savedProject.root)}</div></article>`
+      : CATALOG_PROJECTS.length ? `<article class="resume-card first project-choice" data-category-card data-tone="projects">
+        <p class="dh-eyebrow">Build a project</p><div class="meta"><span class="track-tag" data-tone="projects">Projects</span></div>
+        <h3>Practise on a real codebase</h3><p>Investigate, repair and verify working software with the Project Mentor.</p>
+        <div class="actions"><button type="button" class="secondary" data-browse-category="type:project">Browse projects</button></div></article>` : '';
+    const otherCards = otherHome.length ? `<div class="home-other">${otherHome.map(c => homeCard(c, false)).join('')}</div>` : '';
+    const hero = choosing ? `<section class="resume" aria-labelledby="home-title">
+      <div class="home-choices">${featured ? homeCard(featured, true, resume.length ? 'Continue learning' : 'Start learning') : ''}${projectCard}</div>${otherCards}</section>`
+      : featured ? `<section class="intro" aria-labelledby="home-title">
+      <div class="home-feature">${homeCard(featured, true)}${otherCards}</div></section>` : '';
     const freeShelf = free.length ? `<section id="free-shelf" aria-labelledby="free-title"><div class="shelf-heading"><h2 id="free-title">Fully free courses</h2>
       <button class="text-button" type="button" data-browse-price="free">See all free courses →</button></div>
-      <div class="home-grid">${free.slice(0, 4).map(c => `<article class="home-tile" data-home-course="${escape(c.id)}"><div class="meta">${trackTag(c)}<span>${escape(c.level)}</span></div><h3>${escape(c.title)}</h3>
+      <div class="home-grid">${free.slice(0, 4).map(c => `<article class="home-tile" data-category-card data-color="${categoryHue(sectionOf(c))}" data-tone="${styleOf(sectionOf(c))}" data-home-course="${escape(c.id)}"><div class="meta">${trackTag(c)}<span>${escape(c.level)}</span></div><h3>${escape(c.title)}</h3>
         <p>${escape(c.summary)}</p><div class="actions"><span class="access-tag">All chapters free</span>${homeAction(c, true)}</div></article>`).join('')}</div></section>` : '';
     // Show renewal when the companion expired and there is no other eligible course.
     const projectRenewal = (id: string) => {
@@ -648,28 +729,34 @@ export class CourseCatalog implements vscode.Disposable {
         : button('View pricing & purchases', 'payments');
     };
     const projectCourses = courses.filter(c => !!this.pathways?.[c.id]);
-    const courseProjects = projectCourses.length ? `<article class="course project" data-tone="projects" data-project="course-projects" data-available="${projectCourses.some(c => c.enrolled && !c.expired)}"><h3>Course projects & custom setup</h3>
+    const courseProjects = projectCourses.length ? `<article class="course project" data-category-card data-tone="projects" data-project="course-projects" data-available="${projectCourses.some(c => c.enrolled && !c.expired)}"><h3>Course projects & custom setup</h3>
       <p>Choose a course to set up a Micro, Minor or Capstone project using its brief or your own idea.</p><div class="setup-controls">
       <label for="project-course">Course</label><select id="project-course">${projectCourses.map(c => `<option value="${escape(c.id)}">${escape(c.title)}</option>`).join('')}</select>
       <div class="actions">${button('Set up project', 'courseProject')}</div></div></article>` : '';
     const projects = `
-      ${courses.some(c=>c.id==='laravel-react-mysql') ? `<article class="course project" data-project="equipment-desk" data-tone="projects"><h3>Equipment Desk</h3><p>Build a checkout app with PHP, Laravel, MySQL and React.</p><div class="actions">${button('Learn to build','studioGuided','laravel-react-mysql')}${button('Start assignment','studioAssignment','laravel-react-mysql',false,true)}</div><details><summary>Lesson entry points</summary>${button('Model stock in PHP','studioPhp','laravel-react-mysql',false,true)}</details></article>` : ''}
+      ${courses.some(c=>c.id==='laravel-react-mysql') ? `<article class="course project" data-category-card data-project="equipment-desk" data-tone="projects"><h3>Equipment Desk</h3><p>Build a checkout app with PHP, Laravel, MySQL and React.</p><div class="actions">${button('Learn to build','studioGuided','laravel-react-mysql')}${button('Start assignment','studioAssignment','laravel-react-mysql',false,true)}</div><details><summary>Lesson entry points</summary>${button('Model stock in PHP','studioPhp','laravel-react-mysql',false,true)}</details></article>` : ''}
       ${courseProjects}
       <div class="courses">${CATALOG_PROJECTS.map(project => {
         const companion = courses.find(c => c.id === PROJECT_COURSES[project.id]);
         const ended = projectAccessEnded(project.id, courses, this.selection?.lessons);
-        const saved = this.projects.find(p => p.projectId === project.id);
-        return `<article class="course project" data-tone="projects" data-project="${escape(project.id)}" data-level="${escape(project.difficulty)}" data-enrolled="${!!saved}" data-available="${!ended}"
+        const records = this.projects.filter(p => p.projectId === project.id);
+        const saved = records.find(p => p.status.startsWith('Completed locally')) ?? records[0];
+        const remote = this.selection?.practiceProgress?.[project.id];
+        const recorded = remote === 'completed';
+        const progress = saved?.status ?? (recorded ? 'Practice completed on your account' : remote === 'in_progress' ? 'In progress'
+          : this.selection?.account && !this.selection.practiceProgress && architectureCase(project.id) ? 'Account progress unavailable' : 'Not started');
+        const status = [progress, saved && recorded ? 'Practice completion recorded' : ''].filter(Boolean).join(' · ');
+        return `<article class="course project" data-category-card data-tone="projects" data-project="${escape(project.id)}" data-status="${recorded || saved?.status.startsWith('Completed locally') ? 'covered' : saved || remote ? 'inProgress' : progress === 'Not started' ? 'notStarted' : ''}" data-level="${escape(project.difficulty)}" data-enrolled="${!!saved || !!remote}" data-available="${!ended}"
           data-search-topics="${escape(project.outcomes.join(' '))}" aria-labelledby="project-${escape(project.id)}">
         <div class="meta project-meta"><span class="size-tag">${escape(project.level)}</span><span class="level">${escape(project.difficulty)}</span>
-          <span>Estimated ${escape(project.estimatedTime)}</span><span class="project-status">${escape(ended ? 'Access ended' : saved?.status ?? 'Not started')}</span></div>
+          <span>Estimated ${escape(project.estimatedTime)}</span><span class="project-status">${escape(ended ? 'Access ended' : status)}</span></div>
         <h3 id="project-${escape(project.id)}">${escape(project.title)}</h3><p>${escape(project.description)}</p>
         ${companion ? `<p class="small">Companion course · ${escape(companion.title)}</p>` : ''}
         <details><summary>Learning outcomes</summary><ul class="small">${project.outcomes.map(outcome => `<li>${escape(outcome)}</li>`).join('')}</ul></details>
         <div class="actions">${ended ? projectRenewal(project.id)
-          : button(saved ? 'Open Project' : 'Start Project', 'project', project.id)}</div></article>`;
+          : button(saved ? 'Open Project' : remote ? 'Open on this computer' : 'Start Project', 'project', project.id)}</div></article>`;
       }).join('')}</div>`;
-    const businessCard = `<article class="course" data-tone="business" data-layout="business" data-price="${erp ? coursePriceKind(erp) : ''}" data-browser-course="erpnext-essentials" data-category="Business applications" data-level="Beginner" data-available="${!erp?.expired}" data-enrolled="${!!erp?.enrolled}" data-covered="${erpChecked === ERP_TASK_TOTAL}"><div class="card-body"><div class="meta"><span class="level">Beginner</span><span>${ERP_TASK_TOTAL} linked tasks</span><span class="access-tag">${erp ? escape(accessLabel(erp)) : 'Live Instructor'}</span></div>
+    const businessCard = `<article class="course" data-category-card data-tone="business" data-layout="business" data-price="${erp ? coursePriceKind(erp) : ''}" data-browser-course="erpnext-essentials" data-category="Business applications" data-level="Beginner" data-available="${!erp?.expired}" data-enrolled="${!!erp?.enrolled}" data-status="${erpChecked === ERP_TASK_TOTAL ? 'covered' : erpChecked ? 'inProgress' : 'notStarted'}"><div class="card-body"><div class="meta"><span class="level">Beginner</span><span>${ERP_TASK_TOTAL} linked tasks</span><span class="access-tag">${erp ? escape(accessLabel(erp)) : 'Live Instructor'}</span></div>
           <h3>ERPNext Essentials</h3>${erp && accessPeriod(erp) ? `<p class="period">${escape(accessPeriod(erp))}</p>` : ''}<p>Run a small company in an ERPNext sandbox. Buy stock, fulfil orders and collect payment with your Instructor.</p>
           <details data-course-outline><summary>Course outline and preparation</summary><ol><li>Your company’s accounts</li><li>Customers</li><li>Suppliers</li><li>Stock items</li><li>Purchase orders</li><li>Receiving goods</li><li>Supplier bills</li><li>Paying suppliers</li><li>Sales orders</li><li>Deliveries</li><li>Sales invoices</li><li>Collecting payment</li><li>Bills of materials</li><li>Final challenge: a new customer, start to finish, without hints</li></ol>
           <p>The sandbox runs on your computer. Accounts share one ERPNext instance with separate logins and training companies. First setup downloads the application image and requires 6 GB of runtime memory. HR and payroll are not included in this course.</p></details>
@@ -691,11 +778,16 @@ export class CourseCatalog implements vscode.Disposable {
     });
     sections.push({title:'Projects', style:'projects', content:projects});
     if (bundles.length) sections.push({title:'Bundles', style:'bundles', content:`<div class="courses">${bundles.map(bundleCard).join('')}</div>`});
+    const exploreSections = orderedSections(sections);
+    const categoryOptions = [['', 'All'], ['type:course', 'Courses'], ...exploreSections.map(section => [sectionKey(section), section.title])];
+    const availableLevels = new Set([...courses.map(c => c.level), 'Beginner', ...CATALOG_PROJECTS.map(p => p.difficulty)].filter(Boolean));
+    const levels = [...new Set(['Foundation','Beginner','Beginner to Intermediate','Intermediate','Advanced','Professional', ...availableLevels])]
+      .filter(level => availableLevels.has(level));
     const homeProjects = CATALOG_PROJECTS.filter(project => !this.projectAccessEnded(project.id)).slice(0, 4);
     const projectShelf = homeProjects.length ? `<section aria-labelledby="home-projects"><div class="shelf-heading"><h2 id="home-projects">Build something real</h2>
       <button type="button" class="text-button" data-browse-category="type:project">All projects →</button></div><div class="home-grid">
-      ${homeProjects.map(project => `<article class="home-tile"><div class="meta"><span class="track-tag" data-tone="projects">${escape(project.level)}</span>${escape(project.estimatedTime)}</div>
-        <h3>${escape(project.title)}</h3><p>${escape(project.description)}</p><div class="actions">${button(this.projects.some(p => p.projectId === project.id) ? 'Open project' : 'Start project', 'project', project.id, false, true)}</div></article>`).join('')}</div></section>` : '';
+      ${homeProjects.map(project => `<article class="home-tile" data-category-card data-tone="projects"><div class="meta"><span class="track-tag" data-tone="projects">${escape(project.level)}</span>${escape(project.estimatedTime)}</div>
+        <h3>${escape(project.title)}</h3><p>${escape(project.description)}</p><div class="actions">${button(this.projects.some(p => p.projectId === project.id) ? 'Open project' : this.selection?.practiceProgress?.[project.id] ? 'Open on this computer' : 'Start project', 'project', project.id, false, true)}</div></article>`).join('')}</div></section>` : '';
     const desktop = vscode.env.appName === 'dhimantAI';
     const guideLink = `<button type="button" id="open-guide" aria-haspopup="dialog" aria-controls="course-guide">${typeIcon('other')}Help &amp; Course Guide</button>`;
     this.panel.webview.html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>dhimantAI Course Catalog</title>
@@ -713,44 +805,47 @@ export class CourseCatalog implements vscode.Disposable {
       ${catalogStyles}
       ${desktop ? controlStyles : ''}
       ${typeColors}
+      ${sections.map(section => `[data-color="${categoryHue(section.title)}"] {--hue:${categoryHue(section.title)}}`).join('')}
       </style></head><body${desktop ? ' class="learning-desktop"' : ''}>
-      <div class="catalog-bar"><header class="top"><div><h1>Course Catalog</h1>${desktop || environment === 'production' ? '' : `<p class="muted small">${escape(environment)} service</p>`}</div>
+      ${desktop ? `${controlDialog}<script nonce="${nonce}">const initializeDesktopControls = ${desktopControlsClient.toString()};</script>` : ''}
+      <div class="catalog-bar"><header class="top"><div><p class="dh-eyebrow">Welcome to dhimantAI</p><h1>Course Catalog</h1>${desktop || environment === 'production' ? '' : `<p class="muted small">${escape(environment)} service</p>`}</div>
       <div class="actions" aria-label="Account">${account
         ? `<span class="small">Signed in${(this.scope?.accountLabel ?? this.selection?.accountLabel) ? ' as ' + escape((this.scope?.accountLabel ?? this.selection?.accountLabel)!) : ''}</span>${button('Sign out', 'signOut', '', false, true)}`
         : button('Sign in', 'signIn', '', false, true)}</div></header>
       <nav class="catalog-nav" aria-label="Learning"><button type="button" class="view-link" data-view="home" aria-controls="catalog-home" aria-current="page">Home</button>
-        <button type="button" class="view-link" data-view="explore" aria-controls="catalog-explore">Explore</button>${desktop ? '' : button('Instructor', 'tutor', '', false, true)}${STUDY_ENABLED ? button('Study', 'study', '', false, true) : ''}${desktop ? '' : button('Doubt Solver', 'doubtSolver', '', false, true)}
-        ${account && vscode.env.appName !== 'dhimantAI' ? button('My courses', 'practice', '', false, true) + button('My certificates', 'certificates', '', false, true) : ''}
+        <button type="button" class="view-link" data-view="explore" aria-controls="catalog-explore">Explore</button>${desktop ? '' : `${button('Instructor', 'tutor', '', false, true)}${STUDY_ENABLED ? button('Study', 'study', '', false, true) : ''}${button('Doubt Solver', 'doubtSolver', '', false, true)}${account ? button('My courses', 'practice', '', false, true) + button('My certificates', 'certificates', '', false, true) : ''}`}
         ${desktop ? '' : guideLink}</nav></div>
       <main data-loading="${loading}" data-starting="${escape(this.starting?.id ?? '')}">
       ${catalog && account && !individual ? '<p class="notice">You are signed in with an institute account. Public courses use a separate individual learner account. Choose <strong>Use individual account</strong> to sign in with email or create an individual account. Join a course there to see it in Practice. <strong>My courses</strong> opens your institute learning.</p>' : ''}
       ${account && billing && !billing.payments_ready ? '<p class="muted">Payments are not available yet. Free courses and free first chapters remain available.</p>' : ''}
       <p id="status" role="status"><span id="status-message">${escape(message)}</span> <span id="payment-check"${pending || this.awaitingPayment || (!catalog && !loading) ? '' : ' hidden'}>${button(account ? 'Refresh purchases' : 'Refresh courses', 'refresh', '', false, true)}</span></p>
       <div id="catalog-content"><div id="catalog-home" aria-labelledby="home-title">
-      <h2 class="view-title" id="home-title" tabindex="-1">${resume.length ? 'Your next lesson' : featured ? 'Choose your first lesson' : 'Find a course'}</h2>
+      <h2 class="view-title" id="home-title" tabindex="-1">${choosing ? 'What do you want to work on today?' : featured ? 'Choose your first lesson' : 'Find a course'}</h2>
       ${hero}${freeShelf}
       ${sectionChips(sections)}
-      ${suggestions.length ? `<section aria-labelledby="suggestions-title"><h2 id="suggestions-title">Recommended for you</h2><div class="suggestions">${suggestions.map(({course,reason})=>`<button class="secondary" data-tone="${styleOf(sectionOf(course))}" data-discover="${escape(course.title)}">${typeIcon(styleOf(sectionOf(course)))}<span>${escape(course.title)}<small>${escape(reason)}</small></span></button>`).join('')}</div></section>` : ''}
+      ${suggestions.length ? `<section aria-labelledby="suggestions-title"><h2 id="suggestions-title">Recommended for you</h2><div class="suggestions">${suggestions.map(({course,reason})=>`<button class="secondary" data-color="${categoryHue(sectionOf(course))}" data-tone="${styleOf(sectionOf(course))}" data-discover="${escape(course.title)}">${typeIcon(styleOf(sectionOf(course)))}<span>${escape(course.title)}<small>${escape(reason)}</small></span></button>`).join('')}</div></section>` : ''}
       ${projectShelf}</div>
       <div id="catalog-explore" aria-labelledby="explore-title" hidden>
       <h2 class="view-title" id="explore-title" tabindex="-1">Explore courses</h2>
       <div class="explore-search" role="search"><label for="search">Search courses, projects and bundles</label><input id="search" type="search" placeholder="Search by title, topic or track"></div>
+      ${filterOptions('category', 'Category', categoryOptions, false, true)}
       <div class="explore-layout"><aside aria-label="Catalog filters"><button id="toggle-filters" class="secondary" aria-controls="filter-fields" aria-expanded="false">Filters</button>
       <div class="discovery-filters" id="filter-fields"><h3>Filters</h3>
-      <label>Category<select id="filter-category"><option value="">All categories</option>
-        <optgroup label="Content type"><option value="type:course">Courses</option><option value="type:project">Projects</option><option value="type:bundle">Bundles</option></optgroup>
-        <optgroup label="Course category">${[...groups.keys()].map(category=>`<option>${escape(category)}</option>`).join('')}</optgroup></select></label>
-      <label>Level<select id="filter-level"><option value="">All levels</option>${[...new Set([...courses.map(c=>c.level), 'Beginner', ...CATALOG_PROJECTS.map(p=>p.difficulty)].filter(Boolean))].map(level=>`<option>${escape(level)}</option>`).join('')}</select></label>
-      <label>Course price<select id="filter-price"><option value="">All prices</option><option value="free">All chapters free</option><option value="preview">Chapter 1 free · paid course</option><option value="paid">Paid course · no free first chapter</option></select></label>
-      <label>Learning status<select id="filter-status"><option value="">All statuses</option>${courses.some(previewFor) ? '<option value="preview">With chapter previews</option>' : ''}<option value="available">Available to learn</option><option value="enrolled">My learning</option><option value="covered">Lessons covered</option></select></label>
+      ${filterOptions('show', 'Show', [['','All'], ['freeStart','Free to start'], ['enrolled','Joined'], ['available','Available to learn'],
+        ...(courses.some(previewFor) ? [['preview','With chapter previews']] : [])], false, true)}
+      ${filterOptions('level', 'Level', levels.map(level => [level, level]), true, true)}
+      ${filterOptions('price', 'Course price', [['','Any price'], ['free','All chapters free'], ['preview','Chapter 1 free'], ['paid','Paid · no free chapter']])}
+      ${filterOptions('status', 'Learning status', [['notStarted','Not started'], ['inProgress','In progress'], ['covered','Completed lessons']], true)}
       ${groups.has('Engineering Essentials') ? `<div id="essential-paths" hidden>${essentialPaths(groups.get('Engineering Essentials')!)}</div>` : ''}
       <button class="text-button" id="clear-filters" type="button">Clear filters</button></div></aside>
       <div class="explore-matches"><div class="result-tools"><p id="result-count" role="status" aria-live="polite"></p>
       <label>Sort <select id="catalog-sort"><option value="">Catalog order</option><option value="title">Title A–Z</option></select></label></div>
       <div id="active-filters" role="group" aria-label="Applied filters"></div>
 
-      <div id="results">${sections.map(section => section.content).join('')}
-      ${STUDY_ENABLED && this.companions.length ? `<section aria-labelledby="book-companions"><h2 id="book-companions">Programming book companions</h2><p class="muted">Original lessons, worked examples and practice activities with links to seven influential books. Included with the extension; reading works offline. Sign in for Study help.</p><div class="courses">${this.companions.map(c => `<article class="course" data-course="${escape(c.id)}"><span class="muted small">${c.chapters.length} chapters · Free companion</span><h3>${escape(c.title)}</h3><p class="muted small">Book by ${escape(c.author)}</p><p>${escape(c.summary)}</p><details><summary>Outline and preparation</summary><ol>${c.chapters.map(ch => `<li>${escape(ch.title)}</li>`).join('')}</ol><p>${escape(c.preparation)}</p></details><div class="actions">${button('Study', 'study', c.id)}</div></article>`).join('')}</div></section>` : ''}
+      <div id="results">${exploreSections.map(section => `<section class="result-group" data-group="${escape(sectionKey(section))}" data-title="${escape(section.title)}">
+        <div class="shelf-heading"><h2>${escape(section.title)}</h2><small class="group-count"></small></div><div class="category-grid">${section.content}</div>
+        <button type="button" class="secondary group-more">Show more <span class="sr-only">${escape(section.title)}</span></button></section>`).join('')}
+      ${STUDY_ENABLED && this.companions.length ? `<section class="result-group" data-group="Programming book companions" data-title="Programming book companions" aria-labelledby="book-companions"><h2 id="book-companions">Programming book companions</h2><p class="muted">Original lessons, worked examples and practice activities with links to seven influential books. Included with the extension; reading works offline. Sign in for Study help.</p><div class="category-grid">${this.companions.map(c => `<article class="course" data-category-card data-course="${escape(c.id)}"><span class="muted small">${c.chapters.length} chapters · Free companion</span><h3>${escape(c.title)}</h3><p class="muted small">Book by ${escape(c.author)}</p><p>${escape(c.summary)}</p><details><summary>Outline and preparation</summary><ol>${c.chapters.map(ch => `<li>${escape(ch.title)}</li>`).join('')}</ol><p>${escape(c.preparation)}</p></details><div class="actions">${button('Study', 'study', c.id)}</div></article>`).join('')}</div><button type="button" class="secondary group-more">Show more companions</button></section>` : ''}
       </div><div id="empty" hidden><h3>No matching results</h3><p>Try a broader search or clear a filter.</p><button type="button" class="secondary" data-reset-search>Clear search and filters</button></div>
       <button type="button" class="secondary" id="more-results" hidden>Show more results</button></div></div></div>
 
@@ -758,8 +853,7 @@ export class CourseCatalog implements vscode.Disposable {
       ${desktop ? `<footer class="catalog-help">${guideLink}</footer>` : ''}
       ${catalogGuide({button, courses, lessons:this.selection?.lessons, signedIn:!!account, desktop:vscode.env.appName === 'dhimantAI',
         shortcut:platform() === 'darwin' ? 'Cmd+Shift+P' : 'Ctrl+Shift+P', loading, message, setup:this.setup})}
-      ${desktop ? controlDialog : ''}
-      <script nonce="${nonce}">(${catalogClient.toString()})(${JSON.stringify(JSON.stringify([environment, account ?? null])).replace(/</g, '\\u003c')}, ${JSON.stringify(this.focusCourse ?? '').replace(/</g, '\\u003c')}, ${openSetup}, ${desktop ? desktopControlsClient.toString() : 'undefined'});</script></body></html>`;
-    if (catalog) this.focusCourse = undefined;
+      <script nonce="${nonce}">(${catalogClient.toString()})(${JSON.stringify(JSON.stringify([environment, account ?? null])).replace(/</g, '\\u003c')}, ${JSON.stringify(this.focusCourse ?? '').replace(/</g, '\\u003c')}, ${openSetup}, ${this.focusProjects});</script></body></html>`;
+    if (catalog) { this.focusCourse = undefined; this.focusProjects = false; }
   }
 }

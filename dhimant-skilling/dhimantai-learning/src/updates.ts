@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { DownloadError, withVerifiedDownload } from './resumableDownload';
 import type { EnvironmentName } from './environments';
 import { WEB_APP_ORIGINS as ORIGINS } from './appLinks';
 
@@ -51,11 +53,9 @@ export function quietStart(elapsed: number, tabs: readonly { webview?: string; d
     && tabs.every(tab => !tab.dirty && (tab.webview ?? '').endsWith('dhimantai.courseCatalog'));
 }
 
-async function readBounded(response: Response, limit: number, onProgress?: (percent: number) => void): Promise<Buffer> {
+async function readBounded(response: Response, limit: number): Promise<Buffer> {
   if (!response.ok || !response.body) throw new UpdateCheckError('The update could not be downloaded. Try again later.');
   const length = Number(response.headers.get('content-length'));
-  const knownSize = length > 0 && !response.headers.get('content-encoding');
-  let reported = -1;
   if (length > limit) {
     await response.body.cancel();
     throw new UpdateCheckError('The update file is too large. Download the VSIX manually.');
@@ -70,13 +70,34 @@ async function readBounded(response: Response, limit: number, onProgress?: (perc
       size += value.length;
       if (size > limit) throw new UpdateCheckError('The update file is too large. Download the VSIX manually.');
       chunks.push(value);
-      if (onProgress && knownSize) {
-        const percent = Math.min(100, Math.floor(100 * size / length));
-        if (percent !== reported) { reported = percent; onProgress(percent); }
-      }
     }
   } finally { await reader.cancel(); reader.releaseLock(); }
   return Buffer.concat(chunks);
+}
+
+/** A full VSIX can take minutes on a working connection. Bound both silent time and total time. */
+async function downloadPackage(fetcher: typeof fetch, url: string, owner: AbortSignal, progress: (percent:number) => void,
+  directory: string, sha256: string) {
+  const stalled = new AbortController();
+  const deadline = AbortSignal.timeout(15 * 60_000);
+  const signal = AbortSignal.any([owner, stalled.signal, deadline]);
+  let idle: ReturnType<typeof setTimeout> | undefined;
+  const activity = () => {
+    clearTimeout(idle);
+    idle = setTimeout(() => stalled.abort(), 60_000);
+  };
+  activity();
+  try {
+    return await withVerifiedDownload({
+      directory, sha256, maxBytes: 32 * 1024 * 1024, signal, progress, activity,
+      request: headers => fetcher(url, { credentials:'omit', redirect:'error', cache:'no-store', headers, signal }),
+    }, path => readFile(path));
+  } catch (error) {
+    if (stalled.signal.aborted) throw new UpdateCheckError('The download stopped receiving data. Check your connection and retry the update.');
+    if (deadline.aborted) throw new UpdateCheckError('The download exceeded 15 minutes. Check your connection and retry the update.');
+    if (error instanceof DownloadError) throw new UpdateCheckError(error.message);
+    throw new UpdateCheckError('The download was interrupted. Check your connection and retry the update.');
+  } finally { clearTimeout(idle); }
 }
 
 /** Public fixed-origin releases only. One attempt, no background retry loop.
@@ -88,7 +109,7 @@ export class ExtensionUpdates {
   private checking?: { environment: EnvironmentName; promise: Promise<void> };
   private installing?: Promise<void>;
   private abort = new AbortController();
-  constructor(private readonly environment: () => EnvironmentName, private readonly installed: string,
+  constructor(private readonly cacheDirectory: string, private readonly environment: () => EnvironmentName, private readonly installed: string,
     private readonly changed: (state: UpdateStatus) => void, private readonly fetcher: typeof fetch = fetch,
     private readonly editorVersion?: string) {
     this.state = { status: 'unchecked', installed, message: 'Check for updates from your selected dhimantAI service.' };
@@ -162,16 +183,10 @@ export class ExtensionUpdates {
     const stillSelected = () => request === this.request && release.environment === this.environment();
     this.set({ ...this.state, status: 'installing', retry: false, message: `Downloading and verifying ${release.version}…` });
     try {
-      const response = await this.fetcher(`${ORIGINS[release.environment]}/downloads/dhimantai-learning.vsix`, {
-        credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.any([this.abort.signal, AbortSignal.timeout(30000)]),
-      });
-      const bytes = await readBounded(response, 32 * 1024 * 1024, progress => {
+      const bytes = await downloadPackage(this.fetcher, `${ORIGINS[release.environment]}/downloads/dhimantai-learning.vsix`, this.abort.signal, progress => {
         if (stillSelected()) this.set({ ...this.state, progress, message: `Downloading ${release.version}… ${progress}%` });
-      });
+      }, join(this.cacheDirectory, release.environment), release.sha256);
       if (!stillSelected()) return;
-      if (createHash('sha256').update(bytes).digest('hex') !== release.sha256) {
-        throw new UpdateCheckError('The download did not match the verified release. Nothing was installed. Check for updates and try again.');
-      }
       this.set({ ...this.state, progress: undefined, message: `Installing ${release.version}…` });
       await installer(bytes, release.version);
       if (!stillSelected()) return;
@@ -179,7 +194,7 @@ export class ExtensionUpdates {
     } catch (error) {
       if (!stillSelected()) return;
       this.set({ status: 'available', retry: true, installed: this.installed, available: release.version,
-        message: error instanceof UpdateCheckError ? error.message : 'The update could not be installed. Try Install update again or download the VSIX manually.' });
+        message: error instanceof UpdateCheckError ? error.message : 'The verified update could not be installed. Retry installation from App Updates.' });
     }
   }
 }

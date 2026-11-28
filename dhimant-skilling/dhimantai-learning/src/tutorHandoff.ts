@@ -63,11 +63,11 @@ export function tutorFiles(row: any, id: string): { entry: string; files: Record
     'tutor-context.json': JSON.stringify({ lesson: p.lesson, language: p.language, mode: p.mode }, null, 2) + '\n',
     'README.txt': 'Instructor workspace\n\nThis is a local copy of your Instructor code. Edits here do not sync back to the app.\n' +
       'Return to Instructor to continue the lesson or paste your changes into its code editor.\n\n' +
-      'Choose Runtime → Set up / rebuild course, then copy these files into that course folder.\nUse Runtime → Open course terminal to run commands in the container.\n' +
+      'Choose Runtime → Set up / rebuild course, then copy these files into that course folder.\nUse a Bash notebook cell in that course folder to run container commands.\n' +
       'Nothing runs or installs automatically. Practice grading and coaching do not apply to this copy.\n' +
       'stdin.txt contains your input; tutor-context.json records the lesson and execution mode.\n' +
-      (p.mode === 'python_repl' ? 'This code came from Python shell mode. In the course terminal, run python to open a Python REPL and display expression values.\n' : '') +
-      (p.language === 'python' ? '\nIn the course terminal, from the copied project folder:\n' +
+      (p.mode === 'python_repl' ? 'This code came from Python shell mode. Use a Python notebook cell to evaluate expressions.\n' : '') +
+      (p.language === 'python' ? '\nIn a Bash cell, from the copied project folder:\n' +
         '  python -m pip install -r requirements.txt\n  python main.py < stdin.txt\n' +
         'These container commands are the same on Windows, macOS and Linux.\n' : '') };
   if (p.language === 'python') files['requirements.txt'] = p.packages.join('\n') + (p.packages.length ? '\n' : '');

@@ -36,7 +36,11 @@ async function main() {
     const attempt=join(projectDirectory,'equipment-desk');
     await cloneCapstone(join(root,'media','build-studio','request-v1.bundle'),attempt);
     writeFileSync(join(attempt,'resources/js/ItemCard.jsx'),'export function ItemCard() { return <article />; }\n');
-    workspaceArgs.push(attempt);
+    if (process.env.DHIMANTAI_STUDIO_CASE === 'unified') {
+      const workspace=join(projectDirectory,'projects.code-workspace');
+      writeFileSync(workspace,JSON.stringify({folders:[{path:attempt}]}));
+      workspaceArgs.push(workspace);
+    } else workspaceArgs.push(attempt);
     mkdirSync(join(userData,'course-extensions'));
   }
   if (process.argv[2] === 'suiteCertificateNavigation') {

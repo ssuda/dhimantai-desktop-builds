@@ -1,3 +1,4 @@
+import {installVoicePeer} from '../voiceRoomFixture';
 import * as vscode from 'vscode';
 import * as assert from 'node:assert/strict';
 import {randomUUID, createHash} from 'node:crypto';
@@ -9,7 +10,9 @@ import type {SpokenReply} from '../../src/coachAudio';
 import {StudioJsx} from '../../src/studioJsx';
 import {StudioLesson, type StudioService} from '../../src/buildStudio';
 import type {StudioAccess,StudioDefinition} from '../../src/studioTypes';
-import {StudioRun,type CheckoutEvidence} from '../../src/studioRuntime';
+import {StudioRun,studioCheckFeedback,type CheckoutEvidence} from '../../src/studioRuntime';
+import {Api} from '../../src/api';
+import {EMAIL, PASSWORD} from './contractServer';
 import {run as shell} from '../../src/podman';
 import {learningFrame} from './learningFrame';
 
@@ -63,7 +66,7 @@ export async function run(){
     observed=checkout;predicted=(body as {prediction?:string}).prediction;
     return {guidance:'Practice inventory returned HTTP '+observed.status+' for '+observed.quantity+'. Stock was '+observed.before+' before and '+observed.after+' after.'};
   }};
-  if(process.env.DHIMANTAI_STUDIO_TEST_URL){
+  if(process.env.DHIMANTAI_STUDIO_TEST_URL && scenario!=='unified'){
     const base=new URL('notebook-coach/project',process.env.DHIMANTAI_STUDIO_TEST_URL).href;
     const post=async(path:string,body:object)=>{
       const res=await fetch(base+path,{method:'POST',headers:{'Authorization':'Bearer '+process.env.DHIMANTAI_STUDIO_TEST_USER,
@@ -102,13 +105,114 @@ export async function run(){
         void view.postMessage({...message,type:'audioError'});
       });
     }},
-    dictation:{async dictate(pcm){assert.ok(Buffer.from(pcm,'base64').length>0);return {text:'My voice draft'};}},
+    dictation:{async voiceInputGrant(language){assert.equal(language, 'te-IN'); return {url:'ws://localhost:7880',token:'test'};}},
   };
   const openLesson=()=>new StudioLesson(context,root,dirname(root),access,def,service,structuredClone(saved),
-    async progress=>{saved=structuredClone(progress);},async()=>{},async()=>true,voice);
+    async progress=>{saved=structuredClone(progress);},async()=>{},async()=>true,voice,studioSurface);
+  const {auth, studioSurface} = await ext.activate();
   let lesson=openLesson();
   try{
-    if(scenario==='native'){await native(page,root);}
+    if(scenario==='unified'){
+      await auth.signInWithPassword(EMAIL,PASSWORD);
+      const originalEntry=Api.prototype.studioEntry, originalRun=StudioRun.start;
+      // Exercise actual attempt storage, switches and UI independently of Podman startup.
+      // The practice, replay and diagnostic scenarios run the learner app in its pinned image.
+      StudioRun.start=async (_root, attempt, _image, kind, revision) => ({
+        attempt,kind,revision,url:process.env.DHIMANTAI_TEST_SERVER!,evidence:async()=>null,
+        inventory:async()=>new Map([['Camera',3]]),
+        check:async()=>studioCheckFeedback({passed:false,observations:[
+          {stock:1,quantity:1,expected:201,status:201,stockAndLoans:'0\t1\t1',passed:true},
+          {stock:1,quantity:2,expected:409,status:500,stockAndLoans:'1\t1\t1',passed:false},
+        ]},revision),
+        close:async()=>{},
+      } as Pick<StudioRun,'attempt'|'kind'|'revision'|'inventory'|'check'|'close'|'url'|'evidence'> as StudioRun);
+      const attempts:string[]=[];
+      const entries=new Map<string,StudioAccess['entry']>();
+      Api.prototype.studioEntry=async (lesson,mode,attempt) => {
+        const id=attempt ?? randomUUID();
+        attempts.push(id);
+        if (!attempt) entries.set(id,lesson);
+        return {...access,id,mode,entry:entries.get(id)!,lesson};
+      };
+      try {
+        // The catalog and sidebar pass the published chapter ID to this command.
+        await vscode.commands.executeCommand('dhimantai.openLearningRoom',
+          'Web App Development with PHP, Laravel, MySQL & React','6050fa5c-6bfc-5532-a4b9-39e464db5810');
+        const walkthrough=await learningFrame(page,'#next');
+        await walkthrough.getByRole('button',{name:'Run App',exact:true}).waitFor();
+        await walkthrough.getByRole('button',{name:'Continue',exact:true}).click();
+        const desk=await learningFrame(page,'#replyType');
+        const controller=vscode.window.visibleTextEditors.find(e=>e.document.fileName.endsWith('LoanController.php'))!;
+        assert.ok(controller);
+        const folder=vscode.workspace.getWorkspaceFolder(controller.document.uri)!;
+        assert.equal(await desk.locator('#run').isVisible(),false,'The guided PHP lesson starts with a prediction');
+        await desk.locator('#message').fill('I expect the stock to stay the same.');
+        await desk.locator('.composer-submit').click();
+        await desk.locator('#history').getByText(/Your prediction.*stock to stay the same/).waitFor();
+        await desk.locator('#check').click();
+        await desk.locator('#history').getByText(/Project check.*Checked revision.*Needs work/).waitFor({timeout:90000});
+        const check=desk.locator('#history details').filter({hasText:'Checked revision'});
+        await check.locator('summary').click();
+        assert.equal(await check.locator('li:visible').count(),2);
+        await desk.locator('#history').getByText(/Project Mentor.*available and.*requested/).waitFor();
+
+        await desk.locator('#message').fill('Which case should I trace next?');
+        await desk.locator('#run').click();
+        const preview=await learningFrame(page,'#back');
+        await preview.getByRole('button',{name:'Back to Project Mentor'}).click();
+        const returned=await learningFrame(page,'#tools');
+        assert.equal(await returned.locator('#message').inputValue(),'Which case should I trace next?');
+        assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath,controller.document.uri.fsPath);
+
+        // The old keybinding opens the same surface on a different project.
+        await vscode.commands.executeCommand('dhimantai.openProjectCoach', root);
+        const personal=await learningFrame(page,'#coach');
+        await personal.getByText('Open a file and tell the mentor what you want to build, understand or fix.').waitFor();
+        assert.equal(await personal.locator('#step').isVisible(),false);
+        assert.equal(await personal.locator('#checkpointDetails').isVisible(),false);
+        assert.equal(await personal.locator('#replyType').count(),0);
+        await vscode.commands.executeCommand('dhimantai.openBuildStudio',folder.uri);
+        const resumed=await learningFrame(page,'#tools');
+        await resumed.locator('#history').getByText(/Your prediction.*stock to stay the same/).waitFor();
+        assert.deepEqual(attempts,[attempts[0],attempts[0]],'Continuing and reopening reuse the course attempt');
+        await vscode.commands.executeCommand('dhimantai.openProjectMentor',{project:'equipment-desk', mode:'independent',fresh:true});
+        const independent=await learningFrame(page,'#next:text-is("Open stock task")');
+        assert.equal(await independent.locator('#history p').count(),0,'Independent attempt must start fresh');
+        await independent.getByRole('button',{name:'Open stock task'}).click();
+        const stock=await learningFrame(page,'#check');
+        const assignmentFile=vscode.window.activeTextEditor!.document.uri;
+        assert.ok(assignmentFile.fsPath.includes(attempts.at(-1)!),'The stock task opens the independent attempt’s source');
+        await vscode.commands.executeCommand('dhimantai.openProjectMentor',assignmentFile);
+        // The assignment offers the prediction as optional practice. Run App stays available without it.
+        await stock.locator('#question').getByText(/^Optional prediction: /).waitFor();
+        assert.equal(await stock.locator('#replyType').inputValue(),'ask');
+        await stock.getByText('Make checkout handle requests for available and unavailable stock.', {exact:false}).waitFor();
+        await stock.getByRole('button',{name:'Run App',exact:true}).click();
+        const assignmentPreview=await learningFrame(page,'#back');
+        await assignmentPreview.getByRole('button',{name:'Back to Project Mentor'}).click();
+        await learningFrame(page,'#check');
+        await vscode.commands.executeCommand('dhimantai.openProjectMentor',folder.uri.fsPath);
+        const original=await learningFrame(page,'#tools');
+        await original.locator('#history').getByText(/Project check.*Checked revision/).waitFor();
+        const [guided,,assignment]=attempts;
+        assert.notEqual(assignment,guided);
+        assert.deepEqual(attempts,[guided,guided,assignment,assignment,guided]);
+      } finally { Api.prototype.studioEntry=originalEntry; StudioRun.start=originalRun; }
+    }else if(scenario==='checkout'){
+      await lesson.open();
+      const walkthrough=await learningFrame(page,'#run');
+      await walkthrough.getByRole('button',{name:'Run App',exact:true}).click();
+      const app=await until(async()=>page.frames().find(f=>/^http:\/\/[a-f0-9-]+\.localhost:\d+\//.test(f.url())),
+        'Equipment Desk did not open from the first chapter',90);
+      await app.locator('select[name=item]').selectOption({label:'Camera'});
+      await app.getByText('Camera · 3 available',{exact:true}).waitFor();
+      await app.getByLabel('Borrower alias').fill('chapter-one');
+      await app.getByLabel('Quantity').fill('2');
+      const response=page.waitForResponse(r=>r.request().method()==='POST' && r.url().endsWith('/loans'));
+      await app.getByRole('button',{name:'Check out'}).click();
+      assert.equal((await response).status(),201);
+      await app.getByText('Camera · 1 available',{exact:true}).waitFor();
+    }else if(scenario==='native'){await native(page,root);}
     else if(scenario==='voice'){
       await lesson.open();
       const frame=await learningFrame(page,'#tools');
@@ -122,30 +226,30 @@ export async function run(){
       assert.equal(requestedSpeech[0].text,def.entries[0].task);
       assert.equal(requestedSpeech[0].path,'/notebook-coach/project/equipment-desk');
       assert.equal(new URLSearchParams(requestedSpeech[0].query).get('attempt'),access.id);
-      // Generate a media track in the webview, keeping the physical microphone closed.
+      await form.getByRole('button',{name:'Retry spoken explanation'}).waitFor();
+      assert.ok(await form.locator('#audio-status').isVisible());
+      await form.getByRole('button',{name:'Spoken explanation options'}).click();
+      await form.getByRole('button',{name:'System default',exact:true}).click();
+      await until(async()=>requestedSpeech.length===2,'Selecting an output did not retry the current reply');
+      assert.equal(requestedSpeech[1].id,requestedSpeech[0].id);
+      await frame.evaluate(`(${installVoicePeer})(window)`);
       await frame.evaluate(()=>{
-        navigator.mediaDevices.getUserMedia=async()=>{
-          const context=new AudioContext();
-          const output=context.createMediaStreamDestination(), tone=context.createOscillator();
-          tone.connect(output);tone.start();await context.resume();
-          return output.stream;
-        };
+        const w = window as any;
+        w.navigator.mediaDevices.getUserMedia = async () => new MediaStream([new w.MediaStreamTrackGenerator({kind:'audio'})]);
       });
+      await form.getByLabel('Spoken language').selectOption('te-IN');
+      assert.equal(await form.getByLabel('Voice input').count(),0);
       const dictate=async()=>{
         await mic.click();
-        await form.getByRole('button',{name:'Stop recording and transcribe'}).waitFor();
-        await pause(500);
-        await form.getByRole('button',{name:'Stop recording and transcribe'}).click();
-        await until(async()=>await form.locator('textarea').inputValue()==='My voice draft','Dictation did not fill the draft');
+        await form.getByRole('button',{name:'Finish speaking'}).waitFor();
+        await frame.evaluate(() => (window as any).finishTestUtterance('My voice draft','te-IN'));
       };
       await dictate();
-      assert.equal(await frame.locator('#history p').count(),0);
-      await form.locator('.composer-submit').click();
       await until(async()=>requestedSpeech.some(r=>r.text==='What did you observe in your console?'),'Missing Instructor reply playback');
+      assert.equal(new URLSearchParams(requestedSpeech.at(-1)!.query).get('language'), 'te-IN');
       await frame.locator('#next').click();
       await form.locator('#replyType').waitFor();
       await dictate();
-      await form.locator('.composer-submit').click();
       await frame.locator('#history p').filter({hasText:'Your prediction · My voice draft'}).waitFor();
     }
     else if(scenario==='cell'){
@@ -417,16 +521,17 @@ export async function run(){
       assert.equal(await rows(live),'20\t0');
       assert.equal(await shell(bin,['exec',live,'python3','/opt/build-studio/runtime.py','evidence']),'null');
       await until(async()=>vscode.window.activeTextEditor?.document.uri.fsPath===doc.uri.fsPath&&vscode.window.activeTextEditor.selection.isEqual(selection),'Editor selection was not restored');
-      assert.match(await frame.locator('#history').innerText(),/Practice inventory returned HTTP 409/);
+      const returned=await learningFrame(page,'#tools');
+      assert.match(await returned.locator('#history').innerText(),/Practice inventory returned HTTP 409/);
       // The checkout matched the predicted request, so it used the prediction up and asks for a new one.
-      assert.doesNotMatch(await frame.locator('#history').innerText(),/still open/);
+      assert.doesNotMatch(await returned.locator('#history').innerText(),/still open/);
       assert.equal(saved.prediction,undefined);assert.equal(saved.predicted,true);
-      await until(async()=>!await frame.locator('#replyKind').isHidden(),'A new prediction was not requested');
+      await until(async()=>!await returned.locator('#replyKind').isHidden(),'A new prediction was not requested');
     }
     await writeFile(process.env.DHIMANTAI_TEST_RESULTS!,JSON.stringify({passed:scenario,unopenedExport:scenario==='cell'||scenario==='native',observed}));
   }finally{
     await lesson.dispose();
-    if(scenario!=='native')for(const volume of ['desk-state-attempt-'+access.id,'desk-state-'+createHash('sha256').update(root).digest('hex').slice(0,16)])await shell(bin,['volume','rm',volume]).catch(()=>{});
+    if(scenario!=='native' && scenario!=='unified')for(const volume of ['desk-state-attempt-'+access.id,'desk-state-'+createHash('sha256').update(root).digest('hex').slice(0,16)])await shell(bin,['volume','rm',volume]).catch(()=>{});
     await browser.close();
   }
 }

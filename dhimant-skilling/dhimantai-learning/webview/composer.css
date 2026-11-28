@@ -49,3 +49,6 @@
 .composer-audio .audio-chevron svg { width: 16px; }
 .composer-audio #audio-microphone { width: 36px; height: 36px; padding: 8px; }
 .composer-audio, .composer-audio #coach-audio { display: flex; align-items: center; gap: 6px; }
+
+.voice-setting { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: .9em; color: var(--vscode-descriptionForeground); }
+.voice-setting select { width: auto; max-width: 100%; font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); }

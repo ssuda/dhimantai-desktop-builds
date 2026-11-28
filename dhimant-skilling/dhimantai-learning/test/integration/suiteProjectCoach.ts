@@ -1,3 +1,4 @@
+import {installVoicePeer} from '../voiceRoomFixture';
 /** Real right-panel checks, using controlled Coach replies; no live provider or deployment claims. */
 import * as assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -34,7 +35,7 @@ export async function run() {
   CourseWorkspaces.prototype.recordFor = () => ({root,course:'Build AI Agents with Python',key:'project-test',account:session.user.id,
     environment:vscode.workspace.getConfiguration('dhimantai').get('environment', 'production')});
   const cdp = await connect(), original = Api.prototype.notebookCoach;
-  const originalDictate = Api.prototype.dictate, originalGrant = Api.prototype.audioGrant;
+  const originalDictate = Api.prototype.voiceInputGrant, originalGrant = Api.prototype.audioGrant;
   const originalAvailability = Api.prototype.projectHandoffAvailability, originalSend = Api.prototype.sendProjectHandoff,
     originalDetail = Api.prototype.projectHandoffDetail, originalInfo = vscode.window.showInformationMessage, originalSave = vscode.window.showSaveDialog;
   const ui = (expression: string) => cdp.webview(`d => { if (!d.getElementById('checkpoint') || d.defaultView.frameElement?.id !== 'active-frame') return null; return (${expression})(d); }`);
@@ -61,15 +62,15 @@ export async function run() {
       if (!picker || !picker.onchange) return null;
       const saved = new Promise(resolve => {
         const ack = e => {
-          if (e.data?.type === 'coachingLanguage' && e.data.language === 'te-IN') {
+          if (e.data?.type === 'coachingLanguage' && e.data.language === 'kn-IN') {
             d.defaultView.removeEventListener('message', ack); resolve(true);
           }
         };
         d.defaultView.addEventListener('message', ack);
         d.defaultView.setTimeout(() => { d.defaultView.removeEventListener('message', ack); resolve(false); }, 1000);
       });
-      picker.value = 'te-IN'; picker.dispatchEvent(new d.defaultView.Event('change')); return saved;
-    }`), Boolean, 'Telugu coaching preference saved');
+      picker.value = 'kn-IN'; picker.dispatchEvent(new d.defaultView.Event('change')); return saved;
+    }`), Boolean, 'Kannada coaching preference saved');
     Api.prototype.notebookCoach = async (path, body: any) => {
       if (body.project_context.observation) return {guidance:'', prompt:'', line:null};
       assert.equal(path, '/notebook-coach/project?course=Build%20AI%20Agents%20with%20Python'); requests.push(body);
@@ -135,7 +136,7 @@ export async function run() {
       v => v?.selected.includes('course_agent/search.py:5–6') && v.focus === 'message', 'discuss selected lines in the existing composer');
     await ask('Help me understand how these files connect.');
     await until(visible, value => value?.messages.includes('tool observation') && !value.composerDisabled, 'first Coach reply');
-    assert.equal(requests[0].coaching_language, 'te-IN');
+    assert.equal(requests[0].coaching_language, undefined);
     assert.equal(requests[0].source, [searchEditor.document.lineAt(4).text, searchEditor.document.lineAt(5).text].join('\n'));
     assert.match(requests[0].question, /Selected lines: course_agent\/search.py:5–6/);
     const beforeDiscussion = searchEditor.document.getText();
@@ -147,13 +148,10 @@ export async function run() {
     assert.ok(requests[0].project_context.files.some((file: any) => file.path === 'README.md'));
     assert.ok(requests[0].project_context.structure.files.includes('data/documents.json'));
     assert.equal(requests[0].project_context.check.status, 'failed');
-    // Exercise the real Chromium recorder and PCM conversion without opening a hardware microphone.
-    const question = 'What should I inspect next?';
-    Api.prototype.dictate = async (pcm, language) => {
-      assert.equal(language, undefined, 'Project Coach requests spoken-language detection');
-      const bytes = Buffer.from(pcm, 'base64');
-      assert.ok(bytes.length > 0 && bytes.length <= 960000 && bytes.some(byte => byte !== 0));
-      return {text: question};
+    const question = 'ఇప్పుడు ఏమి పరిశీలించాలి?';
+    Api.prototype.voiceInputGrant = async language => {
+      assert.equal(language, undefined, 'Project Mentor requests spoken-language detection');
+      return {url:'ws://localhost:7880',token:'test'};
     };
     const speech: string[] = [];
     Api.prototype.audioGrant = async (path, text, query) => {
@@ -163,38 +161,19 @@ export async function run() {
       speech.push(text);
       throw new Error('Test playback service unavailable');
     };
-    await ui(`d => {
-      const w = d.defaultView;
+    await ui(`d => {const w=d.defaultView; (${installVoicePeer})(w);
       w.navigator.mediaDevices.getUserMedia = async () => {
-        const track = new w.MediaStreamTrackGenerator({kind:'audio'}), writer = track.writable.getWriter();
-        w.testMicTrack = track;
-        const samples = Float32Array.from({length:1600}, (_, i) => 0.2 * Math.sin(2 * Math.PI * i / 32));
-        let timestamp = 0;
-        w.feedTestMic = async () => {
-          const frame = new w.AudioData({data:samples, format:'f32', sampleRate:16000, numberOfFrames:samples.length, numberOfChannels:1, timestamp});
-          timestamp += 100000;
-          try { await writer.write(frame); } finally { frame.close(); }
-          return true;
-        };
-        return new w.MediaStream([track]);
+        w.testMicTrack = new w.MediaStreamTrackGenerator({kind:'audio'}); return new w.MediaStream([w.testMicTrack]);
       };
-      return true;
-    }`);
+      return true;}`);
     await click('audio-microphone');
-    await until(() => ui(`d => d.getElementById('audio-microphone').getAttribute('aria-pressed')`), v => v === 'true', 'microphone recording');
-    // Background Electron windows throttle DOM timers. Drive the synthetic input from the extension host clock.
-    for (let i = 0; i < 12; i++) {
-      await ui(`d => d.defaultView.feedTestMic()`);
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    await click('audio-microphone');
-    await until(() => ui(`d => d.getElementById('message').value`), v => v === question, 'editable voice transcript');
+    await until(() => ui(`d => d.getElementById('audio-microphone').getAttribute('aria-pressed')`), v => v === 'true', 'LiveKit microphone');
+    await ui(`d => d.defaultView.finishTestUtterance(${JSON.stringify(question)},'te-IN')`);
     assert.equal(await ui(`d => d.defaultView.testMicTrack.readyState`), 'ended');
-    assert.equal(requests.length, 1, 'dictation waits for Send');
-    await click('ask');
     await until(async () => requests.length, value => value === 2, 'follow-up');
     assert.equal(requests[1].history.length, 2);
     assert.equal(requests[1].message, question);
+    assert.equal(requests[1].coaching_language, 'te-IN');
     assert.equal(requests[1].project_context.milestone, requests[0].project_context.milestone);
     await until(async () => speech.length, v => v === 1, 'automatic spoken reply');
     assert.ok(speech[0].includes('tool observation') && (await visible()).messages.includes('tool observation'),
@@ -222,7 +201,7 @@ export async function run() {
     await until(visible, value => value?.check.startsWith('Earlier files'), 'stale check label');
     await ui(`d => {d.getElementById('note').value='Next: trace tied search scores.'; d.getElementById('externalHelp').value='reported'; return true;}`);
     await click('checkpoint');
-    await until(visible, value => value?.saved.includes('2 Instructor help turns'), 'checkpoint assistance count');
+    await until(visible, value => value?.saved.includes('2 mentor help turns'), 'checkpoint assistance count');
     await vscode.commands.executeCommand('dhimantai.hideCoach');
     await vscode.commands.executeCommand('dhimantai.openProjectCoach');
     await until(visible, value => value?.step === '1' && value.note === 'Next: trace tied search scores.', 'resume checkpoint');
@@ -446,11 +425,14 @@ export async function run() {
     await vscode.commands.executeCommand('dhimantai.openProjectCoach', shelfRoot);
     await until(visible, value => value?.title === 'Shelf Capstone · fix a repository bug', 'Shelf capstone panel');
     if (vscode.env.appName === 'dhimantAI') {
-      const layout = () => cdp.evaluate(`({
-        files: !!document.querySelector('.explorer-folders-view')?.checkVisibility(),
-        learn: !!document.querySelector('.pane-header[aria-label*="Learn"]')?.checkVisibility(),
-        coach: !!document.querySelector('.part.auxiliarybar')?.checkVisibility()
-      })`);
+      const layout = () => cdp.evaluate(`(() => {
+        const visible = selector => {
+          const el = document.querySelector(selector), rect = el?.getBoundingClientRect();
+          return !!rect && rect.width > 0 && rect.height > 0 && el.checkVisibility();
+        };
+        return {files:visible('.explorer-folders-view'), coach:visible('.part.auxiliarybar'),
+          learn:visible('.part.sidebar') && /Learning/i.test(document.querySelector('.part.sidebar .title-label')?.textContent || '')};
+      })()`);
       const readme = vscode.window.activeTextEditor!.document;
       await until(layout, s => s.files && s.coach, 'project files and Coach');
       await vscode.commands.executeCommand('dhimantai.courseCatalog');
@@ -535,7 +517,7 @@ export async function run() {
     results.push({step:'failure', error:String(error), visible:await visible(), output:await ui(`d => d.getElementById('output').textContent`)}); await shot('failure'); throw error;
   } finally {
     Api.prototype.notebookCoach = original;
-    Api.prototype.dictate = originalDictate; Api.prototype.audioGrant = originalGrant;
+    Api.prototype.voiceInputGrant = originalDictate; Api.prototype.audioGrant = originalGrant;
     Api.prototype.projectHandoffAvailability = originalAvailability; Api.prototype.sendProjectHandoff = originalSend;
     Api.prototype.projectHandoffDetail = originalDetail;
     (vscode.window as any).showInformationMessage = originalInfo; (vscode.window as any).showSaveDialog = originalSave;

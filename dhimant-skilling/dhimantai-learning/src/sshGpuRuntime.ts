@@ -61,7 +61,7 @@ export class SshGpuRuntime implements vscode.Disposable {
       await this.connection.initialize();
       this.source=await readFile(join(this.media,'gpu_setup.py'),'utf8');
       const files:Record<string,string>={};
-      for(const name of ['cells.py','sql_runtime.py','lab_scenarios.py','gpu_setup.py','cluster.py'])
+      for(const name of ['cells.py', 'cell_shell.py','lesson_trace.py','sql_runtime.py','lab_scenarios.py','gpu_setup.py','cluster.py'])
         files[name]=(await readFile(join(this.media,name==='cluster.py'?'inference_cluster.py':name))).toString('base64');
       this.config={session:randomBytes(12).toString('hex'),workspace:createHash('sha256').update(this.scope).digest('hex').slice(0,24),recipe:this.requirement};
       await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'Preparing GPU runtime',cancellable:true},async(progress,cancel)=>{
@@ -203,7 +203,7 @@ export class SshGpuRuntime implements vscode.Disposable {
     if(this.saving)throw new Error('Wait for the lab workspace to finish saving.');
     return this.cells.run(language,source,stdin,options);
   }
-  input(value:string|null){this.cells?.input(value);}
+  controlTerminal(id:string, control:import('./notebookCells').TerminalControl) { this.cells?.terminal(id, control); }
   restart(){this.cells?.restart();}
   async terminal() {
     if(!this.ready||this.saving)throw new Error('Connect the GPU runtime before opening its terminal.');

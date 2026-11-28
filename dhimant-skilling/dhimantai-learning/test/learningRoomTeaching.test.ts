@@ -353,26 +353,27 @@ test('ERPNext reopen shows four verified tasks, keeps the next task unfinished, 
       {id:'private-note',kind:'note',text:'Remember to check stock.'},
     ]}});
     post({type:'grant',attempt,url:'unused',token:'unused',chapterId:chapter,browserCourse:true,browserProgress:progress});await tick();
-    assert.match($('#feed').textContent!,/4\/18 tasks completed/);
+    assert.doesNotMatch($('#feed').textContent!,/tasks completed|Course progress/);
+    assert.match($('.notebook-progress').textContent!,/4\/18 tasks completed/);
     assert.match($('.notebook-progress').textContent!,/Order from your supplier · Not completed · 4\/18 tasks completed/);
-    assert.match($('#feed').textContent!,/Create a stock item — Completed/);
-    assert.match($('#feed').textContent!,/Order from your supplier — Not completed/);
+    assert.match($('.notebook-progress').textContent!,/Create a stock item — Completed/);
+    assert.match($('.notebook-progress').textContent!,/Order from your supplier — Not completed/);
     assert.equal($<HTMLTextAreaElement>('#feed textarea').value,'Remember to check stock.');
     assert.equal(w.document.querySelectorAll('#lesson-list .lesson-covered').length,4);
     data({method:'topic_update',subject:ERP_COURSE,chapter_name:tasks[4].title,lesson_name:tasks[4].title,
       lesson_topics:[{id:'overview',title:'Overview',covered:false,learning_status:'Not taught'}]});
     assert.doesNotMatch($('#feed').textContent!,/Overview|Not taught/);
-    assert.match($('#feed').textContent!,/4\/18 tasks completed/);
+    assert.match($('.notebook-progress').textContent!,/4\/18 tasks completed/);
 
     const checked=browserCourseProgress(tasks,{...saved,buying:{record:'PO-1',checkedAt:'2026-11-13T01:00:00Z',assisted:false,explained:false}});
     post({type:'browserObservation',attempt,chapter,observation:null,progress:checked});
-    assert.match($('#feed').textContent!,/4\/18 tasks completed.*Explanation pending/s);
+    assert.match($('.notebook-progress').textContent!,/4\/18 tasks completed.*Explanation pending/s);
     const complete=browserCourseProgress(tasks,{...saved,buying:{record:'PO-1',checkedAt:'2026-11-13T01:00:00Z',assisted:false,explained:true}});
     post({type:'browserObservation',attempt:attempt-1,chapter,observation:null,progress:complete});
-    assert.match($('#feed').textContent!,/4\/18 tasks completed/,'stale sessions cannot change progress');
+    assert.match($('.notebook-progress').textContent!,/4\/18 tasks completed/,'stale sessions cannot change progress');
     post({type:'browserObservation',attempt,chapter,observation:null,progress:complete});
-    assert.match($('#feed').textContent!,/5\/18 tasks completed/);
-    assert.equal([...w.document.querySelectorAll('#feed h3')].filter(n=>n.textContent==='Course progress').length,1);
+    assert.match($('.notebook-progress').textContent!,/5\/18 tasks completed/);
+    assert.equal([...w.document.querySelectorAll('.notebook-progress h3')].filter(n=>n.textContent==='Course progress').length,1);
     post({type:'signedOut'});
     assert.doesNotMatch($('#feed').textContent!,/tasks completed|stock item/);
   } finally {await ui.close();}
@@ -475,8 +476,10 @@ test('opening a course shows topic coverage without granting access or losing re
     assert.match($('.topic-coverage').textContent!, /Taught · Needs review/);
     assert.match($('.topic-coverage').textContent!, /Slicing Not started/);
     const locked = [...w.document.querySelectorAll<HTMLButtonElement>('#lesson-list button')][1];
-    assert.equal(locked.disabled, true); assert.match(locked.textContent!, /Locked/);
+    assert.equal(locked.disabled, false); assert.match(locked.textContent!, /Locked · View pricing/);
     locked.click(); assert.equal(sent.some(m => m.type === 'join'), false);
+    assert.equal(sent.at(-1).type, 'courseCatalog');
+    assert.equal(sent.at(-1).chapterId, 'c2');
     $<HTMLButtonElement>('#lesson-list button').click();
     assert.equal(sent.at(-1).chapterId, 'c1');
     post({type:'signedOut'});
@@ -493,7 +496,7 @@ test('lesson chooser explains ended access, keeps reload reachable and refreshes
     const expired = [...w.document.querySelectorAll<HTMLButtonElement>('#lesson-list button')].find(b => /Loops/.test(b.textContent!))!;
     assert.equal(expired.textContent, 'Loops · Access ended · Buy again');
     assert.equal(expired.disabled, false, 'focusable, so its explanation is reachable');
-    assert.equal(expired.getAttribute('aria-disabled'), 'true');
+    assert.equal(expired.hasAttribute('aria-disabled'), false);
     assert.match($(`#${expired.getAttribute('aria-describedby')}`).textContent!, /buy the course again/);
     expired.click();
     assert.equal(sent.at(-1).type, 'courseCatalog');
@@ -532,7 +535,10 @@ test('Instructor teaches through open questions, struggle signals, Your turn cel
     ]});
     assert.equal($('#lesson-list .topic-coverage').textContent!.includes('✓ Indexing'), true);
     assert.match($('#lesson-list .topic-coverage').textContent!, /Needs review/);
-    assert.match($('#feed').innerHTML, /<s>Indexing<\/s>/, 'live recap also strikes only covered topics');
+    assert.equal($('.notebook-progress .lesson-progress-count').textContent, '1/2 topics completed');
+    assert.ok($('.notebook-progress [data-topic-review="a"]'), 'taught topic has Review action');
+    assert.ok($('.notebook-progress [data-topic-learn-again="a"]'), 'taught topic has Learn Again action');
+    assert.equal($('.notebook-progress [data-topic-review="b"]'), null, 'untaught topic has no Review action');
     data({method:'tutor_example_progress', subject:'Python', chapter_name:'Lists', lesson_name:'Lists',
       solved_example_id:'example', lesson_topics:[{id:'x',title:'Example only',covered:true,learning_status:'Taught — not assessed'}]});
     assert.doesNotMatch($('#lesson-list').textContent!, /Example only/);
@@ -541,12 +547,12 @@ test('Instructor teaches through open questions, struggle signals, Your turn cel
     const actions = () => [...w.document.querySelectorAll<HTMLButtonElement>('[data-lesson-action]')].filter(b => !b.hidden);
     assert.deepEqual(actions(), [], 'an open question offers the existing help ladder, not Continue or a worked example');
     assert.equal($<HTMLButtonElement>('#practice-help').disabled, false);
-    publish('Not quite: negative indexes count from the end.', {tutor_feedback:true, tutor_checkpoint_id:'q1'});
+    publish('Not quite: negative indexes count from the end.', {tutor_feedback:true, tutor_verdict:'incorrect', tutor_checkpoint_id:'q1'});
     assert.equal(w.document.getElementById('smaller-step')?.hidden ?? true, true);
     assert.deepEqual(actions().map(b => b.textContent), ['Continue'], 'feedback restores the one current lesson control');
     assert.equal($('#feed [data-lesson-action]'), null, 'saved cards never carry session actions');
     publish('Try again: what does `xs[-2]` return?', {is_question_prompt:true, tutor_checkpoint_id:'q2'});
-    publish('Still not quite.', {tutor_feedback:true, tutor_checkpoint_id:'q2'});
+    publish('Still not quite.', {tutor_feedback:true, tutor_verdict:'partial', tutor_checkpoint_id:'q2'});
     const chip = $<HTMLButtonElement>('#smaller-step');
     assert.equal(chip.hidden, false, 'two unaccepted answers offer a smaller step');
     chip.click(); await tick();
@@ -597,18 +603,87 @@ test('restored cards share one current lesson control and optional actions follo
     const current = $<HTMLButtonElement>('#composer-mode-actions [data-lesson-action="continueLesson"]');
     assert.equal(current.hidden, false); assert.equal(current.type, 'button');
     const options = () => [...w.document.querySelectorAll<HTMLButtonElement>('#notebook-help-actions [data-lesson-action]')].filter(b => !b.hidden);
-    assert.deepEqual(options().map(b => b.textContent), ['Worked example','Try on my own']);
+    assert.deepEqual(options().map(b => b.textContent), ['Formal version','Worked example','Try on my own']);
+    assert.equal(options().find(b => b.textContent === 'Worked example')?.dataset.fullSolution, 'true');
     assert.equal($<HTMLDetailsElement>('.more-asks').open, false);
     const field = $<HTMLTextAreaElement>('#message'); field.value = 'My unsent answer';
-    options()[0].click(); await tick();
+    options().find(b => b.textContent === 'Worked example')!.click(); await tick();
     assert.match(chats.at(-1)!, /Show a worked example/);
     assert.equal(field.value, 'My unsent answer', 'an optional action does not submit the draft');
     publish('Here is the example.', {tutor_action_menu:{actions:['summarize']}});
-    assert.deepEqual(options().map(b => b.textContent), ['Recap'], 'older cards cannot keep stale choices active');
+    assert.deepEqual(options().map(b => b.textContent).sort(), ['Formal version','Recap'], 'older cards cannot keep stale choices active');
     assert.equal(w.document.querySelectorAll('[data-lesson-action="continueLesson"]').length, 1);
     assert.equal($('#composer-mode-actions [data-lesson-action="continueLesson"]'), current, 'typing and new replies preserve the control');
     $<HTMLButtonElement>('#end').click(); await tick();
     assert.equal(current.disabled, true); assert.ok(options().every(b => b.disabled));
+  } finally { await ui.close(); }
+});
+
+test('answer outcomes, not feedback alone, drive smaller steps and learner-confirmed level offers', async () => {
+  const ui = room('Instructor'), {w, sent, post, publish, rpcs, chats, tick, $} = ui;
+  try {
+    post({type:'openTutor'});
+    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Python', chapters}]});
+    $<HTMLButtonElement>('#lesson-list button').click();
+    const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook', attempt, documentKey:'lesson', notebook:emptyNotebook()});
+    post({type:'grant', attempt, url:'unused', token:'unused', chapterId:'c1'}); await tick();
+    const offer = () => w.document.getElementById('level-offer');
+    const answer = (id: string, extra: Record<string, unknown>) => {
+      publish('Question ' + id, {is_question_prompt:true, tutor_checkpoint_id:id});
+      publish('Feedback ' + id, {tutor_feedback:true, tutor_checkpoint_id:id, ...extra});
+    };
+    answer('a', {tutor_verdict:'correct', tutor_assisted:false});
+    answer('b', {tutor_verdict:'correct', tutor_assisted:false});
+    assert.equal(w.document.getElementById('smaller-step')?.hidden ?? true, true, 'correct answers are not struggles');
+    answer('c', {tutor_verdict:'correct', tutor_assisted:true});
+    assert.equal(offer()?.hidden ?? true, true, 'a helped answer does not count toward stepping up');
+    answer('d', {tutor_feedback:true});
+    assert.equal(offer()?.hidden ?? true, true, 'feedback without a verdict is not evidence');
+    answer('e', {tutor_verdict:'correct', tutor_assisted:false});
+    assert.equal(offer()!.hidden, false);
+    assert.match(offer()!.textContent!, /3 in a row on your own.*Intermediate Level/);
+    $<HTMLButtonElement>('#level-offer [data-level]').click(); await tick();
+    const levelChanges = rpcs.filter(r => r.method === 'set_learning_preferences').length;
+    assert.equal(JSON.parse(rpcs.filter(r => r.method === 'set_learning_preferences').at(-1).payload).teaching_style, 'practitioner');
+    assert.equal(offer()!.hidden, true);
+
+    for (const id of ['f', 'g', 'h']) answer(id, {tutor_verdict:'incorrect'});
+    assert.equal($('#smaller-step').hidden, false);
+    assert.match(offer()!.textContent!, /gentler pace.*Entry Level/);
+    $<HTMLButtonElement>('#level-offer [data-dismiss]').click();
+    assert.equal(offer()!.hidden, true, 'the learner can decline');
+    assert.equal(rpcs.filter(r => r.method === 'set_learning_preferences').length, levelChanges, 'declining keeps the level');
+
+    const diagnostic = w.document.querySelector<HTMLButtonElement>('[data-diagnostic-check]');
+    assert.ok(diagnostic, 'the chapter card keeps the diagnostic');
+    diagnostic.disabled = false; diagnostic.click(); await tick();
+    assert.match(chats.at(-1)!, /diagnostic/);
+    publish('Thanks! Based on your answers I recommend Expert Level for this chapter.');
+    assert.match(offer()!.textContent!, /recommends Expert Level/);
+  } finally { await ui.close(); }
+});
+
+test('the chapter card asks for the learner goal once and live preferences carry it', async () => {
+  const ui = room('Instructor'), {w, sent, post, rpcs, tick, $} = ui;
+  try {
+    post({type:'openTutor'});
+    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Python', chapters}]});
+    $<HTMLButtonElement>('#lesson-list button').click();
+    const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook', attempt, documentKey:'lesson', notebook:emptyNotebook()});
+    post({type:'grant', attempt, url:'unused', token:'unused', chapterId:'c1'}); await tick();
+    const live = () => rpcs.filter(r => r.method === 'set_learning_preferences').map(r => JSON.parse(r.payload)).filter(p => 'preferred_name' in p);
+    assert.ok(live().every(p => !('learning_goal' in p)), 'nothing extra is sent before the learner sets a goal');
+    const goal = $<HTMLInputElement>('#chapter-goal');
+    goal.value = '  automate   monthly reports ';
+    goal.closest('form')!.dispatchEvent(new w.Event('submit', {cancelable:true}));
+    const saved = sent.filter(m => m.type === 'learningPreferences').at(-1);
+    assert.equal(saved.preferences.learning_goal, 'automate monthly reports');
+    post({type:'learningPreferences', preferences:saved.preferences}); await tick();
+    assert.equal(live().at(-1).learning_goal, 'automate monthly reports');
+    assert.equal(w.document.getElementById('chapter-goal'), null, 'the question is not asked again');
+    assert.match($('#chapter-proficiency .goal-prompt').textContent!, /automate monthly reports/);
   } finally { await ui.close(); }
 });
 
@@ -910,6 +985,10 @@ test('coaching language reaches live Tutor, duplicate figures stay in history, a
     data({method:'award_xp',award_id:'award-1',amount:20,reason:'Persistence'});
     data({method:'award_xp',award_id:'award-2',amount:10,reason:'A clear explanation'});
     data({method:'award_xp',award_id:'invalid',amount:-10});
+    const xpToast = w.document.getElementById('xp-toast');
+    assert.equal(xpToast?.textContent, '+10 XP');
+    assert.equal(xpToast?.hidden, false);
+    assert.doesNotMatch($('#feed').textContent!, /\+20 XP|\+10 XP/, 'XP award uses toast without cluttering chat');
     data({method:'tutor_session_summary',big_idea:'Lists keep values in order.'});
     assert.match($('#feed').textContent!,/Lesson XP earned: 30 XP/);
     data({method:'award_xp',award_id:'late-award',amount:10,reason:'Finished the lesson'});
@@ -1105,6 +1184,9 @@ test('an Instructor error demonstration completes on its predicted exception and
     const editors = [...w.document.querySelectorAll<HTMLElement>('.practice-code-editor')];
     assert.equal(editors.length, 2);
     function run(editor: HTMLElement, error: string) {
+      const prediction = editor.querySelector<HTMLTextAreaElement>('.practice-prediction')!;
+      prediction.value = '300, then 150, then TypeError';
+      prediction.dispatchEvent(new w.Event('input'));
       editor.querySelector<HTMLButtonElement>('[data-action="run"]')!.click();
       const request = sent.filter(m => m.type === 'codeAction').at(-1);
       post({...request, type:'codeResult', execution:{status:'exited', exit_code:1, stdout:'300\n150\n' + error,
@@ -1132,5 +1214,253 @@ test('an Instructor error demonstration completes on its predicted exception and
     view.dispatch({changes:{from:0,to:view.state.doc.length,insert:'print(None + 1)'}});
     run(editors[0], 'TypeError: other failure');
     assert.equal(w.document.querySelectorAll('.execution-followup a').length, 2);
+  } finally { await ui.close(); }
+});
+
+test('Python Programming requires a prediction and steps through the run that produced its feedback', async () => {
+  const ui = room('Instructor');
+  const {w, post, sent, $, tick, publish} = ui;
+  try {
+    post({type:'openTutor'});
+    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Python Programming',
+      chapters:[{id:'c1', name:'Chapter 1: Your first Python program'}]}]});
+    $('#lesson-list button').click();
+    const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook', attempt, documentKey:'python', notebook:emptyNotebook()});
+    post({type:'grant', attempt, url:'unused', token:'unused', chapterId:'c1'}); await tick();
+    publish('Trace the assignments.\n```python\na = 4\nb = a + 1\nprint(a, b)\n```');
+    const run = $<HTMLButtonElement>('[data-action=run]');
+    const review = $<HTMLButtonElement>('[data-action=check]');
+    const predict = $<HTMLTextAreaElement>('.practice-prediction');
+    const enter = (value: string) => { predict.value = value; predict.dispatchEvent(new w.Event('input')); };
+    assert.equal(run.disabled, true);
+    enter('  \n '); assert.equal(run.disabled, true); assert.equal(review.disabled, true);
+    run.click(); review.click(); review.click();
+    assert.equal(sent.filter(m => m.type === 'codeAction').length, 0);
+    assert.doesNotMatch($('.skill-practice').textContent!, /debugger|unit test|Design your own tests|Search skills/i);
+    enter('4 0'); assert.equal(run.disabled, false);
+    enter(''); assert.equal(run.disabled, true);
+    enter('4 0'); run.click();
+    const command = sent.filter(m => m.type === 'codeAction').at(-1);
+    assert.equal(command.prediction, '4 0');
+    assert.equal(run.textContent, 'Stop'); assert.equal(run.disabled, false);
+    const execution = {status:'exited', exit_code:0, stdout:'4 5\n', stderr:'', truncated:false, lessonTrace:{
+      limited:false, outputAligned:true, steps:[
+        {line:1, function:'<module>', frame:0, locals:{a:'4'}, previous:{a:null}},
+        {line:2, function:'<module>', frame:0, locals:{a:'4', b:'5'}, previous:{b:null}},
+        {line:3, function:'<module>', frame:0, locals:{a:'4', b:'5'}, previous:{}, outputLine:1, printed:'4 5\n'},
+      ]}};
+    post({...command, type:'codeResult', execution});
+    assert.equal($('.prediction-incorrect pre').textContent, '4 0');
+    assert.equal($('.prediction-columns > div:last-child pre').textContent, '4 5\n');
+    assert.match($('.lesson-prediction').textContent!, /Line 2 ran b = a \+ 1.*4 \+ 1 = 5/);
+    const current = () => $('.lesson-trace [aria-current=step]').textContent;
+    assert.match(current()!, /a = 4/);
+    $('.lesson-trace .trace-nav button:last-child').click();
+    assert.match(current()!, /b = a \+ 1/); assert.match($('.trace-values').textContent!, /b5 \(new\)/);
+    $('.lesson-prediction > button').click();
+    assert.match(current()!, /b = a \+ 1/);
+    $('.lesson-trace .trace-nav button:last-child').click();
+    assert.match(current()!, /print\(a, b\)/);
+    assert.equal($<HTMLButtonElement>('.lesson-trace .trace-nav button:last-child').disabled, true);
+    $('.lesson-trace .trace-nav button').click();
+    assert.match(current()!, /b = a \+ 1/);
+    assert.equal(sent.filter(m => m.type === 'codeAction').length, 1);
+    enter('4 5'); run.click();
+    post({...sent.filter(m => m.type === 'codeAction').at(-1), type:'codeResult', execution});
+    assert.match($('.execution-result .lesson-prediction').textContent!, /Prediction matched/);
+    assert.equal($('.practice-code-editor > .execution-result .prediction-incorrect'), null);
+
+    const view = EditorView.findFromDOM($('.cm-editor'))!;
+    view.dispatch({changes:{from:0, to:view.state.doc.length, insert:'b = 5'}});
+    assert.equal(predict.value, ''); assert.equal(run.disabled, true);
+    enter('no output'); run.click();
+    post({...sent.filter(m => m.type === 'codeAction').at(-1), type:'codeResult',
+      execution:{...execution, stdout:'', lessonTrace:undefined}});
+    assert.match($('.practice-code-editor > .execution-result').textContent!, /Prediction matched/);
+
+    publish('## Your turn\nWhat will the following line print?\n```python\nprint("click Run")\n```\nEnter your prediction in the “I expect it to print” field and click Run.',
+      {is_question_prompt:true, tutor_checkpoint_id:'written', tutor_answer_kind:'written'});
+    const card = $('[data-entry-kind=question]');
+    assert.match(card.textContent!, /in the message box and submit your answer/);
+    assert.match(card.querySelector('pre')!.textContent!, /print\("click Run"\)/);
+    assert.equal(card.querySelector('[data-action=run]'), null);
+    card.querySelector<HTMLButtonElement>('[data-question-hint]')!.click();
+    assert.equal(w.document.activeElement, $('#message'));
+    assert.equal($('#send').title, 'Answer Instructor');
+  } finally { await ui.close(); }
+});
+
+test('Python chapter skills follow the published lesson topic', async () => {
+  const ui = room('Instructor');
+  const {post, sent, $, tick, publish} = ui;
+  try {
+    post({type:'openTutor'});
+    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Python Programming',
+      chapters:[{id:'c5', name:'Chapter 5: Functions, tests and debugging'}]}]});
+    $('#lesson-list button').click();
+    const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook', attempt, documentKey:'tests', notebook:emptyNotebook()});
+    post({type:'grant', attempt, url:'unused', token:'unused', chapterId:'c5'}); await tick();
+    publish('```python\nprint(5)\n```');
+    const picker = $<HTMLSelectElement>('[data-skill-picker]');
+    assert.deepEqual(Array.from(picker.options, option => option.value), ['read_code','debug','unit_test','functional_test']);
+    picker.value = 'unit_test'; picker.dispatchEvent(new ui.w.Event('change'));
+    assert.match($('[data-skill-definition]').textContent!, /one small component/);
+    assert.ok($('.native-debug-controls'));
+    assert.equal($<HTMLButtonElement>('[data-skill=run-test-code]').disabled, true);
+  } finally { await ui.close(); }
+});
+
+test('notebook shell and SQL prompts submit one command per Enter and keep multiline editors native', async () => {
+  const ui = room('Instructor'), {w, sent, post, $, tick} = ui;
+  try {
+    post({type:'openTutor'});
+    post({type:'tutorLessons',attempt:sent.at(-1).attempt,courses:[{name:'Terminal and Linux Basics',chapters}]});
+    $('#lesson-list button').click();
+    const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook',attempt,documentKey:'terminal',notebook:emptyNotebook(),codeLanguage:'bash'});
+    post({type:'grant',attempt,chapterId:'c1',url:'unused',token:'unused',codeLanguage:'bash'}); await tick();
+    $('#add-code').click();
+    const view = EditorView.findFromDOM($('.cm-editor'))!;
+    const key = (value:string,shiftKey=false) => view.contentDOM.dispatchEvent(new w.KeyboardEvent('keydown',{key:value,bubbles:true,cancelable:true,shiftKey}));
+    const actions = () => sent.filter(item => item.type === 'codeAction');
+    const type = (value:string) => view.dispatch({changes:{from:0,to:view.state.doc.length,insert:value},selection:{anchor:value.length}});
+    assert.equal($('.command-prompt').textContent,'$');
+    type('pwd'); key('Enter'); key('Enter');
+    assert.equal(actions().length,1);
+    assert.equal(actions()[0].source,'pwd');
+    post({...actions()[0],type:'codeResult',execution:{status:'exited',exit_code:0,stdout:'/workspace\n',stderr:'',truncated:false}});
+    assert.equal(view.state.doc.length,0);
+    assert.match($('.command-transcript').textContent!,/\$ pwd\n\/workspace/);
+    key('Enter'); assert.equal(actions().length,1);
+    key('ArrowUp'); assert.equal(view.state.doc.toString(),'pwd');
+    key('ArrowDown'); assert.equal(view.state.doc.toString(),'');
+    const language = $<HTMLSelectElement>('.practice-editor-heading select');
+    language.value = 'sql'; language.dispatchEvent(new w.Event('change'));
+    type('SELECT'); key('Enter',true); assert.equal(actions().length,1); assert.match(view.state.doc.toString(),/\n/);
+    type('SELECT 1;'); key('Enter'); assert.equal(actions()[1].language,'sql'); assert.equal(actions()[1].source,'SELECT 1;');
+    post({...actions()[1],type:'codeResult',execution:{status:'exited',exit_code:0,stdout:'1',stderr:'',truncated:false}});
+    language.value = 'python'; language.dispatchEvent(new w.Event('change'));
+    type('x = 1'); key('Enter'); assert.equal(actions().length,2);
+    assert.equal($('.command-prompt').hidden,true);
+  } finally {await ui.close();}
+});
+
+test('Lesson Progress offers Review and Learn Again per topic without losing progress or XP', async () => {
+  const ui = room('Instructor'), {w, sent, post, publish, data, chats, chatOptions, $, tick} = ui;
+  try {
+    post({type:'openTutor'});
+    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Data Structures with Python', chapters}]});
+    $('#lesson-list button').click();
+    const attempt = sent.at(-1).attempt;
+    const saved = {
+      ...emptyNotebook(),
+      xpAwards: [{amount: 25, award_id: 'xp-1'}],
+      cells: [
+        {id:'c-exp', kind:'board' as const, text:'Big-O measures growth rate.\n\n```python\nfor x in xs:\n    print(x)\n```', packet:{active_subtopic:'Why cost matters'}},
+        {id:'c-code', kind:'code' as const, text:'n = len(xs)', packet:{language:'python'}},
+        {id:'c-next', kind:'board' as const, text:'Best, worst and typical cases differ.', packet:{active_subtopic:'Best, worst and typical cases'}},
+        {id:'c-prog', kind:'recap' as const, text:'### Lesson progress', packet:{
+          progressScope: JSON.stringify(['Data Structures with Python', 'Lists', 'Lists']),
+          lesson_topics: [
+            {id:'why-cost', title:'Why cost matters', covered:true, learning_status:'Answered independently'},
+            {id:'cases', title:'Best, worst and typical cases', covered:true, learning_status:'Needs review'},
+            {id:'mistakes', title:'Common mistakes', covered:false, learning_status:'Not taught'},
+          ],
+        }},
+      ],
+    };
+    post({type:'restoreNotebook', attempt, documentKey:'ds-ch1', notebook:saved});
+    post({type:'grant', attempt, url:'unused', token:'unused', chapterId:'c1', lesson:{subject:'Data Structures with Python', name:'Lists'}});
+    await tick();
+
+    assert.equal($('#feed .lesson-progress-card'), null);
+    assert.equal($<HTMLDetailsElement>('.notebook-progress').open,false);
+    $<HTMLElement>('.notebook-progress summary').click();
+    assert.equal($<HTMLDetailsElement>('.notebook-progress').open,true);
+    assert.equal($('.lesson-progress-count').textContent, '2/3 topics completed');
+    assert.ok($('[data-topic-learn-again="cases"]').classList.contains('is-primary'), 'Needs review highlights Learn Again');
+    assert.equal($('[data-topic-review="mistakes"]'), null, 'Not taught topic omits Review and Learn Again');
+
+    const chatCountBefore = chats.length;
+    $<HTMLButtonElement>('[data-topic-review="why-cost"]').click();
+    const reviewPanel = $('.topic-review-panel');
+    assert.equal(reviewPanel.hidden, false);
+    assert.match(reviewPanel.textContent!, /Review: Why cost matters/);
+    assert.match(reviewPanel.textContent!, /Big-O measures growth rate/);
+    assert.match(reviewPanel.textContent!, /n = len\(xs\)/);
+    assert.equal(chats.length, chatCountBefore, 'Review is local and does not send a chat turn');
+
+    $<HTMLButtonElement>('.topic-review-panel [data-resume-lesson]').click();
+    assert.equal(reviewPanel.hidden, true, 'Resume lesson closes the review panel');
+    assert.equal($<HTMLDetailsElement>('.notebook-progress').open,false);
+    $<HTMLElement>('.notebook-progress summary').click();
+
+    $<HTMLButtonElement>('[data-topic-learn-again="cases"]').click(); await tick();
+    assert.equal(chatOptions.at(-1).attributes.tutor_action_id, 'restartTopic:cases');
+    assert.match(chats.at(-1)!, /Best, worst and typical cases/);
+
+    // Verify earned XP is preserved in session summary and progress is intact.
+    data({method:'tutor_session_summary', big_idea:'Cost matters.', topics_discussed:[], is_complete:false, partial_session:true, summary_scope:'partial'});
+    assert.match($('#feed article:last-child').textContent!, /25 XP/);
+
+    $<HTMLButtonElement>('#end').click(); await tick();
+    assert.equal($<HTMLButtonElement>('[data-topic-learn-again="why-cost"]').disabled, true);
+    assert.equal($<HTMLButtonElement>('[data-topic-review="why-cost"]').disabled, false, 'Review stays available offline');
+  } finally { await ui.close(); }
+});
+
+test('Instructor shell references stay in the lesson and written questions use the notebook composer', async () => {
+  const ui = room('Instructor');
+  const {w, post, sent, $, tick, publish, data} = ui;
+  try {
+    post({type:'openTutor'});
+    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Terminal and Linux Basics',
+      chapters:[{id:'c1', name:'Chapter 1: Navigation'}]}]});
+    $('#lesson-list button').click();
+    const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook', attempt, documentKey:'linux', notebook:emptyNotebook()});
+    post({type:'grant', attempt, url:'unused', token:'unused', chapterId:'c1'}); await tick();
+
+    publish('This command lists the directory.\n```bash\nls -la\n```');
+    assert.equal(w.document.querySelector('.instructor-commands code')?.textContent, 'ls -la');
+    assert.equal(w.document.querySelector('.practice-code-editor, .code-block-header, .notebook-terminal-cell'), null);
+
+    data({method:'display_on_screen', content:'## Your turn\nWhat does `pwd` print?', is_question_prompt:true, tutor_checkpoint_id:'cp-1', tutor_answer_kind:'written'});
+    const hint = w.document.querySelector<HTMLElement>('[data-question-hint="cp-1"]')!;
+    assert.match(hint.textContent!, /submit it \(↑\)/);
+    assert.doesNotMatch(hint.textContent!, /Answer Instructor/);
+  } finally { await ui.close(); }
+});
+
+test('An Instructor excerpt of a larger program is shown as reading code, not a cell that raises NameError', async () => {
+  const ui = room('Instructor');
+  const {w, post, sent, $, tick, publish} = ui;
+  try {
+    post({type:'openTutor'});
+    post({type:'tutorLessons', attempt:sent.at(-1).attempt, courses:[{name:'Kubernetes & Backend Reliability',
+      chapters:[{id:'c1', name:'Chapter 1: Docker Images, Reproducible Builds and CI/CD'}]}]});
+    $('#lesson-list button').click();
+    const attempt = sent.at(-1).attempt;
+    post({type:'restoreNotebook', attempt, documentKey:'backend', notebook:emptyNotebook()});
+    post({type:'grant', attempt, url:'unused', token:'unused', chapterId:'c1'}); await tick();
+
+    const excerpt = 'for name, text in files.items():\n    path = directory / name\n    if not path.exists():\n        path.write_text(text)';
+    publish('The cell calls `scaffold()`:\n```python\n' + excerpt + '\n```');
+    const card = w.document.querySelector<HTMLElement>('.code-excerpt')!;
+    assert.ok(card, 'the fragment stays a read-only code card');
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length, 0);
+    assert.match(card.querySelector('.code-block-badge')!.textContent!, /not runnable on its own/);
+    assert.match(card.querySelector('.code-excerpt-note')!.textContent!, /directory, files/);
+
+    // A complete cell defines names that a later block in the same kernel may rely on.
+    publish('```python\nfiles = {"a.txt": "hi"}\nfrom pathlib import Path\ndirectory = Path("lab")\n```\n\n```python\n' + excerpt + '\n```');
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length, 2);
+
+    // The learner can still open the excerpt to complete it themselves.
+    card.querySelector<HTMLButtonElement>('.code-excerpt-note button')!.click();
+    assert.equal(w.document.querySelectorAll('.practice-code-editor').length, 3);
+    assert.equal(w.document.querySelector('.code-excerpt'), null);
   } finally { await ui.close(); }
 });

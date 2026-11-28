@@ -1,5 +1,5 @@
 import type { SkillingPathway } from './skilling';
-import type { CourseCertificate, CourseGrade } from './courseworkProgress';
+import type { CourseCertificate, CourseGrade, PendingCoursework } from './courseworkProgress';
 import { CertificateCourse, CertificateStatus, certificateStatus } from './certificateDashboard';
 import { activityProgress, attention, escape, gradingGuide, icon, type ActionButton } from './gradeComponents';
 import { courseGradeDetail, gradeTabsClient } from './courseGradeDetail';
@@ -64,7 +64,7 @@ function certificateLibrary(courses: CertificateCourse[], certificates: CourseCe
     <p id="certificate-empty" hidden>No items in this section yet. Choose All to see your courses and next steps.</p>`;
 }
 
-export function courseGradeHtml(nonce: string, grade: CourseGrade | undefined, certificates: CourseCertificate[], notice: string, pending: number, busy = false, library = false, learning?:SkillingPathway, scope='', courses: CertificateCourse[] = [], lessons?: {open:number; total:number}, syncReady = true) {
+export function courseGradeHtml(nonce: string, grade: CourseGrade | undefined, certificates: CourseCertificate[], notice: string, pending: Pick<PendingCoursework, 'kind' | 'id'>[], busy = false, library = false, learning?:SkillingPathway, scope='', courses: CertificateCourse[] = [], lessons?: {open:number; total:number}, syncReady = true) {
   const button: ActionButton = (text, action, id = '', disabled = false) => `<button data-action="${action}" data-id="${escape(id)}" ${busy || disabled ? 'disabled' : ''}>${disabled && text.includes('Locked') ? icon('lock') : action === 'refresh' && library ? icon('refresh') : ''}${escape(text)}${action === 'courseRequirements' ? ' <span aria-hidden="true">→</span>' : ''}</button>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'">
@@ -83,7 +83,10 @@ export function courseGradeHtml(nonce: string, grade: CourseGrade | undefined, c
     </style></head><body class="${library ? 'certificate-library' : 'grade-detail'}">
     ${library ? `<header><div><h1>My certificates</h1><p class="muted">Your earned credentials and the next steps for each course.</p></div>${button('Refresh','refresh')}</header>` : ''}
     <p id="notice" role="status">${escape(notice)}</p>
-    ${pending ? `<p>${pending} assessment result${pending === 1 ? '' : 's'} waiting to sync. ${button('Sync pending results','sync','',!syncReady)}</p>` : ''}
+    ${pending.length ? `<details><summary>${pending.length} assessment result${pending.length === 1 ? '' : 's'} waiting to sync</summary><ul>${pending.map(item => {
+      const required = [grade, ...courses.map(c => c.grade)].flatMap(g => g?.requirements ?? []).find(r => r.kind === item.kind && r.id === item.id);
+      return `<li>${item.kind === 'project' ? 'Project' : 'Exercise'} · ${escape(required?.title || item.id)}</li>`;
+    }).join('')}</ul></details>${button('Sync pending results','sync','',!syncReady)}` : ''}
     ${library ? certificateLibrary(courses, certificates, button)
       : courseGradeDetail(grade, learning, certificates, certificates.map(c => issuedCard(c,button,false)).join(''), button, lessons)}
     <script nonce="${nonce}">const vscode=acquireVsCodeApi();const scope=${JSON.stringify(scope).replaceAll('<','\\u003c')};let state=vscode.getState();if(!state||state.scope!==scope)state={scope,fields:{},requests:{}};

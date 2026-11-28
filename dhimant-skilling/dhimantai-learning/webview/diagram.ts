@@ -1,4 +1,4 @@
-import { visualStyle } from './visual';
+import { diagramStyle } from './visual';
 import { fitDiagramLabels } from './diagramLabels';
 
 // Build a static SVG image in a fresh XML document. Only geometry, text and
@@ -95,7 +95,11 @@ export function diagram(source: string, layout: 'authored' | 'automatic' = 'auth
   if (layout === 'authored' && svg instanceof SVGSVGElement) fitDiagramLabels(svg);
   const img = document.createElement('img');
   img.className = 'board-diagram';
-  img.style.cssText = visualStyle + ';background:#fff;color:#202124;border:1px solid var(--vscode-panel-border,#ddd);border-radius:8px;padding:12px';
+  // Scale small authored charts up to the notebook width, but never past twice their
+  // drawn size: a small icon or badge must not become a page-sized image.
+  const drawn = svg.getAttribute('width')?.trim().match(/^(\d*\.?\d+)(?:px)?$/i);
+  const limit = drawn ? `;max-width:min(100%,${Math.round(Math.min(1040, Number(drawn[1]) * 2 + 24))}px)` : '';
+  img.style.cssText = diagramStyle + limit + ';background:#fff;color:#202124;border:1px solid var(--vscode-panel-border,#ddd);border-radius:8px;padding:12px';
   img.alt = [svg.querySelector('title')?.textContent || 'Diagram', svg.querySelector('desc')?.textContent || labels.join(', ')]
     .filter(Boolean).join('. ');
   img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clean));

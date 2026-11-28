@@ -1,5 +1,5 @@
 import {pathToFileURL} from 'node:url';
-import {join, basename, resolve} from 'node:path';
+import {join, basename} from 'node:path';
 
 export function signingOptions(source, app, mode, env = process.env) {
   if (!['developer-id', 'ad-hoc'].includes(mode)) throw new Error('Select an explicit macOS signing mode');
@@ -27,7 +27,7 @@ export function signingOptions(source, app, mode, env = process.env) {
     }};
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (import.meta.main) {
   const [source, app, mode] = process.argv.slice(2);
   const options = signingOptions(source, app, mode);
   const {sign} = await import(pathToFileURL(join(source, 'build/node_modules/@electron/osx-sign/dist/index.js')));

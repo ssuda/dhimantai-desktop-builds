@@ -16,7 +16,10 @@ def main():
     receipt = json.loads(receipt_path.read_text())
     arch = {'AMD64': 'x64', 'ARM64': 'arm64'}[platform.machine().upper()]
     assert receipt['platform'] == 'win32' and receipt['arch'] == arch
-    assert receipt['clientEnvironments'] == ['staging']
+    environment = sys.argv[2] if len(sys.argv) > 2 else 'staging'
+    expected_url = {'staging': 'https://api-staging.dhimant.ai',
+                    'production': 'https://api-prod.dhimant.ai'}[environment]
+    assert receipt['clientEnvironments'] == [environment]
     assert receipt['automaticUpdates'] is False and receipt['copilotIncluded'] is False
     assert len(receipt['files']) == 1
     item = receipt['files'][0]
@@ -40,7 +43,7 @@ def main():
         package = json.loads((extension / 'package.json').read_text())
         assert package['version'] == receipt['extensionVersion']
         defaults = package['contributes']['configurationDefaults']
-        assert defaults['dhimantai.environment'] == 'staging'
+        assert defaults['dhimantai.environment'] == environment
         assert defaults['workbench.colorTheme'] == 'dhimantAI Light'
         assert defaults['window.commandCenter'] is False
         assert defaults['workbench.layoutControl.enabled'] is False
@@ -50,9 +53,9 @@ def main():
         assert defaults['workbench.activityBar.compact'] is True
         assert defaults['chat.disableAIFeatures'] is True
         client = json.loads((extension / 'desktop-client.json').read_text())
-        assert set(client) == {'staging'}
-        assert client['staging']['tokenUrl'] == 'https://api-staging.dhimant.ai'
-        assert client['staging']['signingKey']
+        assert set(client) == {environment}
+        assert client[environment]['tokenUrl'] == expected_url
+        assert client[environment]['signingKey']
         assert not list((app / 'extensions').glob('github.copilot*'))
         for name in ['inno_updater.exe', 'vcruntime140.dll']:
             assert (root / 'tools' / name).is_file()
@@ -74,7 +77,7 @@ def main():
     output = Path(os.environ['RUNNER_TEMP']) / 'windows-install-acceptance.json'
     result = dict(arch=arch, file=item['name'], sha256=item['sha256'], bytes=item['bytes'],
                   installed=True, cliVersion=version, uninstalled=True, defaultsVerified=True,
-                  environment='staging', guiMediaAcceptance=False,
+                  environment=environment, guiMediaAcceptance=False,
                   sourceCommit=receipt['sourceCommit'], buildCommit=receipt['buildCommit'])
     output.write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2))

@@ -6,7 +6,7 @@ New empty windows welcome the learner with Course Catalog. The Learning sidebar 
 
 Outline and Timeline are hidden by default. They remain available from the Views menu for learners who want them.
 
-The compact left Activity Bar keeps the existing navigation, with Updates and the learner's profile at the bottom. For learners, the title-bar search (Ctrl/Cmd+P and the Command Palette still work), the layout toggles, and the status bar's errors/warnings counter and remote indicator are hidden by default; each can be turned back on. New profiles do not pin Search, Source Control, Run and Debug or Extensions; each still appears while it is open (for example from a debugging lesson or Git & GitHub) and can be pinned. Existing layouts are unchanged. Updates shows progress and ready/error badges without interrupting a lesson. A learning update that finishes in the first three minutes of a launch, while only the Course Catalog is open and nothing is unsaved, reloads the window at once so the first lesson runs the new version. The profile opens the existing account, sign-in/sign-out and settings actions. Existing installations reveal the rail once when upgrading from the earlier persisted hidden default; later layout choices and workspace overrides are respected.
+The compact left Activity Bar keeps the existing navigation, with Updates and the learner's profile at the bottom. For learners, the title-bar search (Ctrl/Cmd+P and the Command Palette still work), the layout toggles, and the status bar's errors/warnings counter and remote indicator are hidden by default; each can be turned back on. Fresh and upgraded student profiles start with Learning as the only pinned navigation item, above Updates and Profile. The desktop also filters restored pins and newly registered editor tools, so opening an editor tool does not add a shortcut to the student rail.
 
 Copilot is optional and disabled by default. The custom desktop permits it only for courses explicitly teaching AI-assisted coding; the current reviewed course is **Use AI Coding Help with Verification**. `src/courseCopilot.ts` in the learning extension holds the exact course allowlist. Instructor, Study, Practice and registered course files follow the active editor's course. Unknown courses and the catalog disable it. The switch uses in-memory configuration in the current window; it never rewrites user or workspace settings or enables another open window. A Practice exercise that disallows assistance remains disabled.
 
@@ -14,7 +14,7 @@ Provider/authentication/API configuration is retained for an optional compatible
 
 The native window carries the dhimantAI book and wordmark. New profiles use **dhimantAI Light**, with a navy header and activity rail, orange selection accents and a light reading surface. The learning panels follow the chosen editor theme. Existing profiles can select **dhimantAI Light** in Color Theme.
 
-**Skilling** follows the active tab. In a lesson it focuses Instructor, in Practice it offers the checks and submissions supported by that exercise, and in a project it can discuss selected lines. Written challenges use Submit for Feedback. Course Grade & Certificate opens the current course. Learning pages show Skilling and basic Edit actions. Opening a source file or notebook also shows File and View. The desktop omits the general-purpose Go, Selection, Run, Terminal and Help menus. Closing the last tab shows Browse Courses and, for learners with recorded course progress, Continue Learning.
+**Skilling** follows the active tab. In a lesson it focuses Instructor, in Practice it offers the checks and submissions supported by that exercise, and in a project it can discuss selected lines. Written challenges use Submit for Feedback. Course Grade & Certificate opens the current course. Learning pages show Skilling and basic Edit actions. Opening a source file or notebook also shows File and View. The desktop omits the general-purpose Go, Selection, Run, Terminal and Help menus. Closing the last tab shows Browse Courses and, for learners with recorded course progress, Continue Learning. Launching the app always opens Home rather than the last project window: Home asks what to work on, with Continue learning and Continue project side by side. Only an explicit `window.restoreWindows` setting, or the restart after an applied update, reopens earlier windows.
 
 `lock.json` pins VSCodium, Code OSS, Electron and Node. `customize.py` applies narrow source changes and fails when upstream context changes. `build.py` produces a macOS DMG, Windows user setup EXE, or Linux tarball and Debian package on native x64/ARM64 runners. Pushing the exported build repository to `main` builds the four supported targets sequentially; it neither publishes releases nor updates a running service.
 
@@ -46,7 +46,7 @@ The source checkout and the build checkout have separate Git remotes:
 | Location | Remote / destination | Contents |
 | --- | --- | --- |
 | Main `dhimantai` checkout | `origin`: `git@bitbucket.org:optficial/dhimantai.git` | Full project source and history. |
-| Separate build checkout | `origin`: `https://github.com/ssuda/dhimantai-desktop-builds.git` | Private, exported desktop build inputs only. |
+| Separate build checkout | `origin`: `https://github.com/ssuda/dhimantai-desktop-builds.git` | Public repository containing the allowlisted desktop build inputs. |
 | Public downloads | [ssuda/dhimantai-downloads Releases](https://github.com/ssuda/dhimantai-downloads/releases) | Verified installer binaries and `SHA256SUMS`, uploaded with `gh`; no Git push from the main checkout. |
 
 The main checkout normally has **no GitHub remote**. Run the GitHub push from
@@ -180,9 +180,9 @@ increment the desktop release when changing its payload.
 
 ## macOS Developer ID signing and notarization
 
-The published staging desktop version is **1.143.10007-preview.7**, with new artifact filenames.
-Published preview 3 and preview 5 downloads remain unchanged. Both native
-macOS runners use the same signing path. The automatic staging pipeline sets
+Staging preview **1.143.10013-preview.13** bundles learning extension **0.39.71**.
+The [release receipt](../../deploy/releases/2026-11-22-staging-skilling-desktop-preview13.json) records the verified installers and download checks.
+Both native macOS runners use the same signing path. The automatic staging pipeline sets
 `macos_signing: ad-hoc` in both macOS jobs, so these previews still trigger
 Gatekeeper warnings. After configuring the Apple secrets below, change both
 callers in `.github/workflows/desktop-preview.yml` to `macos_signing: developer-id`
@@ -317,6 +317,15 @@ Native test launchers use disposable profiles, in-memory secret storage and a ma
 
 There are two independent release paths. An extension-only change publishes the VSIX and its learning release manifest; leave the desktop version in `lock.json` and the desktop installer manifest unchanged. The desktop download gate compares only the native app version, never `extensionVersion`. The client fetches the small manifests to check both paths, but downloads an app installer only when a newer native app version exists. Native shell or Electron changes require a desktop release.
 
+Staging and production publish the learning VSIX independently. Each manifest names its version, filename and SHA-256 digest.
+
+| VSIX channel | Public release manifest |
+| --- | --- |
+| Staging | [Staging learning updates](https://app-staging.dhimant.ai/downloads/dhimantai-learning.json) |
+| Production | [Production learning updates](https://app.dhimant.ai/downloads/dhimantai-learning.json) |
+
+Publish the candidate to staging first. When promoting it to production, publish the verified VSIX bytes and matching manifest on the production host. Each service serves its own archive at `/downloads/dhimantai-learning.vsix`.
+
 The learning extension updates silently from the selected dhimantAI service when the app starts. Downloads are
 checked against the published SHA-256 before installation. The current lesson keeps running; the new version
 activates on the next normal app restart, without a reload prompt. An explicit `dhimantai.autoUpdate=false`
@@ -328,11 +337,11 @@ Preview 3 and preview 4 need a one-time update to preview 5: the app must allow 
 `builtInExtensionsEnabledWithAutoUpdates` and bundle extension 0.39.10 or newer. Publishing or manually
 installing a VSIX alone cannot enable this in older apps, which reject updates to bundled extensions.
 
-Native updates use the owned `https://dhimant.ai/upskill/releases.json` manifest and GitHub release assets. Selection matches the installed build's environment, preview/stable channel, platform and CPU; changing the learning API service cannot switch the native release channel. Checks run at startup and every six hours, or explicitly from App Updates. The shared `dhimantai.autoUpdate` setting controls background downloads. A failed automatic download gets one attempt per installed/available version and can be retried manually.
+Production installations check `https://dhimant.ai/upskill/releases-production.json`. Preview installations check `https://dhimant.ai/upskill/releases.json`. Both use the installer checksums and GitHub assets listed in their manifest. Selection matches the installed build's environment, preview/stable channel, platform and CPU; changing the learning API service cannot switch the native release channel. Checks run at startup and every six hours, or explicitly from App Updates. The shared `dhimantai.autoUpdate` setting controls background downloads. A failed automatic download gets one attempt per installed/available version and can be retried manually.
 
-Desktop installers stream to private extension storage with a size limit, a finite timeout and SHA-256 verification. Partial downloads are discarded, concurrent requests share work, and cached installers are verified again before opening. The rail offers **Open desktop installer** only after verification. Opening the OS installer is an explicit action; the app never forces a restart, runs a silent installer or replaces a running application. Learning updates still install silently and activate on the next normal restart, with an optional explicit reload in App Updates.
+Clicking the download icon in the left activity bar checks the desktop installer and learning extension, downloads any available updates, and applies them together. The same click works during a lesson and while a background download is in progress. An extension-only update reloads the window. A desktop update quits and reopens the app, activating a pending extension in the same restart. A failed verification leaves a retry in the app.
 
-The currently published ad-hoc/unsigned previews still require the normal OS installer steps (macOS DMG, Windows setup, or Linux Debian package). Native rail changes require rebuilding and installing the desktop; the learning extension alone cannot add the new native controls. Until that upgrade, update progress/readiness uses the existing dhimantAI status-bar item, which opens App Updates. Microsoft and VSCodium update feeds remain disabled. Application IDs, course files and user-data paths remain stable.
+The desktop updater verifies the installer against the published size and SHA-256 before applying it. On macOS the helper mounts the verified DMG read-only, checks the bundle identifier and replaces the installed copy. Windows uses its silent installer and Linux Debian installations request administrator approval through `pkexec`. A read-only installation can open the OS installer as a fallback. Older previews without the activity-bar icon use the existing status-bar item.
 
 For native background replacement and restart on a customer channel, sign/notarize the packages and configure the platform's signed updater. The current owned manifest stages installers only; it does not certify an automatic replacement mechanism. Continue maintaining the source pins, upstream security releases and platform acceptance checks. Code OSS and VSCodium license/notices remain in the distribution; Open VSX remains the extension catalog.
 

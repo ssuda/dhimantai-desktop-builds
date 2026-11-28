@@ -18,12 +18,15 @@ export interface BrowserObservation {
   route:string; doctype:string; record:string; dirty:boolean; docstatus:number|null;
   fields:Record<string,unknown>; errors:string[];
   action:'view'|'edit'|'check'|'help'|'save'|'next'; result:'matched'|'mismatch'|'not_saved'|null;
+  demo_snapshot?:string;
   shift?: {id:'first-business-shift'; snapshot:string; failures:number; helpRequests:number; support:'brief'|'evidence'|'navigation'; completed:string[]};
 }
 export interface BrowserUpdate {account:string; environment:EnvironmentName; chapter:string; observation:BrowserObservation|null; progress?:BrowserCourseProgress; help?:string; question?:BrowserQuestion|null; taskStatus?:string; focusQuestion?:string; reconnect?:boolean; brief?:{id:string; title:string; text:string}}
 /** A task whose saved record matched; explained once the learner has also explained their decision. */
 export interface VerifiedTask {record:string; checkedAt:string; assisted:boolean; explained:boolean}
 interface Scope {origin:string; account:string; environment:EnvironmentName; learner:string; tasks:BrowserTask[]; current:()=>Promise<boolean>;
+  hosted?: boolean;
+  initialTask?: string;
   /** The practical course these tasks belong to; ERPNext Essentials when omitted. */
   course?:{id:string; title:string; /** Replaces the closing statement's title; {{company}} is the learner's company. */ finale?:string; shift?:BusinessShift};
   handover?:()=>{text:string; recorded:string; at:string}|undefined;
@@ -40,7 +43,7 @@ const scalar = (x:unknown) => x===null || typeof x==='boolean' || typeof x==='nu
 
 /** Only authored training fields can leave the ERPNext page; never arbitrary DOM, cookies or passwords. */
 export function browserObservation(raw:unknown,tasks:BrowserTask[],course='erpnext-essentials'):BrowserObservation|undefined {
-  if(!object(raw) || Object.keys(raw).sort().join(',')!==['sequence','course','task','step','training_tag','route','doctype','record','dirty','docstatus','fields','errors','action','result',...(raw.shift===undefined?[]:['shift'])].sort().join(','))return;
+  if(!object(raw) || Object.keys(raw).sort().join(',')!==['sequence','course','task','step','training_tag','route','doctype','record','dirty','docstatus','fields','errors','action','result',...(raw.shift===undefined?[]:['shift']),...(raw.demo_snapshot===undefined?[]:['demo_snapshot'])].sort().join(','))return;
   const task=tasks.find(t=>t.id===raw.task);
   if(!task || raw.course!==course || !Number.isSafeInteger(raw.sequence) || raw.sequence<1
       || !Number.isInteger(raw.step) || raw.step<0 || raw.step>=task.steps.length
@@ -48,6 +51,8 @@ export function browserObservation(raw:unknown,tasks:BrowserTask[],course='erpne
       || ![null,0,1,2].includes(raw.docstatus) || !['view','edit','check','help','save','next'].includes(raw.action)
       || ![null,'matched','mismatch','not_saved'].includes(raw.result) || !object(raw.fields)
       || !Array.isArray(raw.errors) || raw.errors.length>3 || !raw.errors.every((v:unknown)=>text(v,500)))return;
+  if (raw.demo_snapshot!==undefined && (raw.shift || task.guidance==='none' || task.readOnly ||
+      typeof raw.demo_snapshot!=='string' || !/^[a-f0-9]{32}$/.test(raw.demo_snapshot))) return;
   if(raw.shift!==undefined) {
     const s=raw.shift;
     if(course!=='erpnext-essentials' || !object(s) || Object.keys(s).sort().join(',')!=='completed,failures,helpRequests,id,snapshot,support'
@@ -94,12 +99,15 @@ export class BrowserLearning {
   async demonstrate(account:string,environment:EnvironmentName,request:unknown):Promise<DemonstrationResult> {
     const reject=(message:string):DemonstrationResult=>({status:'rejected',message});
     const scope=this.scope;
-    if(!scope||scope.account!==account||scope.environment!==environment||!scope.course?.shift||!validDemonstration(request))return reject('No active business shift for this action.');
+    if(!scope||scope.account!==account||scope.environment!==environment||!validDemonstration(request))return reject('No active training session for this action.');
+    const hosted=request.action==='show_task';
+    if(hosted ? !scope.hosted || !!scope.course : !scope.course?.shift)return reject('This exercise does not offer that demonstration.');
     if(!await scope.current()||this.scope!==scope)return reject('The training account changed.');
     const previous=this.demonstrations.get(request.id);if(previous)return previous;
     if(this.demonstrations.size>=64)return reject('The demonstration budget for this launch is exhausted. Reopen the shift to continue.');
     const observed=this.update?.observation;
-    if(this.demonstration||this.taskAction||!this.connection.connected||observed?.task!==request.task||observed.shift?.snapshot!==request.snapshot)
+    if(this.demonstration||this.taskAction||!this.connection.connected||observed?.task!==request.task||
+        (hosted ? observed.demo_snapshot : observed.shift?.snapshot)!==request.snapshot)
       return reject('The current form or connection changed. Use the latest observation.');
     let complete!:(result:DemonstrationResult)=>void;
     const promise=new Promise<DemonstrationResult>(resolve=>{complete=resolve;});
@@ -145,7 +153,9 @@ export class BrowserLearning {
     }
   }
   async start(scope:Scope) {
-    if(!/^http:\/\/127\.0\.0\.1:\d+$/.test(scope.origin) || !/^[a-f0-9]{20}$/.test(scope.learner))throw new Error('Invalid training origin.');
+    const url = new URL(scope.origin);
+    if ((scope.hosted ? url.protocol !== 'https:' || url.origin !== scope.origin : !/^http:\/\/127\.0\.0\.1:\d+$/.test(scope.origin))
+        || !/^[a-f0-9]{20}$/.test(scope.learner)) throw new Error('Invalid training origin.');
     await this.stop();this.scope=scope;this.token=randomBytes(32).toString('hex');this.sequence=0;
     const server=createServer((req,res)=>{void this.handle(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
     this.server=server;
@@ -195,6 +205,7 @@ export class BrowserLearning {
     if(!await scope.current() || this.scope!==scope)return reply(410);
     if(req.method==='GET' && req.url==='/course')return reply(200,{id:scope.course?.id??'erpnext-essentials',title:scope.course?.title??ERP_COURSE,
       version:createHash('sha256').update(JSON.stringify(scope.tasks)).digest('hex').slice(0,16),lessons:scope.tasks,verified:scope.verified?.()??{},
+      ...(scope.initialTask ? {initialTask:scope.initialTask} : {}),
       ...(scope.course?.finale?{finale:scope.course.finale}:{}),...(scope.course?.shift?{shift:scope.course.shift,handover:scope.handover?.()}: {})});
     if(req.method==='POST' && req.url==='/signin')return scope.signIn?reply(200,scope.signIn):reply(404);
     if(req.method==='GET' && req.url==='/state')return reply(200,{...this.connection,questionId:this.question?.id??null,...(this.answer?{answer:this.answer}:{}),...(this.taskAction?{taskAction:this.taskAction}:{}),...(this.demonstration?{demonstration:this.demonstration.command}:{})});
@@ -262,7 +273,7 @@ export class BrowserLearning {
       this.sequence=body.sequence;this.question=null;this.answer=undefined;this.taskAction=undefined;this.taskStatus='';this.emit(null);return reply(200,{ok:true});
     }
     const observation=browserObservation(body,scope.tasks,scope.course?.id);
-    if(!observation || observation.training_tag!==scope.learner.slice(0,10))return reply(400);
+    if(!observation || observation.training_tag!==scope.learner.slice(0,10) || observation.demo_snapshot && !scope.hosted)return reply(400);
     if(!!observation.shift!==!!scope.course?.shift)return reply(400);
     if(observation.sequence<=this.sequence)return reply(409);
     if(this.question?.task!==observation.task){this.question=null;this.answer=undefined;this.taskStatus='';}

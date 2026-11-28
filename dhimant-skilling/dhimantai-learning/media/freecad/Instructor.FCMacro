@@ -1,9 +1,11 @@
 """FreeCAD GUI-thread bridge for the mounting-plate lesson."""
 import base64
+import hashlib
 import hmac
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import time
 
@@ -13,7 +15,34 @@ from PySide import QtCore, QtGui, QtNetwork, QtWidgets
 
 exercise = Path(os.environ.pop("DHIMANT_CAD_EXERCISE")).resolve()
 pipe = os.environ.pop("DHIMANT_CAD_PIPE")
-key = os.environ.pop("DHIMANT_CAD_KEY")
+key = os.environ.pop("DHIMANT_CAD_KEY", None) or (exercise.parent / ".connection-key").read_text()
+starter_size, starter_hash = os.environ.pop("DHIMANT_CAD_STARTER").split(":")
+
+
+def is_starter():
+    return exercise.stat().st_size == int(starter_size) and hashlib.sha256(exercise.read_bytes()).hexdigest() == starter_hash
+
+
+def lesson_cocoa_loaded():
+    # Qt can also discover FreeCAD's stock platform plugin. Verify the image
+    # the running process actually loaded before opening the editable model.
+    import ctypes
+    directory = os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH")
+    if not directory:
+        return False
+    expected = (Path(directory) / "libqcocoa.dylib").resolve()
+    loader = ctypes.CDLL(None)
+    loader._dyld_image_count.restype = ctypes.c_uint32
+    loader._dyld_get_image_name.argtypes = [ctypes.c_uint32]
+    loader._dyld_get_image_name.restype = ctypes.c_char_p
+    for index in range(loader._dyld_image_count()):
+        image = loader._dyld_get_image_name(index)
+        if image and image.endswith(b"/libqcocoa.dylib") and Path(os.fsdecode(image)).resolve() == expected:
+            return True
+    return False
+
+
+cocoa_fix = lesson_cocoa_loaded() if sys.platform == "darwin" else None
 
 
 def open_exercise():
@@ -53,52 +82,127 @@ def viewport(view):
     raise ValueError("Cannot encode the exercise")
 
 
-def handle(action):
-    if action == "resume":
-        open_exercise()
+def exercise_document():
     doc = App.ActiveDocument
     if not doc or not doc.FileName or Path(doc.FileName).resolve() != exercise:
-        return {"status": "inactive"}
+        return None
     area = Gui.getMainWindow().findChild(QtWidgets.QMdiArea)
     tab = area.currentSubWindow() if area else None
-    if not tab or not tab.widget().inherits("Gui::View3DInventor"):
-        return {"status": "inactive"}
+    if tab and tab.widget().inherits("Gui::View3DInventor"):
+        return doc
+
+
+def bore_from(doc):
     bore, plate = doc.getObject("Bore"), doc.getObject("Plate")
-    if not bore or bore.TypeId != "Part::Cylinder" or not plate or plate.TypeId != "Part::Cut" or plate.Tool != bore:
+    if bore and bore.TypeId == "Part::Cylinder" and plate and plate.TypeId == "Part::Cut" and plate.Tool == bore:
+        return bore
+
+
+def screen_point(widget, point):
+    if not widget.isVisible() or not widget.rect().contains(point):
+        return None
+    point = widget.mapToGlobal(point)
+    return {"x": point.x(), "y": point.y()}
+
+
+def model_control(main, doc, bore):
+    tree = next((widget for widget in main.findChildren(QtWidgets.QTreeWidget)
+                 if widget.isVisible() and widget.inherits("Gui::TreeWidget")), None)
+    if tree is None:
+        return {}
+    for item in tree.findItems(bore.Label, QtCore.Qt.MatchExactly | QtCore.Qt.MatchRecursive, 0):
+        plate = item.parent()
+        document = plate.parent() if plate else None
+        if not document or document.text(0) != doc.Label or plate.text(0) != doc.Plate.Label:
+            continue
+        for parent in (document, plate):
+            if not parent.isExpanded():
+                rect = tree.visualItemRect(parent)
+                point = QtCore.QPoint(rect.left() - tree.indentation() // 2, rect.center().y())
+                return {"expand": screen_point(tree.viewport(), point)}
+        rect = tree.visualItemRect(item)
+        point = QtCore.QPoint(min(rect.left() + 70, rect.center().x()), rect.center().y())
+        return {"bore": screen_point(tree.viewport(), point)}
+    return {}
+
+
+def property_control(main):
+    tabs = main.findChild(QtWidgets.QTabWidget, "propertyTab")
+    editor = tabs.findChild(QtWidgets.QTreeView, "propertyEditorData") if tabs else None
+    if editor is None:
+        return {}
+    index = tabs.indexOf(editor)
+    if tabs.currentIndex() != index:
+        bar = tabs.tabBar()
+        return {"data": screen_point(bar, bar.tabRect(index).center())}
+    model = editor.model()
+    for row in range(model.rowCount()):
+        group = model.index(row, 0)
+        for child in range(model.rowCount(group)):
+            if model.index(child, 0, group).data() != "Radius":
+                continue
+            if not editor.isExpanded(group):
+                rect = editor.visualRect(group)
+                point = QtCore.QPoint(rect.left() - editor.indentation() // 2, rect.center().y())
+                return {"expandRadius": screen_point(editor.viewport(), point)}
+            value = model.index(child, 1, group)
+            rect = editor.visualRect(value)
+            point = QtCore.QPoint(rect.left() + 20, rect.center().y())
+            current = editor.currentIndex() == value
+            fields = [field for field in editor.findChildren(QtWidgets.QLineEdit) if field.isVisible()] if current else []
+            field = fields[0] if len(fields) == 1 else None
+            result = {"radius": screen_point(editor.viewport(), point), "radiusEditing": field is not None,
+                      "radiusCurrent": current}
+            if field is not None:
+                text, selected = field.text().strip(), field.selectedText().strip()
+                result.update(radiusText=text[:40], radiusSelected=bool(selected) and (
+                    selected == text or selected == text.split(" ", 1)[0]))
+            return result
+    return {}
+
+
+def ui_controls(doc, bore):
+    main = Gui.getMainWindow()
+    result = model_control(main, doc, bore)
+    if Gui.Selection.getSelection() == [bore]:
+        result.update(property_control(main))
+    for button in main.findChildren(QtWidgets.QToolButton):
+        action = button.defaultAction()
+        if button.isVisible() and action and action.objectName() == "Std_Save":
+            result["save"] = screen_point(button, button.rect().center())
+            break
+    result["focused"] = (QtWidgets.QApplication.activeWindow() == main
+                         and QtWidgets.QApplication.applicationState() == QtCore.Qt.ApplicationActive)
+    result["busy"] = bool(Gui.activeDocument().getInEdit() or Gui.Control.activeDialog())
+    return result
+
+
+def handle(action):
+    if cocoa_fix is False:
+        return {"status": "incompatible-cocoa"}
+    if action == "resume":
+        open_exercise()
+    doc = exercise_document()
+    if not doc:
+        return {"status": "inactive"}
+    bore, plate = bore_from(doc), doc.getObject("Plate")
+    if not bore:
         return {"status": "changed"}
     gui = Gui.activeDocument()
     view = gui.activeView()
-    if action in ("resume", "top_view", "isometric_view", "demonstrate_radius", "select_bore"):
+    if action == "resume":
         Gui.getMainWindow().raise_()
         Gui.getMainWindow().activateWindow()
-    if action in ("top_view", "isometric_view"):
-        (view.viewTop if action == "top_view" else view.viewAxonometric)()
-        view.fitAll()
-    elif action == "select_bore":
-        Gui.Selection.clearSelection()
-        Gui.Selection.addSelection(bore)
-    elif action == "demonstrate_radius":
-        if gui.getInEdit() or Gui.Control.activeDialog():
-            return {"status": "editing"}
-        # An absolute value makes uncertain delivery idempotent; leave saving
-        # and the separate 4 mm design target to the student.
-        Gui.Selection.clearSelection()
-        Gui.Selection.addSelection(bore)
-        if bore.Radius.Value != 6.0:
-            doc.openTransaction("Instructor demonstration: 6 mm bore radius")
-            try:
-                bore.Radius = 6.0
-                doc.recompute()
-                doc.commitTransaction()
-            except Exception:
-                doc.abortTransaction()
-                raise
-    elif action not in ("resume", "state", "observe"):
+    elif action not in ("state", "observe", "ui"):
         return {"status": "invalid"}
     result = {"status": "ready", "radius": round(bore.Radius.Value, 4),
               "validSolid": not plate.Shape.isNull() and len(plate.Shape.Solids) == 1 and plate.Shape.isValid(),
               "selected": [o.Name for o in Gui.Selection.getSelection() if o.Name in ("Plate", "Stock", "Bore")]}
-    if action == "state":
+    if action in ("observe", "ui"):
+        result["starter"] = is_starter()
+    if action == "ui":
+        result["controls"] = ui_controls(doc, bore)
+    if action in ("state", "ui"):
         result.update(pid=os.getpid(), title=Gui.getMainWindow().windowTitle())
     if action == "observe":
         result["jpeg"] = viewport(view)
@@ -119,7 +223,7 @@ class LessonServer:
             socket.disconnected.connect(socket.deleteLater)
             timer = QtCore.QTimer(socket)
             timer.setSingleShot(True)
-            timer.timeout.connect(socket.abort)
+            timer.timeout.connect(lambda sock=socket: sock.abort())
             timer.start(5000)
             if socket.bytesAvailable():
                 self.read(socket)
@@ -135,6 +239,10 @@ class LessonServer:
                 result = {"status": "expired"}
             else:
                 result = handle(request["action"])
+                if request["action"] == "state":
+                    result["qtVersion"] = QtCore.qVersion()
+                    result["cocoaFix"] = cocoa_fix
+                    result["pointerVersion"] = 1
         except Exception as error:
             App.Console.PrintError("Instructor exercise: " + str(error) + "\n")
             result = {"status": "failed"}

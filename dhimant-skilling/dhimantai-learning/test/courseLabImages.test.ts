@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {spawn} from 'node:child_process';
 import * as assert from 'node:assert/strict';
 import {mkdtemp, readFile} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
@@ -8,6 +9,52 @@ import {NotebookCells} from '../src/notebookCells';
 // Opt-in acceptance against a disposable, already-built course image. Never execute labs on the host.
 const container = process.env.DHIMANTAI_COURSE_LAB_CONTAINER;
 const root = process.env.DHIMANTAI_COURSE_LAB_ROOT;
+const postgresImage = process.env.DHIMANTAI_POSTGRES_NOTEBOOK_IMAGE;
+test('the DBA cell runs a real psql prompt, completes batch queries and reports broken pipelines',
+  {skip: !postgresImage, timeout: 100_000}, async () => {
+    const bridge = resolve(__dirname, '../../media/course');
+    const cells = new NotebookCells(() => ({}), undefined, undefined, 30_000, {
+      target:'PostgreSQL course container',
+      start: async () => spawn(process.env.DHIMANTAI_CONTAINER_ENGINE || 'podman', [
+        'run', '--rm', '-i', '--network=none', '--workdir=/tmp', '-v', bridge + ':/bridge:ro',
+        '--entrypoint=python3', postgresImage!, '-u', '/bridge/cells.py']),
+    });
+    const options = {database:'lab' as const, interactive:true};
+    try {
+      const socket = await cells.postgresSocket();
+      assert.match(socket, /^\/tmp\/pglab-[\w-]+$/);
+      assert.equal((await cells.run('bash', 'printf %s "$PGHOST"', '', options)).stdout, socket);
+      let buffer = '', step = 0;
+      const dialogue = [
+        {prompt:/postgres=# $/, input:'SELECT 40 +'},
+        {prompt:/postgres-# $/, input:'2 AS answer;'},
+        {prompt:/42[\s\S]*postgres=# $/, input:'\\conninfo'},
+        {prompt:/connected to database[\s\S]*postgres=# $/i, input:'\\c template1'},
+        {prompt:/template1=# $/, input:'\\q'},
+      ];
+      const execution = await cells.run('bash', 'psql', '', {...options, event:event => {
+        if (event.kind !== 'stream') return;
+        buffer += event.text;
+        const next = dialogue[step];
+        if (next?.prompt.test(buffer)) { step++; buffer = ''; cells.input(next.input); }
+      }});
+      assert.equal(execution.exit_code, 0, JSON.stringify(execution));
+      assert.equal(step, dialogue.length);
+      assert.match(execution.stdout, /postgres=# SELECT 40 \+\n/);
+      assert.match(execution.stdout, /postgres-# 2 AS answer;\n/);
+      assert.equal(execution.postgres_environment?.pager_disabled, true);
+      const batch = await cells.run('pglab', 'psql -c "SELECT generate_series(1, 250)"', '', options);
+      assert.equal(batch.exit_code, 0, JSON.stringify(batch));
+      assert.match(batch.stdout, /\(250 rows\)/);
+      const broken = await cells.run('bash', 'false | cat\necho continued', '', options);
+      assert.equal(broken.exit_code, 1, JSON.stringify(broken));
+      assert.match(broken.stderr, /earlier pipeline/);
+      const handled = await cells.run('bash', 'false | cat || echo handled', '', options);
+      assert.equal(handled.exit_code, 0, JSON.stringify(handled));
+      assert.match(handled.stdout, /handled/);
+    } finally { await cells.close(); }
+  });
+
 test('image scenario persists across cells, isolates attempts, rejects substitutions and resets',
   {skip: !container || !root, timeout: 240_000}, async () => {
     const engine = new CourseEngine(process.env.DHIMANTAI_CONTAINER_ENGINE || 'podman', container!, root!);

@@ -9,8 +9,9 @@
     if(guide.headless)return; // The business shift owns its transport; no controls are added to ERPNext.
     let connection;
     try{connection=JSON.parse(sessionStorage.getItem('dhimantai-erpnext-instructor')||'null');}catch{}
-    if(!connection || !/^http:\/\/127\.0\.0\.1:\d+$/.test(connection.origin)
-        || !/^[a-f0-9]{64}$/.test(connection.token) || guide.user!==`learner-${connection.learner}@training.invalid`)return;
+    const hosted = !!connection && typeof window.dhimantaiTrainingRequest==='function' && connection.login===guide.user;
+    if(!hosted && (!connection || !/^http:\/\/127\.0\.0\.1:\d+$/.test(connection.origin)
+        || !/^[a-f0-9]{64}$/.test(connection.token) || guide.user!==`learner-${connection.learner}@training.invalid`))return;
     const root=guide.root, area=guide.live||root.getElementById('body');
     area.insertAdjacentHTML('beforeend','<button id="ask-instructor" class="link" disabled>Ask Instructor</button><small id="live-status" role="status">Connecting to Instructor…</small>');
     (root.getElementById('connection-options')||area).insertAdjacentHTML('beforeend','<label><input id="follow-browser" type="checkbox" checked> Share this task’s fields with Instructor</label>');
@@ -20,21 +21,25 @@
     let pending=Promise.resolve(),closed=false,questionHash='',questionSync=Promise.resolve(),lastTaskAction,readingState=false;
     const nextSequence=()=>{sequence=Math.max(sequence+1,Date.now()*1000);return sequence;};
     const request=async(path,body)=>{
-      const response=await fetch(connection.origin+path,{method:body===undefined?'GET':'POST',
+      const response=hosted ? await window.dhimantaiTrainingRequest(path,body) : await fetch(connection.origin+path,{method:body===undefined?'GET':'POST',
         headers:{Authorization:'Bearer '+connection.token,...(body===undefined?{}:{'Content-Type':'application/json'})},
         ...(body===undefined?{}:{body:JSON.stringify(body)}),cache:'no-store',signal:AbortSignal.timeout(9000)});
       if(!response.ok)throw new Error(response.status===401 || response.status===410?'Reopen the course from dhimantAI to reconnect.':'Instructor connection is unavailable.');
       return response.json();
     };
     const scalar=v=>typeof v==='string'?v.slice(0,600):typeof v==='number'&&Number.isFinite(v)?v:typeof v==='boolean'?v:null;
+    let signature='',demoSnapshot='',inputVersion=0;
+    const actions=new Map();
+    for (const name of ['pointerdown','keydown','input','change']) document.addEventListener(name,event=>{if(event.isTrusted)inputVersion++;},true);
     function snapshot() {
-      const app=window.dhimantaiApp,task=guide.current(),open=app.current(),doc=open?.values,company='Training '+guide.tag;
+      const app=window.dhimantaiApp,task=guide.current(),open=app.current(),doc=open?.values,company=task.expected.company || 'Training '+guide.tag;
       const formName=task.form||task.doctype;
       // Only the learner's own record for this task leaves the page; another company's or person's record never does.
       const identity=task.identity||['customer_name','supplier_name','item_code'].find(k=>typeof task.expected[k]==='string');
       const own=!!open && open.form===formName && (open.isNew
         ? !doc.company || doc.company===company
         : task.readOnly && task.record ? open.id===task.record
+        : hosted ? doc.owner===guide.user && (!task.expected.company || doc.company===company)
         : task.expected.company ? doc.company===company
         : identity ? doc[identity]===task.expected[identity] : false);
       const fields={};
@@ -44,10 +49,29 @@
       }
       const errors=own?app.errors().slice(0,2):[];
       if(result==='mismatch'||result==='not_saved')errors.push(guide.status().slice(0,500));
+      const next=JSON.stringify([task.id,app.route(),open?.id,open?.dirty,fields,inputVersion]);
+      if (next!==signature) {signature=next;demoSnapshot=crypto.randomUUID().replaceAll('-','');}
       return {course:guide.course,task:task.id,step:guide.step(),training_tag:guide.tag,
         route:String(app.route()||'').slice(0,300),
         doctype:own?formName:'',record:own?String(open.id||'').slice(0,160):'',dirty:own?!!open.dirty:false,
-        docstatus:own?(open.final?1:0):null,fields,errors,action,result};
+        docstatus:own?(open.final?1:0):null,fields,errors,action,result,
+        ...(hosted && !task.readOnly && task.guidance!=='none' ? {demo_snapshot:demoSnapshot} : {})};
+    }
+    async function demonstrate(command) {
+      const previous=actions.get(command.id);
+      if(previous)return previous;
+      const seen=snapshot(), currentInput=inputVersion;
+      if(command.action!=='show_task' || command.snapshot!==seen.demo_snapshot || command.task!==seen.task || command.expiresAt<=Date.now())
+        return {status:'rejected',message:'The lesson or the form changed. Try again from the current task.'};
+      const guard=()=>{
+        if(closed || !enabled || !connected || inputVersion!==currentInput || guide.current().id!==seen.task || Date.now()>command.expiresAt)
+          throw new Error('Control is with the learner. Review the current form.');
+      };
+      let outcome;
+      try {outcome={status:'completed',message:await guide.demonstrate(guard)};}
+      catch(error){outcome={status:inputVersion!==currentInput?'interrupted':'failed',message:String(error.message).slice(0,600)};}
+      actions.set(command.id,outcome);
+      return outcome;
     }
     function observe(force=false) {
       if(!enabled || closed)return Promise.resolve();
@@ -151,6 +175,10 @@
     const stateTimer=setInterval(async()=>{
       if(readingState || closed)return;readingState=true;
       try{const state=await request('/state');connected=state.connected===true;
+        if(hosted && enabled && connected && state.demonstration) {
+          const command=state.demonstration, outcome=await demonstrate(command);
+          await request('/demonstration-result',{id:command.id,...outcome});
+        }
         // Navigation and reconnect can clear the host's question after this
         // page published it. Restore that link even while ERP is behind the
         // Instructor tab, so an answer remains a task submission.
@@ -178,6 +206,7 @@
     },3000);
     window.addEventListener('pagehide',()=>{
       closed=true;clearInterval(observationTimer);clearInterval(stateTimer);
+      if(hosted) {void request('/observe',{sequence:nextSequence(),clear:true}).catch(()=>{});return;}
       void fetch(connection.origin+'/observe',{method:'POST',keepalive:true,
         headers:{Authorization:'Bearer '+connection.token,'Content-Type':'application/json'},
         body:JSON.stringify({sequence:nextSequence(),clear:true})}).catch(()=>{});

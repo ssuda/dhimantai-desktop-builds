@@ -1,13 +1,16 @@
+import { savedTerminalProgram, terminalPrograms } from './notebookTerminal';
 import {cellLanguage, cellLanguages, validCellInputs} from './roomCode';
 import { validSkillDraft } from './skillPractice';
 import type { SkillDraft } from './skillPractice';
 import { executionFollowup, validExecutionIssues } from './lessonExecution';
 import type { ExecutionIssue } from './lessonExecution';
 
+export const NOTEBOOK_CELL_LIMIT = 1000;
+
 /** Local learning document. Runtime observations and assessment authority are never restored. */
 export interface NotebookCell {
   id: string;
-  kind: 'board' | 'message' | 'note' | 'code' | 'diagram' | 'recap' | 'voice';
+  kind: 'board' | 'message' | 'note' | 'code' | 'terminal' | 'diagram' | 'recap' | 'voice';
   text: string;
   collapsed?: boolean;
   packet?: Record<string, unknown>;
@@ -16,15 +19,27 @@ export interface NotebookDraft {
   key: string; snippet: string; language: string; source: string; stdin: string;
   prediction: string; explanation: string; helped: boolean;
   argv?:string[]; files?:{name:string;content:string}[]; interactive?:boolean;
+  commandHistory?: string[];
+  promptSubmitted?: true;
   skills?: SkillDraft;
 }
+export interface ChapterEdition { revision:string; attempt:string }
+export function validChapterEdition(value:unknown): value is ChapterEdition {
+  const edition = value as ChapterEdition | undefined;
+  return typeof edition?.revision === 'string' && /^\d{1,20}$/.test(edition.revision)
+    && typeof edition.attempt === 'string' && (edition.attempt === '' || /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(edition.attempt));
+}
+
 export interface TutorNotebook {
   version: 1;
   title: string;
   exerciseId?: string;
   lessonId?: string;
+  chapterEdition?: ChapterEdition;
   doubtId?: string;
   doubtCourse?: string;
+  doubtMode?: 'adaptive' | 'guided' | 'direct';
+  teachingStyle?: 'beginner' | 'practitioner' | 'expert';
   textDraft?: string;
   attemptDraft?: string;
   /** Course data this notebook asked about last ("sample:shop", "import:sales"), so a vague question uses it. */
@@ -35,6 +50,7 @@ export interface TutorNotebook {
   drafts: NotebookDraft[];
   /** Historical local follow-up only; never used as execution or mastery evidence. */
   executionIssues?: ExecutionIssue[];
+  xpAwards?: Array<{award_id?: string; amount: number}>;
 }
 export const emptyNotebook = (): TutorNotebook => ({version: 1, title: 'Instructor notebook', cells: [], drafts: []});
 export const NOTEBOOK_LIMIT = 4 * 1024 * 1024;
@@ -49,6 +65,8 @@ export function readNotebook(value: unknown): TutorNotebook {
   if (JSON.stringify(n).length > NOTEBOOK_LIMIT) throw new Error('The Instructor notebook content exceeds 4 million characters. Save a smaller notebook.');
   if (!text(n.title, 300) || (n.exerciseId !== undefined && !text(n.exerciseId, 100)) || (n.lessonId !== undefined && !text(n.lessonId, 100)) || (n.textDraft !== undefined && !text(n.textDraft, 4000)) || !Array.isArray(n.cells)
       || !Array.isArray(n.drafts)) throw new Error('The saved Instructor notebook has invalid document fields.');
+  if (n.chapterEdition !== undefined && !validChapterEdition(n.chapterEdition)) throw new Error('Invalid chapter edition.');
+  if (n.doubtMode !== undefined && !['adaptive','guided','direct'].includes(n.doubtMode)) throw new Error('Invalid Doubt Solver learning mode.');
   if (n.attemptDraft !== undefined && !text(n.attemptDraft,1500)) throw new Error('The saved attempt note is too large.');
   if ((n.doubtId !== undefined && !/^[0-9a-f-]{36}$/i.test(n.doubtId)) ||
       (n.doubtCourse !== undefined && !text(n.doubtCourse, 300))) throw new Error('Invalid saved chat identity.');
@@ -57,13 +75,18 @@ export function readNotebook(value: unknown): TutorNotebook {
       || (n.dataImports !== undefined && (!Array.isArray(n.dataImports) || n.dataImports.length > 10
         || !n.dataImports.every(name => typeof name === 'string' && /^[a-z][a-z0-9_]{0,31}$/.test(name)))))
     throw new Error('The saved Instructor notebook has invalid course data fields.');
-  if (n.cells.length > 1000 || n.drafts.length > 1000) throw new Error('This notebook exceeds the limit of 1,000 cells or code drafts.');
+  if (n.cells.length > NOTEBOOK_CELL_LIMIT || n.drafts.length > 1000) throw new Error('This notebook exceeds the limit of 1,000 cells or code drafts.');
   if (n.executionIssues !== undefined && !validExecutionIssues(n.executionIssues))
     throw new Error('This notebook contains invalid coding follow-up notes.');
+  if (n.xpAwards !== undefined && (!Array.isArray(n.xpAwards) || n.xpAwards.length > 200
+      || !n.xpAwards.every(item => item && typeof item === 'object' && !Array.isArray(item)
+        && Number.isSafeInteger(item.amount) && item.amount > 0 && item.amount <= 50
+        && (item.award_id === undefined || text(item.award_id, 100)))))
+    throw new Error('This notebook contains invalid XP award records.');
   const ids = new Set<string>();
   for (const cell of n.cells) {
     if (!cell || !text(cell.id, 100) || !/^[\w-]+$/.test(cell.id) || ids.has(cell.id)
-        || !['board', 'message', 'note', 'code', 'diagram', 'recap', 'voice'].includes(cell.kind)
+        || !['board', 'message', 'note', 'code', 'terminal', 'diagram', 'recap', 'voice'].includes(cell.kind)
         || !text(cell.text, 100000) || (cell.collapsed !== undefined && typeof cell.collapsed !== 'boolean')
         || (cell.packet !== undefined && (!cell.packet || typeof cell.packet !== 'object' || Array.isArray(cell.packet))))
       throw new Error('This Instructor notebook contains an invalid cell.');
@@ -75,11 +98,17 @@ export function readNotebook(value: unknown): TutorNotebook {
         || !Object.hasOwn(cellLanguages,draft.language) || !validCellInputs(draft)
         || !text(draft.source, 12000) || !text(draft.stdin, 4000) || !text(draft.prediction, 600)
         || !text(draft.explanation, 600) || typeof draft.helped !== 'boolean'
+        || (draft.promptSubmitted !== undefined && draft.promptSubmitted !== true)
+        || (draft.commandHistory !== undefined && (!Array.isArray(draft.commandHistory) || draft.commandHistory.length > 30
+          || !draft.commandHistory.every(command => text(command,12000)) || draft.commandHistory.join('\n').length > 24000))
         || (draft.skills !== undefined && !validSkillDraft(draft.skills)))
       throw new Error('This Instructor notebook contains an invalid draft.');
     keys.add(draft.key);
   }
-  return JSON.parse(JSON.stringify(n)) as TutorNotebook;
+  const notebook = JSON.parse(JSON.stringify(n)) as TutorNotebook;
+  for (const cell of notebook.cells)
+    if (cell.kind === 'terminal' && cell.packet?.language === 'bash' && !cell.packet.terminalTypeSelected) cell.packet.language = 'zsh';
+  return notebook;
 }
 
 /** Import text/code only. Jupyter output and execution counts never become run evidence. */
@@ -127,7 +156,9 @@ export function exportNotebook(notebook: TutorNotebook) {
   const code = (draft: NotebookDraft) => cells.push({id: draft.snippet, cell_type: 'code', source: draft.source,
     metadata: {vscode:{languageId:['bash','zsh','pglab'].includes(draft.language)?'shellscript':draft.language}, dhimantai: {author: 'learner', language:draft.language, assisted: draft.helped}}, execution_count: null, outputs: []});
   for (const cell of notebook.cells) {
-    if (cell.kind !== 'code') cells.push({id: cell.id, cell_type: 'markdown', source: cell.text
+    if (cell.kind === 'terminal') cells.push({id:cell.id, cell_type:'markdown', source:terminalPrograms[savedTerminalProgram(cell.packet?.language)].label + ' terminal',
+      metadata:{dhimantai:{author:'learner',kind:'terminal'}}});
+    else if (cell.kind !== 'code') cells.push({id: cell.id, cell_type: 'markdown', source: cell.text
       + (cell.packet?.session_summary && notebook.executionIssues?.length ? '\n\n' + executionFollowup(notebook.executionIssues) : ''),
       metadata: {dhimantai: {author: ['message', 'note'].includes(cell.kind) ? 'learner' : 'tutor', kind: cell.kind}}});
     for (const draft of notebook.drafts.filter(d => d.key.startsWith(cell.id + ':'))) code(draft);

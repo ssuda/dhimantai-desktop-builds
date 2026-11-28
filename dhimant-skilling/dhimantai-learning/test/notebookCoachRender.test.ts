@@ -51,20 +51,26 @@ test('Instructor appends prompts and rich replies, preserving earlier DOM across
   } finally { dom.window.close(); }
 });
 
-test('Instructor sends conversational prompts with the shared Send button, retains drafts during edits, and prevents duplicate sends', () => {
+test('Instructor sends with Enter, retains drafts during edits, and prevents duplicate sends', () => {
   const {dom, post, sent, doc} = panel();
   const box = doc.getElementById('message') as HTMLTextAreaElement;
   const key = (options = {}) => box.dispatchEvent(new dom.window.KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true, ...options}));
   try {
     post({conversationId: 'chat', revision: 1, messages: [], busy: false});
     assert.equal((doc.getElementById('ask') as HTMLButtonElement).disabled, true);
+    assert.equal(key(), false, 'Enter on an empty draft is consumed');
     box.value = 'Explain the function';
     box.dispatchEvent(new dom.window.Event('input'));
     post({conversationId: 'chat', revision: 2, messages: [], busy: false});
     assert.equal(box.value, 'Explain the function');
-    key({shiftKey: true}); key({isComposing: true});
-    assert.equal(sent.length, 1, 'Shift+Enter and IME do not send');
-    key(); assert.equal(sent.length, 1);
+    for (const options of [{shiftKey:true}, {isComposing:true}, {keyCode:229}]) {
+      assert.equal(key(options), true, 'multiline editing and IME confirmation keep their defaults');
+    }
+    assert.equal(key({repeat:true}), false);
+    assert.equal(sent.length, 1, 'only the initial ready message has been posted');
+    assert.equal(key(), false);
+    assert.equal(sent.length, 2);
+    key();
     const send = doc.getElementById('ask') as HTMLButtonElement;
     send.click(); send.click();
     assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1))), {type: 'ask', revision: 2, message: 'Explain the function'});

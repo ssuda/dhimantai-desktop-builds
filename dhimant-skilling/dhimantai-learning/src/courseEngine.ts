@@ -1,6 +1,8 @@
+import { run as containerCommand } from './podman';
 import type { ProjectRuntime } from './projectRuntime';
 import { spawn } from 'node:child_process';
-import { isAbsolute, relative, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import type { Execution, PublicTest } from './api';
 import type { LocalRun, LocalTestResult, Trace } from './localRunner';
 
@@ -16,6 +18,11 @@ export function sameRows(expected: string, actual: string, ordered: boolean): bo
     const key = (rows: unknown[]) => (ordered ? clean(rows) : clean(rows).sort((a, b) => JSON.stringify(a) < JSON.stringify(b) ? -1 : 1)).map(r => JSON.stringify(r));
     return JSON.stringify(key(want.rows ?? [])) === JSON.stringify(key(got.rows ?? []));
   } catch { return false; }
+}
+
+export function notebookSessionFolder(root:string, environment:string, account:string, room:string, task:string, machine:string) {
+  const key = createHash('sha256').update([environment,account,room,task,machine].join('|')).digest('hex').slice(0,24);
+  return join(root,'notebook-files',key);
 }
 
 export class CourseEngine {
@@ -48,6 +55,23 @@ export class CourseEngine {
 
   execArgs(cwd: string, command: string, args: string[]) {
     return ['exec', '-i', ...this.execUser, '--workdir', this.path(cwd), this.name, ...this.commandArgs(command, args)];
+  }
+
+  /** Each course container belongs to one learner. Keep its existing Instructor files behind a stable logical path. */
+  async instructorCellArgs(folder: string) {
+    const target = this.path(folder);
+    if (!/^\/course\/notebook-files\/[0-9a-f]{24}$/.test(target)) throw new Error('Invalid Instructor workspace.');
+    // Never replace an image's directory or an alias used by another notebook.
+    for (const alias of ['/workspace', '/tmp/instructor-workspace']) {
+      const matches = () => containerCommand(this.bin, ['exec', ...this.execUser, this.name, '/usr/bin/test', target, '-ef', alias]).then(() => true, () => false);
+      if (!await matches()) {
+        try { await containerCommand(this.bin, ['exec', '--user', '0', this.name, '/bin/ln', '-sT', '--', target, alias]); }
+        catch { if (!await matches()) continue; }
+      }
+      return ['exec', '-i', ...this.execUser, '--workdir', alias, '--env', 'PWD=' + alias, this.name,
+        ...this.commandArgs('python', ['-u', alias + '/.dhimantai-runtime/cells.py'])];
+    }
+    throw new Error('The Instructor workspace path is occupied. Use Set up / rebuild course to repair the runtime.');
   }
 
   commandArgs(command:string, args:string[]) {
