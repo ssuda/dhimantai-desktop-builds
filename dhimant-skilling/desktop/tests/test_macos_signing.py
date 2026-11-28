@@ -181,8 +181,10 @@ class BuildReceiptTests(unittest.TestCase):
             'builtInExtensionsEnabledWithAutoUpdates': ['optficial.dhimantai-learning'],
         }))
         app = root / 'cache/vscodium/VSCode-darwin-arm64/dhimantAI.app/Contents'
-        app.mkdir(parents=True)
-        (app / 'Info.plist').write_bytes(plistlib.dumps({}))
+        (app / 'Resources').mkdir(parents=True)
+        (app / 'Resources/dhimantAI.icns').write_bytes(b'new artwork')
+        (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleIconFile': 'dhimantAI.icns'}))
+        os.utime(app.parent, (315532800, 315532800))
         vsix = root / 'extension.vsix'
         vsix.write_bytes(b'extension')
         output = root / 'out'
@@ -203,6 +205,13 @@ class BuildReceiptTests(unittest.TestCase):
 
     def test_receipt_hashes_final_stapled_bytes_and_records_apple_acceptance(self):
         def signed(source, built, disk, *args):
+            app = built / 'dhimantAI.app'
+            metadata = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+            icon = app / 'Contents/Resources' / metadata['CFBundleIconFile']
+            self.assertEqual(icon.read_bytes(), b'new artwork')
+            self.assertEqual(icon.stem, f'dhimantAI-{build.digest(icon)[:16]}')
+            self.assertEqual(metadata['CFBundleIconName'], icon.stem)
+            self.assertGreater(app.stat().st_mtime, 315532800)
             disk.write_bytes(b'final stapled distribution')
             return {'appSubmissionId': SUBMISSION, 'dmgSubmissionId': SUBMISSION, 'gatekeeperVerified': True}
         with tempfile.TemporaryDirectory() as temporary:

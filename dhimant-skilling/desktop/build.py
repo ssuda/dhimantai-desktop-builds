@@ -224,9 +224,17 @@ def main():
     if system == 'darwin':
         info = app / 'Contents/Info.plist'
         data = plistlib.loads(info.read_bytes())
+        icon = app / 'Contents/Resources' / data['CFBundleIconFile']
+        # Give changed artwork its own Launch Services resource name.
+        named_icon = icon.with_name(f'{app.stem}-{digest(icon)[:16]}.icns')
+        icon.rename(named_icon)
+        data.update(CFBundleIconFile=named_icon.name, CFBundleIconName=named_icon.stem)
         data.update(NSMicrophoneUsageDescription='Speak to your dhimantAI Instructor when you turn on the microphone.',
             NSCameraUsageDescription='Share your camera with dhimantAI Instructor when you turn it on.')
         info.write_bytes(plistlib.dumps(data))
+        # The updater copies this directory's mtime. The upstream 1980 timestamp
+        # leaves an existing Dock tile cached when the app reopens at the same path.
+        os.utime(app)
         disk = output / (stem + '.dmg')
         if args.macos_signing == 'developer-id':
             notarization = package_signed(source, built, disk, env, run, REPO)
